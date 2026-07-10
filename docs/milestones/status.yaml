@@ -44,10 +44,10 @@ milestones:
   - id: "06"
     title: "Policy Engine"
     file: "docs/milestones/06-policy-engine.md"
-    status: "pending"
-    completed_at: null
+    status: "completed"
+    completed_at: "2026-07-10T05:01:50Z"
     commit_hash: null
-    notes: ""
+    notes: "Implemented policy evaluator, priority/tie handling, safe denial context store; npm test and npm run build pass."
   - id: "07"
     title: "HTTP Gateway"
     file: "docs/milestones/07-http-gateway.md"
