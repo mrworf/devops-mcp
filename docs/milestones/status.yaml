@@ -16,10 +16,10 @@ milestones:
   - id: "02"
     title: "MCP Surface"
     file: "docs/milestones/02-mcp-surface.md"
-    status: "pending"
-    completed_at: null
+    status: "completed"
+    completed_at: "2026-07-10T04:48:50Z"
     commit_hash: null
-    notes: ""
+    notes: "Implemented Streamable HTTP MCP endpoint, required instructions, four stub tools, descriptors; npm test and npm run build pass."
   - id: "03"
     title: "Auth"
     file: "docs/milestones/03-auth.md"

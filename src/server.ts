@@ -1,13 +1,39 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { loadConfig } from "./config.js";
+import { handleMcpRequest, isMcpGet, isMcpPost, readJsonBody } from "./mcp/server.js";
 import type { GatewayConfig } from "./types.js";
 
 export function createGatewayServer(config: GatewayConfig) {
-  return createServer((request, response) => {
+  return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       writeJson(response, 200, {
         status: "ready",
         service_count: Object.keys(config.services).length,
+      });
+      return;
+    }
+
+    if (isMcpPost(request, config.server.mcpPath)) {
+      try {
+        const body = await readJsonBody(request);
+        await handleMcpRequest(request, response, body);
+      } catch {
+        writeJson(response, 400, {
+          error: {
+            code: "invalid_request",
+            message: "Invalid MCP request.",
+          },
+        });
+      }
+      return;
+    }
+
+    if (isMcpGet(request, config.server.mcpPath)) {
+      writeJson(response, 400, {
+        error: {
+          code: "invalid_request",
+          message: "MCP session streaming is not available before initialization.",
+        },
       });
       return;
     }
