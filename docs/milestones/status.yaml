@@ -37,10 +37,10 @@ milestones:
   - id: "05"
     title: "Token Broker"
     file: "docs/milestones/05-token-broker.md"
-    status: "pending"
-    completed_at: null
+    status: "completed"
+    completed_at: "2026-07-10T04:59:43Z"
     commit_hash: null
-    notes: ""
+    notes: "Implemented opaque token broker, binding, TTL validation, sanitized token audit event, request_tokens tool; npm test and npm run build pass."
   - id: "06"
     title: "Policy Engine"
     file: "docs/milestones/06-policy-engine.md"

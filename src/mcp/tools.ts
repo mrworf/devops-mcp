@@ -2,6 +2,8 @@ import type { ToolResult } from "./results.js";
 import { toolError, toolSuccess } from "./results.js";
 import { listVisibleServices } from "../registry.js";
 import type { AuthContext, GatewayConfig } from "../types.js";
+import { getTokenBroker, type TokenRequestInput } from "../tokens.js";
+import { GatewayError } from "../errors.js";
 import {
   emptyInputSchema,
   errorOutputSchema,
@@ -122,14 +124,53 @@ export const toolDescriptors: ToolDescriptor[] = [
   },
 ];
 
-export function callTool(name: string, config: GatewayConfig, auth: AuthContext): ToolResult {
+export function callTool(name: string, args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext): ToolResult {
   const descriptor = toolDescriptors.find((tool) => tool.name === name);
   if (!descriptor) {
     return toolError("not_implemented", `Tool ${name} is not available.`);
   }
-  if (name === "list_services") {
-    const services = listVisibleServices(config, auth);
-    return toolSuccess({ services }, `Found ${services.length} configured service(s).`);
+  try {
+    if (name === "list_services") {
+      const services = listVisibleServices(config, auth);
+      return toolSuccess({ services }, `Found ${services.length} configured service(s).`);
+    }
+    if (name === "request_tokens") {
+      const result = getTokenBroker(config).issueTokens(auth, parseTokenRequest(args));
+      return toolSuccess({ tokens: result.tokens }, `Issued ${result.tokens.length} opaque token(s).`);
+    }
+  } catch (error) {
+    if (error instanceof GatewayError) return toolError(error.code, error.message);
+    throw error;
   }
   return toolError("not_implemented", `${descriptor.name} is registered but not implemented in this milestone.`);
+}
+
+function parseTokenRequest(args: Record<string, unknown> | undefined): TokenRequestInput {
+  if (args === undefined) throw new GatewayError("token_invalid", "request_tokens arguments are required.");
+  const service = readString(args, "service");
+  const destination = readOptionalString(args, "destination");
+  const reason = readString(args, "reason");
+  const credentialIds = args["credential_ids"];
+  if (!Array.isArray(credentialIds) || !credentialIds.every((value) => typeof value === "string")) {
+    throw new GatewayError("unknown_credential", "credential_ids must be an array of strings.");
+  }
+  return {
+    service,
+    ...(destination === undefined ? {} : { destination }),
+    credential_ids: credentialIds,
+    reason,
+  };
+}
+
+function readString(args: Record<string, unknown>, name: string): string {
+  const value = args[name];
+  if (typeof value !== "string") throw new GatewayError("token_invalid", `${name} must be a string.`);
+  return value;
+}
+
+function readOptionalString(args: Record<string, unknown>, name: string): string | undefined {
+  const value = args[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new GatewayError("token_invalid", `${name} must be a string.`);
+  return value;
 }

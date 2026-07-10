@@ -76,7 +76,7 @@ describe("MCP surface", () => {
     }
   });
 
-  it("returns safe stub errors without configured secrets", async () => {
+  it("issues opaque tokens through request_tokens without configured secrets", async () => {
     const fixture = await startFixtureServer();
     try {
       const initialize = await postMcp(fixture.url, {
@@ -105,9 +105,47 @@ describe("MCP surface", () => {
       }, sessionId ?? undefined);
 
       const serialized = JSON.stringify(call.body);
-      expect(call.body.result.isError).toBe(true);
+      expect(call.body.result.structuredContent.tokens).toHaveLength(1);
+      expect(call.body.result.structuredContent.tokens[0].token).toMatch(/^tok_/);
       expect(serialized).not.toContain("super-secret-api-key");
       expect(serialized).not.toContain("dev-token");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("keeps later milestone tools as safe stubs without configured secrets", async () => {
+    const fixture = await startFixtureServer();
+    try {
+      const initialize = await postMcp(fixture.url, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "mcp-surface-test", version: "1.0.0" },
+        },
+      });
+      const sessionId = initialize.response.headers.get("mcp-session-id");
+      const call = await postMcp(fixture.url, {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "service_request",
+          arguments: {
+            service: "demo-service",
+            method: "GET",
+            path: "/api",
+            reason: "test",
+          },
+        },
+      }, sessionId ?? undefined);
+
+      const serialized = JSON.stringify(call.body);
+      expect(call.body.result.isError).toBe(true);
+      expect(serialized).not.toContain("super-secret-api-key");
       expect(serialized).toContain("not_implemented");
     } finally {
       await fixture.close();

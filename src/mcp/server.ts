@@ -50,7 +50,7 @@ export function createMcpServer(config: GatewayConfig): Server {
         isError: true,
       };
     }
-    return callTool(request.params.name, config, auth);
+    return callTool(request.params.name, request.params.arguments, config, auth);
   });
 
   return server;
