@@ -19,11 +19,13 @@ export type GatewayErrorCode =
 
 export class GatewayError extends Error {
   readonly code: GatewayErrorCode;
+  readonly requestId?: string;
 
-  constructor(code: GatewayErrorCode, message: string) {
+  constructor(code: GatewayErrorCode, message: string, requestId?: string) {
     super(message);
     this.name = "GatewayError";
     this.code = code;
+    if (requestId !== undefined) this.requestId = requestId;
   }
 }
 

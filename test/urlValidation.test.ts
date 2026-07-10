@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GatewayError } from "../src/errors.js";
 import { resolveDestination } from "../src/registry.js";
-import { auth, registryConfig } from "./registry.test.js";
+import { auth, registryConfig } from "./helpers.js";
 
 describe("destination validation", () => {
   it("resolves relative paths against the configured destination", () => {

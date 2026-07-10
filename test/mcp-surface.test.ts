@@ -143,7 +143,7 @@ describe("MCP surface", () => {
       const serialized = JSON.stringify(call.body);
       expect(call.body.result.isError).toBe(true);
       expect(serialized).not.toContain("super-secret-api-key");
-      expect(serialized).toContain("not_implemented");
+      expect(serialized).toContain("No denial context found");
     } finally {
       await fixture.close();
     }

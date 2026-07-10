@@ -5,6 +5,7 @@ import type { AuthContext, GatewayConfig } from "../types.js";
 import { getTokenBroker, type TokenRequestInput } from "../tokens.js";
 import { GatewayError } from "../errors.js";
 import { executeServiceRequest, type ServiceRequestInput } from "../gateway.js";
+import { explainDenial } from "../denials.js";
 import {
   emptyInputSchema,
   errorOutputSchema,
@@ -148,8 +149,14 @@ export async function callTool(
       const result = await executeServiceRequest(config, auth, parseServiceRequest(args));
       return toolSuccess(result as unknown as Record<string, unknown>, `Request ${result.request_id} completed with HTTP ${result.status_code}.`);
     }
+    if (name === "explain_denial") {
+      const requestId = readString(args ?? {}, "request_id");
+      const explanation = explainDenial(auth, requestId);
+      if (explanation === undefined) return toolError("unknown_service", "No denial context found for this request.");
+      return toolSuccess(explanation as unknown as Record<string, unknown>, `Denial ${requestId} explained.`);
+    }
   } catch (error) {
-    if (error instanceof GatewayError) return toolError(error.code, error.message);
+    if (error instanceof GatewayError) return toolError(error.code, error.message, error.requestId);
     throw error;
   }
   return toolError("not_implemented", `${descriptor.name} is registered but not implemented in this milestone.`);

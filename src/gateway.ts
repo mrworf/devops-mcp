@@ -1,6 +1,9 @@
 import { GatewayError } from "./errors.js";
 import { evaluatePolicy } from "./policy.js";
 import { getService, resolveDestination } from "./registry.js";
+import { audit } from "./audit.js";
+import { denialStore } from "./denials.js";
+import { redactResponse } from "./redaction.js";
 import { substituteTokens } from "./substitution.js";
 import { getTokenBroker } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
@@ -47,29 +50,85 @@ export async function executeServiceRequest(
     ...(input.url === undefined ? {} : { url: input.url }),
   });
   const policy = evaluatePolicy(service, target, input.method);
-  if (!policy.allowed) throw new GatewayError("policy_denied", policy.reason);
+  if (!policy.allowed) {
+    const denial = denialStore.record({
+      subject: auth.subject,
+      ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
+      reason: policy.reason,
+      ...(policy.matchedRule === undefined ? {} : { matched_rule: policy.matchedRule }),
+      policy_mode: policy.policyMode,
+      ...(policy.suggestion === undefined ? {} : { suggestion: policy.suggestion }),
+    });
+    audit({
+      type: "service_request",
+      request_id: denial.request_id,
+      subject: auth.subject,
+      ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
+      service: service.id,
+      destination: target.destination.id,
+      credential_ids: [],
+      internal_token_ids: [],
+      method: input.method.toUpperCase(),
+      target_host: target.url.hostname,
+      target_path: target.methodPath,
+      policy_decision: "deny",
+      ...(policy.matchedRule === undefined ? {} : { matched_policy_rule: policy.matchedRule }),
+      request_timestamp: new Date().toISOString(),
+      request_duration_ms: 0,
+      tls_verify: target.tls.verify,
+      redaction_count: 0,
+      error_code: "policy_denied",
+      error_message: policy.reason,
+    });
+    throw new GatewayError("policy_denied", policy.reason, denial.request_id);
+  }
 
   const broker = getTokenBroker(config);
   const tokenTarget = { service: service.id, destination: target.destination.id };
   const headers = input.headers ?? {};
-  const substitutedHeaders = substituteTokens(headers, broker, auth, tokenTarget, service).value;
-  const substitutedQuery = substituteTokens(input.query ?? {}, broker, auth, tokenTarget, service).value;
-  const substitutedBody = substituteTokens(input.body, broker, auth, tokenTarget, service).value;
+  const headerSubstitution = substituteTokens(headers, broker, auth, tokenTarget, service);
+  const querySubstitution = substituteTokens(input.query ?? {}, broker, auth, tokenTarget, service);
+  const bodySubstitution = substituteTokens(input.body, broker, auth, tokenTarget, service);
+  const substitutedHeaders = headerSubstitution.value;
+  const substitutedQuery = querySubstitution.value;
+  const substitutedBody = bodySubstitution.value;
+  const tokenRecords = [...headerSubstitution.records, ...querySubstitution.records, ...bodySubstitution.records];
 
   const downstream = buildDownstreamRequest(config, target.url, input.method, substitutedHeaders, substitutedQuery, substitutedBody);
   const started = Date.now();
   const response = await fetchWithTimeout(downstream.url, downstream.init, config.limits.timeoutMs);
   const responseHeaders = Object.fromEntries(response.headers.entries());
   const rawBody = await limitedResponseText(response, config.limits.maxResponseBodyBytes);
-  const redacted = redactExact(rawBody.body, responseHeaders, service.credentials.map((credential) => credential.secret));
+  const redacted = redactResponse({ body: rawBody.body, headers: responseHeaders }, service.credentials.map((credential) => credential.secret));
+  const requestId = `req_${started}`;
+  audit({
+    type: "service_request",
+    request_id: requestId,
+    subject: auth.subject,
+    ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
+    service: service.id,
+    destination: target.destination.id,
+    credential_ids: [...new Set(tokenRecords.map((record) => record.credentialId))],
+    internal_token_ids: [...new Set(tokenRecords.map((record) => record.id))],
+    method: input.method.toUpperCase(),
+    target_host: target.url.hostname,
+    target_path: target.methodPath,
+    policy_decision: "allow",
+    ...(policy.matchedRule === undefined ? {} : { matched_policy_rule: policy.matchedRule }),
+    downstream_status_code: response.status,
+    request_timestamp: new Date(started).toISOString(),
+    request_duration_ms: Date.now() - started,
+    tls_verify: target.tls.verify,
+    redaction_count: redacted.redaction_count,
+  });
 
   return {
-    request_id: `req_${started}`,
+    request_id: requestId,
     status_code: response.status,
     headers: redacted.headers,
     body: redacted.body,
-    redacted: redacted.count > 0,
-    redaction_count: redacted.count,
+    redacted: redacted.redacted,
+    redaction_count: redacted.redaction_count,
     tls: { verify: target.tls.verify },
     truncated: rawBody.truncated,
   };
@@ -140,30 +199,6 @@ async function limitedResponseText(response: Response, maxBytes: number): Promis
   const text = await response.text();
   if (Buffer.byteLength(text) <= maxBytes) return { body: text, truncated: false };
   return { body: text.slice(0, maxBytes), truncated: true };
-}
-
-function redactExact(body: string, headers: Record<string, string>, secrets: string[]): { body: string; headers: Record<string, string>; count: number } {
-  let count = 0;
-  let nextBody = body;
-  const nextHeaders = { ...headers };
-  for (const secret of secrets.filter(Boolean)) {
-    const escaped = JSON.stringify(secret).slice(1, -1);
-    for (const value of [secret, escaped]) {
-      for (const key of Object.keys(nextHeaders)) {
-        const replaced = nextHeaders[key]?.split(value).join("[REDACTED]");
-        if (replaced !== undefined && replaced !== nextHeaders[key]) {
-          count += (nextHeaders[key]?.split(value).length ?? 1) - 1;
-          nextHeaders[key] = replaced;
-        }
-      }
-      const parts = nextBody.split(value);
-      if (parts.length > 1) {
-        count += parts.length - 1;
-        nextBody = parts.join("[REDACTED]");
-      }
-    }
-  }
-  return { body: nextBody, headers: nextHeaders, count };
 }
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {

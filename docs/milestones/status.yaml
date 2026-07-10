@@ -58,10 +58,10 @@ milestones:
   - id: "08"
     title: "Redaction, Audit, And Denials"
     file: "docs/milestones/08-redaction-audit-denials.md"
-    status: "pending"
-    completed_at: null
+    status: "completed"
+    completed_at: "2026-07-10T05:10:57Z"
     commit_hash: null
-    notes: ""
+    notes: "Implemented redaction module, sanitized audit events, request IDs, denial explanations; npm test and npm run build pass."
   - id: "09"
     title: "Docker And Docs"
     file: "docs/milestones/09-docker-docs.md"
