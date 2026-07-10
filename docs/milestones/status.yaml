@@ -1,0 +1,71 @@
+milestones:
+  - id: "00"
+    title: "Architecture Baseline"
+    file: "docs/milestones/00-architecture.md"
+    status: "completed"
+    completed_at: "2026-07-10T04:33:03Z"
+    commit_hash: null
+    notes: "Architecture baseline and milestone planning packet created."
+  - id: "01"
+    title: "Project Skeleton And Config"
+    file: "docs/milestones/01-project-skeleton-config.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
+  - id: "02"
+    title: "MCP Surface"
+    file: "docs/milestones/02-mcp-surface.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
+  - id: "03"
+    title: "Auth"
+    file: "docs/milestones/03-auth.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
+  - id: "04"
+    title: "Service Registry And Destination Validation"
+    file: "docs/milestones/04-service-registry-destinations.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
+  - id: "05"
+    title: "Token Broker"
+    file: "docs/milestones/05-token-broker.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
+  - id: "06"
+    title: "Policy Engine"
+    file: "docs/milestones/06-policy-engine.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
+  - id: "07"
+    title: "HTTP Gateway"
+    file: "docs/milestones/07-http-gateway.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
+  - id: "08"
+    title: "Redaction, Audit, And Denials"
+    file: "docs/milestones/08-redaction-audit-denials.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
+  - id: "09"
+    title: "Docker And Docs"
+    file: "docs/milestones/09-docker-docs.md"
+    status: "pending"
+    completed_at: null
+    commit_hash: null
+    notes: ""
