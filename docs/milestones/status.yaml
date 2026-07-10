@@ -23,10 +23,10 @@ milestones:
   - id: "03"
     title: "Auth"
     file: "docs/milestones/03-auth.md"
-    status: "pending"
-    completed_at: null
+    status: "completed"
+    completed_at: "2026-07-10T04:53:15Z"
     commit_hash: null
-    notes: ""
+    notes: "Implemented OAuth/JWKS validation, bearer dev auth, protected resource metadata, MCP auth enforcement; npm test and npm run build pass."
   - id: "04"
     title: "Service Registry And Destination Validation"
     file: "docs/milestones/04-service-registry-destinations.md"

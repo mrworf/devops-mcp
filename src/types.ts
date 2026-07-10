@@ -18,6 +18,13 @@ export interface ServerConfig {
 
 export type AuthConfig = OAuthAuthConfig | BearerAuthConfig;
 
+export interface AuthContext {
+  subject: string;
+  sessionId?: string;
+  scopes: string[];
+  mode: AuthConfig["mode"];
+}
+
 export interface OAuthAuthConfig {
   mode: "oauth";
   oauth: {

@@ -171,6 +171,7 @@ async function postMcp(url: string, body: Record<string, unknown>, sessionId?: s
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "accept": "application/json, text/event-stream",
+    "authorization": "Bearer dev-token",
   };
   if (sessionId !== undefined) headers["mcp-session-id"] = sessionId;
   const response = await fetch(url, {
