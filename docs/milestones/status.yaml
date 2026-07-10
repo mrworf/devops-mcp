@@ -9,10 +9,10 @@ milestones:
   - id: "01"
     title: "Project Skeleton And Config"
     file: "docs/milestones/01-project-skeleton-config.md"
-    status: "pending"
-    completed_at: null
+    status: "completed"
+    completed_at: "2026-07-10T04:44:10Z"
     commit_hash: null
-    notes: ""
+    notes: "Implemented TypeScript skeleton, config validation, health server, Dockerfile; npm test and npm run build pass."
   - id: "02"
     title: "MCP Surface"
     file: "docs/milestones/02-mcp-surface.md"
