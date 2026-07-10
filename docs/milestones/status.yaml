@@ -65,7 +65,7 @@ milestones:
   - id: "09"
     title: "Docker And Docs"
     file: "docs/milestones/09-docker-docs.md"
-    status: "pending"
-    completed_at: null
+    status: "completed"
+    completed_at: "2026-07-10T05:13:12Z"
     commit_hash: null
-    notes: ""
+    notes: "Added Docker healthcheck, compose example, sample config, Codex/setup/security docs; npm test and npm run build pass. Docker smoke not run because docker is unavailable in this environment."

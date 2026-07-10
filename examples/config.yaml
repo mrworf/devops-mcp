@@ -1,0 +1,67 @@
+server:
+  listen: 0.0.0.0:8080
+  mcp_path: /mcp
+  resource: http://localhost:8080
+
+auth:
+  mode: bearer
+  bearer:
+    token_env: AGENT_GATEWAY_MCP_TOKEN
+
+tokens:
+  idle_ttl: 10m
+  max_ttl: 1h
+
+limits:
+  max_request_body: 1mb
+  max_response_body: 5mb
+  timeout: 30s
+
+services:
+  portainer-prod:
+    type: http
+    name: Portainer Production
+    description: Main Portainer instance
+
+    destinations:
+      - name: primary
+        base_url: https://portainer.internal:9443
+        schemes: [https]
+        hosts:
+          - exact: portainer.internal
+        ports: [9443]
+
+    tls:
+      verify: false
+
+    credentials:
+      - id: api_key
+        usage:
+          kind: header
+          name: X-API-Key
+        source:
+          kind: file
+          path: /run/secrets/portainer_api_key
+
+    access:
+      users:
+        - henric@example.com
+
+    policy:
+      mode: deny
+      rules:
+        - id: allow-stack-read
+          effect: allow
+          priority: 100
+          methods: [GET]
+          paths:
+            - /api/stacks.*
+            - /api/endpoints.*
+
+        - id: deny-delete
+          effect: deny
+          priority: 1000
+          methods: [DELETE]
+          paths:
+            - /.*
+          reason: DELETE blocked in MVP
