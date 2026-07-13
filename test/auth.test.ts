@@ -1,14 +1,23 @@
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { once } from "node:events";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { exportJWK, exportPKCS8, generateKeyPair, SignJWT } from "jose";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { authenticateRequest } from "../src/auth.js";
+import { hashBuiltinOAuthPassword } from "../src/builtinOAuth.js";
 import { validateConfig } from "../src/config.js";
 import { GatewayError } from "../src/errors.js";
 import { createGatewayServer } from "../src/server.js";
 import type { GatewayConfig } from "../src/types.js";
 
 describe("auth", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("accepts bearer dev tokens only in bearer mode", async () => {
     const config = bearerConfig();
 
@@ -50,6 +59,248 @@ describe("auth", () => {
       expect(response.status).toBe(200);
       expect(body.authorization_servers).toEqual(["https://auth.example.com"]);
       expect(body.scopes_supported).toEqual(["gateway.read", "gateway.tokens", "gateway.request"]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("publishes built-in OAuth issuer and authorization server metadata", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    try {
+      const protectedResource = await fetch(`${fixture.baseUrl}/.well-known/oauth-protected-resource`);
+      const protectedBody = await protectedResource.json() as {
+        resource: string;
+        authorization_servers: string[];
+        scopes_supported: string[];
+      };
+      expect(protectedBody.resource).toBe("https://mcp-devops.sensenet.nu");
+      expect(protectedBody.authorization_servers).toEqual(["https://mcp-devops.sensenet.nu"]);
+      expect(protectedBody.scopes_supported).toEqual(["gateway.read", "gateway.tokens", "gateway.request"]);
+
+      const metadata = await fetch(`${fixture.baseUrl}/.well-known/oauth-authorization-server`);
+      const metadataBody = await metadata.json() as Record<string, unknown>;
+      expect(metadataBody).toMatchObject({
+        issuer: "https://mcp-devops.sensenet.nu",
+        authorization_endpoint: "https://mcp-devops.sensenet.nu/oauth/authorize",
+        token_endpoint: "https://mcp-devops.sensenet.nu/oauth/token",
+        jwks_uri: "https://mcp-devops.sensenet.nu/oauth/jwks.json",
+        client_id_metadata_document_supported: true,
+      });
+      expect(metadataBody.code_challenge_methods_supported).toEqual(["S256"]);
+      expect(metadataBody.token_endpoint_auth_methods_supported).toEqual(["none"]);
+
+      const jwks = await fetch(`${fixture.baseUrl}/oauth/jwks.json`);
+      const jwksBody = await jwks.json() as { keys: unknown[] };
+      expect(jwksBody.keys).toHaveLength(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("completes built-in OAuth authorization code flow and authenticates the issued token", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    const codeVerifier = "test-verifier";
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async (url: string) => {
+      expect(url).toBe("https://chatgpt.com/oauth/client");
+      return new Response(JSON.stringify({ redirect_uris: [redirectUri] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    try {
+      const authorize = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({
+          redirect_uri: redirectUri,
+          code_challenge: pkceChallenge(codeVerifier),
+          username: "admin@example.com",
+          password: "correct horse battery staple",
+          state: "setup-state",
+        }),
+      });
+      expect(authorize.status).toBe(302);
+      const location = new URL(authorize.headers.location ?? "");
+      expect(location.origin + location.pathname).toBe(redirectUri);
+      expect(location.searchParams.get("state")).toBe("setup-state");
+      const code = location.searchParams.get("code");
+      expect(code).toBeTruthy();
+
+      const token = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code: code ?? "",
+          client_id: "https://chatgpt.com/oauth/client",
+          redirect_uri: redirectUri,
+          code_verifier: codeVerifier,
+        }).toString(),
+      });
+      expect(token.status).toBe(200);
+      const tokenBody = JSON.parse(token.body) as { access_token: string; token_type: string; scope: string };
+      expect(tokenBody.token_type).toBe("Bearer");
+      expect(tokenBody.scope).toBe("gateway.read");
+
+      const context = await authenticateRequest(requestWithBearer(tokenBody.access_token), config, ["gateway.read"]);
+      expect(context).toMatchObject({ subject: "admin@example.com", mode: "builtin_oauth" });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rejects invalid built-in OAuth login without leaking credentials", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    try {
+      const response = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({
+          password: "wrong-password",
+          code_challenge: pkceChallenge("verifier"),
+        }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(response.body).toContain("Invalid username or password.");
+      expect(response.body).not.toContain("admin@example.com");
+      expect(response.body).not.toContain("wrong-password");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rejects unallowed built-in OAuth CIMD clients and redirect mismatches", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    try {
+      const unallowed = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({
+          client_id: "https://evil.example.com/client",
+          redirect_uri: "https://evil.example.com/callback",
+          code_challenge: pkceChallenge("verifier"),
+        }),
+      });
+      expect(unallowed.status).toBe(400);
+      expect(JSON.parse(unallowed.body)).toEqual({ error: "invalid_client" });
+
+      vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/other"] }), { status: 200 }));
+      const redirectMismatch = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({ code_challenge: pkceChallenge("verifier") }),
+      });
+      expect(redirectMismatch.status).toBe(400);
+      expect(JSON.parse(redirectMismatch.body)).toEqual({ error: "invalid_request" });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("treats exact built-in OAuth CIMD client allowlist entries as exact URLs", async () => {
+    const config = await builtinOAuthConfig({ allowedClients: ["https://chatgpt.com/oauth/client"] });
+    const fixture = await startServer(config);
+    try {
+      const sameOriginDifferentUrl = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({
+          client_id: "https://chatgpt.com/oauth/other-client",
+          code_challenge: pkceChallenge("verifier"),
+        }),
+      });
+      expect(sameOriginDifferentUrl.status).toBe(400);
+      expect(JSON.parse(sameOriginDifferentUrl.body)).toEqual({ error: "invalid_client" });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rejects missing or wrong built-in OAuth resource", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    try {
+      const missing = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({ resource: "", code_challenge: pkceChallenge("verifier") }),
+      });
+      expect(missing.status).toBe(400);
+      expect(JSON.parse(missing.body)).toEqual({ error: "invalid_target" });
+
+      const wrong = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({ resource: "https://other.example.com", code_challenge: pkceChallenge("verifier") }),
+      });
+      expect(wrong.status).toBe(400);
+      expect(JSON.parse(wrong.body)).toEqual({ error: "invalid_target" });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rejects reused codes and wrong PKCE verifiers in built-in OAuth token exchange", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    try {
+      const verifier = "verifier";
+      const authorize = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({
+          redirect_uri: redirectUri,
+          code_challenge: pkceChallenge(verifier),
+          username: "admin@example.com",
+          password: "correct horse battery staple",
+        }),
+      });
+      const code = new URL(authorize.headers.location ?? "").searchParams.get("code") ?? "";
+
+      const wrongPkce = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: tokenBody(code, redirectUri, "wrong-verifier"),
+      });
+      expect(wrongPkce.status).toBe(400);
+      expect(JSON.parse(wrongPkce.body)).toEqual({ error: "invalid_grant" });
+
+      const reused = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: tokenBody(code, redirectUri, verifier),
+      });
+      expect(reused.status).toBe(400);
+      expect(JSON.parse(reused.body)).toEqual({ error: "invalid_grant" });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rejects expired built-in OAuth authorization codes", async () => {
+    const config = await builtinOAuthConfig({ authorizationCodeTtl: "1ms" });
+    const fixture = await startServer(config);
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    try {
+      const verifier = "verifier";
+      const authorize = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({
+          redirect_uri: redirectUri,
+          code_challenge: pkceChallenge(verifier),
+          username: "admin@example.com",
+          password: "correct horse battery staple",
+        }),
+      });
+      const code = new URL(authorize.headers.location ?? "").searchParams.get("code") ?? "";
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const expired = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: tokenBody(code, redirectUri, verifier),
+      });
+      expect(expired.status).toBe(400);
+      expect(JSON.parse(expired.body)).toEqual({ error: "invalid_grant" });
     } finally {
       await fixture.close();
     }
@@ -152,6 +403,38 @@ function oauthConfig(jwksUri: string): GatewayConfig {
   });
 }
 
+async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allowedClients?: string[] } = {}): Promise<GatewayConfig> {
+  const { privateKey } = await generateKeyPair("RS256", { extractable: true });
+  const dir = mkdtempSync(join(tmpdir(), "gateway-builtin-oauth-"));
+  const keyPath = join(dir, "signing-key.pem");
+  writeFileSync(keyPath, await exportPKCS8(privateKey));
+
+  return validateConfig({
+    ...baseRawConfig({
+      mode: "builtin_oauth",
+      builtin_oauth: {
+        issuer: "https://mcp-devops.sensenet.nu",
+        admin_username_env: "ADMIN_USERNAME",
+        admin_password_hash_env: "ADMIN_PASSWORD_HASH",
+        signing_key_file: keyPath,
+        access_token_ttl: "1h",
+        authorization_code_ttl: options.authorizationCodeTtl ?? "5m",
+        allowed_clients: options.allowedClients ?? ["https://chatgpt.com"],
+        required_scopes: ["gateway.read", "gateway.tokens", "gateway.request"],
+      },
+    }),
+    server: {
+      listen: "127.0.0.1:8080",
+      mcp_path: "/mcp",
+      resource: "https://mcp-devops.sensenet.nu",
+    },
+  }, {
+    ADMIN_USERNAME: "admin@example.com",
+    ADMIN_PASSWORD_HASH: hashBuiltinOAuthPassword("correct horse battery staple", "test-salt", 1000),
+    DEMO_API_KEY: "secret",
+  });
+}
+
 function baseRawConfig(auth: Record<string, unknown>): Record<string, unknown> {
   return {
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
@@ -177,6 +460,65 @@ function requestWithBearer(token: string) {
       authorization: `Bearer ${token}`,
     },
   } as any;
+}
+
+function authorizationBody(overrides: Record<string, string> = {}): string {
+  return new URLSearchParams({
+    response_type: "code",
+    client_id: "https://chatgpt.com/oauth/client",
+    redirect_uri: "https://chatgpt.com/oauth/callback",
+    scope: "gateway.read",
+    state: "state",
+    code_challenge_method: "S256",
+    code_challenge: "challenge",
+    resource: "https://mcp-devops.sensenet.nu",
+    username: "admin@example.com",
+    password: "correct horse battery staple",
+    ...overrides,
+  }).toString();
+}
+
+function tokenBody(code: string, redirectUri: string, verifier: string): string {
+  return new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    client_id: "https://chatgpt.com/oauth/client",
+    redirect_uri: redirectUri,
+    code_verifier: verifier,
+  }).toString();
+}
+
+function pkceChallenge(verifier: string): string {
+  return Buffer.from(createHash("sha256").update(verifier).digest()).toString("base64url");
+}
+
+async function localRequest(urlText: string, options: { method: string; body?: string }): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+  const url = new URL(urlText);
+  const body = options.body ?? "";
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: options.method,
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "content-length": Buffer.byteLength(body),
+      },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      response.on("end", () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          headers: Object.fromEntries(Object.entries(response.headers).map(([key, value]) => [key, Array.isArray(value) ? value[0] ?? "" : value ?? ""])),
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+      });
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
 }
 
 async function startServer(config: GatewayConfig) {

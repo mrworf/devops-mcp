@@ -1,10 +1,11 @@
-import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey, type JWTVerifyOptions } from "jose";
+import { createRemoteJWKSet, importSPKI, jwtVerify, type JWTPayload, type JWTVerifyGetKey, type JWTVerifyOptions } from "jose";
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { GatewayError } from "./errors.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
 
 const jwksCache = new Map<string, JWTVerifyGetKey>();
+const publicKeyCache = new Map<string, ReturnType<typeof importSPKI>>();
 
 export async function authenticateRequest(
   request: IncomingMessage,
@@ -25,6 +26,34 @@ export async function authenticateRequest(
       subject: "bearer-dev",
       scopes: requiredScopes,
       mode: "bearer",
+      ...(sessionId === undefined ? {} : { sessionId }),
+    };
+  }
+
+  if (config.auth.mode === "builtin_oauth") {
+    const builtin = config.auth.builtinOAuth;
+    let payload: JWTPayload;
+    try {
+      const verified = await jwtVerify(bearer, await getPublicKey(builtin.signingPublicKeyPem), {
+        issuer: builtin.issuer,
+        audience: config.server.resource ?? builtin.issuer,
+      });
+      payload = verified.payload;
+    } catch {
+      throw new GatewayError("unauthenticated", "Invalid OAuth access token.");
+    }
+
+    const scopes = extractScopes(payload);
+    const missing = requiredScopes.filter((scope) => !scopes.includes(scope));
+    if (missing.length > 0) {
+      throw new GatewayError("unauthenticated", "OAuth token does not include required scopes.");
+    }
+
+    const sessionId = readHeader(request, "mcp-session-id");
+    return {
+      subject: subjectFromPayload(payload),
+      scopes,
+      mode: "builtin_oauth",
       ...(sessionId === undefined ? {} : { sessionId }),
     };
   }
@@ -70,8 +99,16 @@ export function buildAuthenticateChallenge(config: GatewayConfig, request: Incom
 
 export function protectedResourceMetadata(config: GatewayConfig, request: IncomingMessage): Record<string, unknown> {
   const resource = config.server.resource ?? requestOrigin(request);
-  const scopes = config.auth.mode === "oauth" ? config.auth.oauth.requiredScopes : ["gateway.read", "gateway.tokens", "gateway.request"];
-  const authorizationServers = config.auth.mode === "oauth" ? [config.auth.oauth.issuer] : [];
+  const scopes = config.auth.mode === "oauth"
+    ? config.auth.oauth.requiredScopes
+    : config.auth.mode === "builtin_oauth"
+      ? config.auth.builtinOAuth.requiredScopes
+      : ["gateway.read", "gateway.tokens", "gateway.request"];
+  const authorizationServers = config.auth.mode === "oauth"
+    ? [config.auth.oauth.issuer]
+    : config.auth.mode === "builtin_oauth"
+      ? [config.auth.builtinOAuth.issuer]
+      : [];
   return {
     resource,
     authorization_servers: authorizationServers,
@@ -114,6 +151,14 @@ function getJwks(jwksUri: string): JWTVerifyGetKey {
   const jwks = createRemoteJWKSet(new URL(jwksUri));
   jwksCache.set(jwksUri, jwks);
   return jwks;
+}
+
+function getPublicKey(publicKeyPem: string): ReturnType<typeof importSPKI> {
+  const cached = publicKeyCache.get(publicKeyPem);
+  if (cached !== undefined) return cached;
+  const key = importSPKI(publicKeyPem, "RS256");
+  publicKeyCache.set(publicKeyPem, key);
+  return key;
 }
 
 function extractScopes(payload: JWTPayload): string[] {

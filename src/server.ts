@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { authenticateRequest, buildAuthenticateChallenge } from "./auth.js";
+import { handleBuiltinOAuthRequest, isBuiltinOAuthRequest } from "./builtinOAuth.js";
 import { loadConfig } from "./config.js";
 import { handleMcpRequest, isMcpGet, isMcpPost, readJsonBody } from "./mcp/server.js";
 import { handleOAuthMetadataRequest, isOAuthMetadataRequest } from "./oauthMetadata.js";
@@ -24,6 +25,12 @@ export function createGatewayServer(config: GatewayConfig) {
     if (isOAuthMetadataRequest(request)) {
       logger.debug("oauth.metadata_request", { method: request.method, path: request.url });
       handleOAuthMetadataRequest(config, request, response);
+      return;
+    }
+
+    if (isBuiltinOAuthRequest(config, request)) {
+      logger.debug("oauth.builtin_request", { method: request.method, path: request.url?.split("?")[0] });
+      await handleBuiltinOAuthRequest(config, request, response);
       return;
     }
 

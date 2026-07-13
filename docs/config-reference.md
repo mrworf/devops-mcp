@@ -34,6 +34,31 @@ auth:
 
 Bearer mode is simpler and useful for local deployments, but OAuth is the production path.
 
+Built-in OAuth mode for a private ChatGPT-hosted MCP:
+
+```yaml
+server:
+  resource: https://mcp-devops.sensenet.nu
+
+auth:
+  mode: builtin_oauth
+  builtin_oauth:
+    issuer: https://mcp-devops.sensenet.nu
+    admin_username_env: AGENT_GATEWAY_ADMIN_USERNAME
+    admin_password_hash_env: AGENT_GATEWAY_ADMIN_PASSWORD_HASH
+    signing_key_file: /run/secrets/oauth_signing_key.pem
+    access_token_ttl: 1h
+    authorization_code_ttl: 5m
+    allowed_clients:
+      - https://chatgpt.com
+    required_scopes:
+      - gateway.read
+      - gateway.tokens
+      - gateway.request
+```
+
+`builtin_oauth` is intended for a private single-admin deployment. It publishes authorization server discovery from this gateway, accepts ChatGPT's CIMD public-client flow with PKCE, and issues JWT access tokens for the MCP resource. Store `AGENT_GATEWAY_ADMIN_PASSWORD_HASH` as `pbkdf2-sha256$iterations$saltBase64url$hashBase64url`, not as a raw password. The signing key file must contain an RSA private key PEM.
+
 ## Logging
 `logging.level` defaults to `info`. Set it to `debug` while setting up the MCP server to emit structured setup diagnostics such as MCP method names, required scopes, service IDs, destination IDs, target hosts and paths, TLS verification state, status codes, durations, and redaction counts.
 

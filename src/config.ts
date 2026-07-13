@@ -1,3 +1,4 @@
+import { createHash, createPublicKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -51,6 +52,20 @@ const rawConfigSchema = z.object({
         resource: z.string().url().optional(),
         jwks_uri: z.string().url().optional(),
         required_scopes: z.array(z.string().min(1)).default([]),
+      }).strict(),
+    }).strict(),
+    z.object({
+      mode: z.literal("builtin_oauth"),
+      builtin_oauth: z.object({
+        issuer: z.string().url(),
+        admin_username_env: z.string().min(1),
+        admin_password_hash_env: z.string().min(1).optional(),
+        admin_password_hash_file: z.string().min(1).optional(),
+        signing_key_file: z.string().min(1),
+        access_token_ttl: z.string().default("1h"),
+        authorization_code_ttl: z.string().default("5m"),
+        allowed_clients: z.array(z.string().min(1)).min(1),
+        required_scopes: z.array(z.string().min(1)).default(["gateway.read", "gateway.tokens", "gateway.request"]),
       }).strict(),
     }).strict(),
     z.object({
@@ -195,6 +210,43 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
     };
   }
 
+  if (raw.mode === "builtin_oauth") {
+    const username = env[raw.builtin_oauth.admin_username_env];
+    if (!username) throw configError(`Missing built-in OAuth admin username environment variable: ${raw.builtin_oauth.admin_username_env}`);
+
+    const hashEnv = raw.builtin_oauth.admin_password_hash_env;
+    const hashFile = raw.builtin_oauth.admin_password_hash_file;
+    if ((hashEnv === undefined && hashFile === undefined) || (hashEnv !== undefined && hashFile !== undefined)) {
+      throw configError("auth.builtin_oauth must include exactly one of admin_password_hash_env or admin_password_hash_file");
+    }
+    const adminPasswordHash = hashEnv === undefined ? readSecretFile(hashFile) : env[hashEnv];
+    if (!adminPasswordHash) throw configError(`Missing built-in OAuth admin password hash environment variable: ${hashEnv}`);
+
+    const signingPrivateKeyPem = readSecretFile(raw.builtin_oauth.signing_key_file);
+    let signingPublicKeyPem: string;
+    try {
+      signingPublicKeyPem = createPublicKey(signingPrivateKeyPem).export({ type: "spki", format: "pem" }).toString();
+    } catch {
+      throw configError("auth.builtin_oauth.signing_key_file must contain a valid private key");
+    }
+
+    return {
+      mode: "builtin_oauth",
+      builtinOAuth: {
+        issuer: raw.builtin_oauth.issuer.replace(/\/$/, ""),
+        adminUsername: username,
+        adminPasswordHash,
+        signingPrivateKeyPem,
+        signingPublicKeyPem,
+        signingKeyId: keyIdForPublicKey(signingPublicKeyPem),
+        accessTokenTtlMs: parseDuration(raw.builtin_oauth.access_token_ttl, "auth.builtin_oauth.access_token_ttl"),
+        authorizationCodeTtlMs: parseDuration(raw.builtin_oauth.authorization_code_ttl, "auth.builtin_oauth.authorization_code_ttl"),
+        allowedClients: raw.builtin_oauth.allowed_clients,
+        requiredScopes: raw.builtin_oauth.required_scopes,
+      },
+    };
+  }
+
   const tokenEnv = raw.bearer.token_env;
   const tokenFile = raw.bearer.token_file;
   if ((tokenEnv === undefined && tokenFile === undefined) || (tokenEnv !== undefined && tokenFile !== undefined)) {
@@ -207,6 +259,10 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
   }
 
   return { mode: "bearer", bearer: { token: readSecretFile(tokenFile), source: "file" } };
+}
+
+function keyIdForPublicKey(publicKeyPem: string): string {
+  return createHash("sha256").update(publicKeyPem).digest("base64url").slice(0, 16);
 }
 
 function normalizeTokens(raw: RawConfig["tokens"]): TokenConfig {

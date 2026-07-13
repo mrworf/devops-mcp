@@ -17,7 +17,7 @@ export interface ServerConfig {
   resource?: string;
 }
 
-export type AuthConfig = OAuthAuthConfig | BearerAuthConfig;
+export type AuthConfig = OAuthAuthConfig | BuiltinOAuthAuthConfig | BearerAuthConfig;
 
 export interface AuthContext {
   subject: string;
@@ -33,6 +33,22 @@ export interface OAuthAuthConfig {
     audience?: string;
     resource?: string;
     jwksUri?: string;
+    requiredScopes: string[];
+  };
+}
+
+export interface BuiltinOAuthAuthConfig {
+  mode: "builtin_oauth";
+  builtinOAuth: {
+    issuer: string;
+    adminUsername: string;
+    adminPasswordHash: string;
+    signingPrivateKeyPem: string;
+    signingPublicKeyPem: string;
+    signingKeyId: string;
+    accessTokenTtlMs: number;
+    authorizationCodeTtlMs: number;
+    allowedClients: string[];
     requiredScopes: string[];
   };
 }

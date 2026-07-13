@@ -46,4 +46,18 @@ default_tools_approval_mode = "prompt"
 ChatGPT desktop uses the shared Codex MCP host configuration. Configure the server for Codex, then restart or refresh ChatGPT desktop so it can see the MCP server.
 
 ## ChatGPT Web
-ChatGPT web does not read local Codex MCP configuration. Web support requires a separate hosted or plugin integration path and is post-MVP.
+ChatGPT web developer-mode apps connect to the hosted MCP endpoint, for example:
+
+```text
+https://mcp-devops.sensenet.nu/mcp
+```
+
+Use `auth.mode: builtin_oauth` or an external OAuth provider for hosted ChatGPT. Bearer mode publishes protected resource metadata with `authorization_servers: []`, so ChatGPT cannot start an OAuth login flow and may report "No OAuth" during setup.
+
+For the built-in private OAuth mode:
+
+1. Set `server.resource` and `auth.builtin_oauth.issuer` to the public HTTPS origin, for example `https://mcp-devops.sensenet.nu`.
+2. Configure one admin username and a PBKDF2 password hash through environment variables or mounted secret files.
+3. Mount an RSA private signing key at `auth.builtin_oauth.signing_key_file`.
+4. Add ChatGPT's CIMD origin or exact client metadata URL to `auth.builtin_oauth.allowed_clients`.
+5. In ChatGPT developer mode, create the app with the public `/mcp` URL.
