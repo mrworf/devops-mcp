@@ -10,3 +10,4 @@
 - Update AGENTS.md when findings are important to remember beyond current session
 - Service must work from both ChatGPT and Codex
 - Minimal OAuth implementation to support the use-cases
+- Do not use MCP transport `mcp-session-id` as a hard authorization boundary; supported clients may reinitialize or vary transport sessions between tool calls.

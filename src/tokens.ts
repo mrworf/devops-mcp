@@ -31,7 +31,6 @@ export interface TokenRecord {
   id: string;
   tokenHash: string;
   subject: string;
-  sessionId?: string;
   service: string;
   destination: string;
   credentialId: string;
@@ -73,7 +72,6 @@ export class TokenBroker {
         id,
         tokenHash: hashToken(token),
         subject: auth.subject,
-        ...(auth.sessionId === undefined ? {} : { sessionId: auth.sessionId }),
         service: service.id,
         destination,
         credentialId,
@@ -119,9 +117,6 @@ export class TokenBroker {
       throw new GatewayError("token_expired", "Opaque token has expired.");
     }
     if (record.subject !== auth.subject) throw new GatewayError("token_invalid", "Opaque token is not bound to this subject.");
-    if (record.sessionId !== undefined && record.sessionId !== auth.sessionId) {
-      throw new GatewayError("token_invalid", "Opaque token is not bound to this session.");
-    }
     if (record.service !== target.service) throw new GatewayError("token_invalid", "Opaque token is not bound to this service.");
     if (target.destination !== undefined && record.destination !== target.destination) {
       throw new GatewayError("token_invalid", "Opaque token is not bound to this destination.");

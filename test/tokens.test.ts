@@ -75,7 +75,27 @@ describe("token broker", () => {
     }, result.tokens[0]?.token ?? ""), "token_expired");
   });
 
-  it("rejects cross-user, cross-session, cross-service, and cross-destination token use", () => {
+  it("allows same-subject token use across changing or missing MCP transport sessions", () => {
+    const broker = new TokenBroker(tokenConfig());
+    const result = broker.issueTokens(auth("henric@example.com", "session-a"), {
+      service: "portainer-prod",
+      destination: "primary",
+      credential_ids: ["api_key"],
+      reason: "Need a token.",
+    });
+    const token = result.tokens[0]?.token ?? "";
+
+    expect(broker.validateTokenUse(auth("henric@example.com", "session-b"), {
+      service: "portainer-prod",
+      destination: "primary",
+    }, token).credentialId).toBe("api_key");
+    expect(broker.validateTokenUse(auth("henric@example.com"), {
+      service: "portainer-prod",
+      destination: "primary",
+    }, token).credentialId).toBe("api_key");
+  });
+
+  it("rejects cross-user, cross-service, and cross-destination token use", () => {
     const broker = new TokenBroker(tokenConfig());
     const result = broker.issueTokens(auth("henric@example.com", "session-a"), {
       service: "portainer-prod",
@@ -86,10 +106,6 @@ describe("token broker", () => {
     const token = result.tokens[0]?.token ?? "";
 
     expectGatewayError(() => broker.validateTokenUse(auth("ada@example.com", "session-a"), {
-      service: "portainer-prod",
-      destination: "primary",
-    }, token), "token_invalid");
-    expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com", "session-b"), {
       service: "portainer-prod",
       destination: "primary",
     }, token), "token_invalid");
