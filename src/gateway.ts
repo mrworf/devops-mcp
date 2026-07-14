@@ -1,3 +1,5 @@
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { GatewayError } from "./errors.js";
 import { evaluatePolicy } from "./policy.js";
 import { getService, resolveDestination } from "./registry.js";
@@ -23,7 +25,10 @@ export interface ServiceRequestInput {
 
 export interface DownstreamRequest {
   url: string;
-  init: RequestInit;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+  tlsVerify: boolean;
 }
 
 export interface ServiceResponse {
@@ -110,7 +115,7 @@ export async function executeServiceRequest(
   const substitutedBody = bodySubstitution.value;
   const tokenRecords = [...headerSubstitution.records, ...querySubstitution.records, ...bodySubstitution.records];
 
-  const downstream = buildDownstreamRequest(config, target.url, input.method, substitutedHeaders, substitutedQuery, substitutedBody);
+  const downstream = buildDownstreamRequest(config, target.url, input.method, substitutedHeaders, substitutedQuery, substitutedBody, target.tls.verify);
   logger.debug("service_request.downstream_ready", {
     subject: auth.subject,
     session_present: auth.sessionId !== undefined,
@@ -132,7 +137,7 @@ export async function executeServiceRequest(
     },
   });
   const started = Date.now();
-  const response = await fetchWithTimeout(downstream.url, downstream.init, config.limits.timeoutMs);
+  const response = await fetchWithTimeout(downstream, config.limits.timeoutMs);
   const responseHeaders = Object.fromEntries(response.headers.entries());
   const rawBody = await limitedResponseText(response, config.limits.maxResponseBodyBytes);
   const redacted = redactResponse({ body: rawBody.body, headers: responseHeaders }, service.credentials.map((credential) => credential.secret));
@@ -199,6 +204,7 @@ function buildDownstreamRequest(
   headers: Record<string, string>,
   query: Record<string, unknown>,
   body: unknown,
+  tlsVerify: boolean,
 ): DownstreamRequest {
   const targetUrl = new URL(url.href);
   for (const [key, value] of Object.entries(query)) {
@@ -222,28 +228,99 @@ function buildDownstreamRequest(
 
   return {
     url: targetUrl.href,
-    init: {
-      method: method.toUpperCase(),
-      headers: requestHeaders,
-      redirect: "manual",
-      ...(requestBody === undefined ? {} : { body: requestBody }),
-    },
+    method: method.toUpperCase(),
+    headers: requestHeaders,
+    ...(requestBody === undefined ? {} : { body: requestBody }),
+    tlsVerify,
   };
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(downstream: DownstreamRequest, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await sendDownstreamRequest(downstream, controller.signal);
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    if (isAbortError(error)) {
       throw new GatewayError("downstream_timeout", "Downstream request timed out.");
     }
-    throw new GatewayError("downstream_error", "Downstream request failed.");
+    if (isTlsError(error)) {
+      throw new GatewayError("tls_error", "Downstream TLS verification failed.");
+    }
+    throw new GatewayError("downstream_error", downstreamErrorMessage(error));
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function sendDownstreamRequest(downstream: DownstreamRequest, signal: AbortSignal): Promise<Response> {
+  const url = new URL(downstream.url);
+  const request = url.protocol === "https:" ? httpsRequest : httpRequest;
+
+  return await new Promise<Response>((resolve, reject) => {
+    const req = request(url, {
+      method: downstream.method,
+      headers: downstream.headers,
+      signal,
+      ...(url.protocol === "https:" ? { rejectUnauthorized: downstream.tlsVerify } : {}),
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      });
+      res.on("error", reject);
+      res.on("end", () => {
+        resolve(new Response(Buffer.concat(chunks), {
+          status: res.statusCode ?? 0,
+          headers: responseHeaders(res.headers),
+        }));
+      });
+    });
+    req.on("error", reject);
+    if (downstream.body !== undefined) req.write(downstream.body);
+    req.end();
+  });
+}
+
+function responseHeaders(headers: Record<string, string | string[] | number | undefined>): Headers {
+  const result = new Headers();
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) result.append(key, item);
+    } else {
+      result.set(key, String(value));
+    }
+  }
+  return result;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || readErrorCode(error) === "ABORT_ERR");
+}
+
+function isTlsError(error: unknown): boolean {
+  const code = readErrorCode(error);
+  return code === "DEPTH_ZERO_SELF_SIGNED_CERT"
+    || code === "SELF_SIGNED_CERT_IN_CHAIN"
+    || code === "CERT_HAS_EXPIRED"
+    || code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+    || code === "ERR_TLS_CERT_ALTNAME_INVALID";
+}
+
+function downstreamErrorMessage(error: unknown): string {
+  const code = readErrorCode(error);
+  if (code === "ECONNREFUSED") return "Downstream connection was refused.";
+  if (code === "ENETUNREACH") return "Downstream network is unreachable.";
+  if (code === "EHOSTUNREACH") return "Downstream host is unreachable.";
+  if (code === "ECONNRESET") return "Downstream connection was reset.";
+  return "Downstream request failed.";
+}
+
+function readErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
 }
 
 async function limitedResponseText(response: Response, maxBytes: number): Promise<{ body: string; truncated: boolean }> {

@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { once } from "node:events";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config.js";
@@ -41,6 +42,47 @@ describe("HTTP gateway", () => {
       expect(downstream.requests[0]?.headers["x-api-key"]).toBe("demo-secret");
       expect(downstream.requests[0]?.url).toContain("api_key=demo-secret");
       expect(downstream.requests[0]?.body).toContain("demo-secret");
+    } finally {
+      await downstream.close();
+    }
+  });
+
+  it("allows self-signed HTTPS downstream requests when TLS verification is disabled", async () => {
+    const downstream = await startHttpsDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl, { tlsVerify: false });
+      installBroker(config);
+
+      const response = await executeServiceRequest(config, actor(), {
+        service: "demo-service",
+        destination: "primary",
+        method: "GET",
+        path: "/api/echo",
+        reason: "Call self-signed downstream test service.",
+      });
+
+      expect(response.status_code).toBe(200);
+      expect(response.tls.verify).toBe(false);
+      expect(downstream.requests).toHaveLength(1);
+    } finally {
+      await downstream.close();
+    }
+  });
+
+  it("rejects self-signed HTTPS downstream requests when TLS verification is enabled", async () => {
+    const downstream = await startHttpsDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl, { tlsVerify: true });
+      installBroker(config);
+
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        service: "demo-service",
+        destination: "primary",
+        method: "GET",
+        path: "/api/echo",
+        reason: "Reject self-signed downstream test service.",
+      }), "tls_error");
+      expect(downstream.requests).toHaveLength(0);
     } finally {
       await downstream.close();
     }
@@ -182,12 +224,14 @@ function gatewayConfig(baseUrl: string, options: {
   timeout?: string;
   maxRequestBody?: string;
   maxResponseBody?: string;
+  tlsVerify?: boolean;
 } = {}): GatewayConfig {
+  const base = new URL(baseUrl);
   const destinations = [
-    { name: "primary", base_url: baseUrl, schemes: ["http"], hosts: [{ exact: "127.0.0.1" }] },
+    { name: "primary", base_url: baseUrl, schemes: [base.protocol.replace(/:$/, "")], hosts: [{ exact: "127.0.0.1" }] },
   ];
   if (options.includeSecondary) {
-    destinations.push({ name: "secondary", base_url: baseUrl, schemes: ["http"], hosts: [{ exact: "127.0.0.1" }] });
+    destinations.push({ name: "secondary", base_url: baseUrl, schemes: [base.protocol.replace(/:$/, "")], hosts: [{ exact: "127.0.0.1" }] });
   }
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
@@ -202,7 +246,7 @@ function gatewayConfig(baseUrl: string, options: {
         type: "http",
         name: "Demo Service",
         destinations,
-        tls: { verify: false },
+        tls: { verify: options.tlsVerify ?? false },
         credentials: [{
           id: "api_key",
           usage: { kind: "header", name: "X-API-Key" },
@@ -290,6 +334,38 @@ async function startDownstream() {
   };
 }
 
+async function startHttpsDownstream() {
+  const requests: Array<{ path: string; url: string; headers: Record<string, string | string[] | undefined>; body: string }> = [];
+  const server = createHttpsServer({
+    key: TEST_SELF_SIGNED_KEY,
+    cert: TEST_SELF_SIGNED_CERT,
+  }, async (request, response) => {
+    const body = await readBody(request);
+    requests.push({
+      path: new URL(request.url ?? "/", "https://127.0.0.1").pathname,
+      url: request.url ?? "/",
+      headers: request.headers,
+      body,
+    });
+    response.writeHead(200, {
+      "content-type": "text/plain",
+      "x-leaked-secret": "demo-secret",
+    });
+    response.end(`ok demo-secret ${body}`);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected TCP address");
+  return {
+    baseUrl: `https://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    }),
+  };
+}
+
 async function readBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
@@ -297,3 +373,51 @@ async function readBody(request: IncomingMessage): Promise<string> {
   }
   return Buffer.concat(chunks).toString("utf8");
 }
+
+const TEST_SELF_SIGNED_CERT = `-----BEGIN CERTIFICATE-----
+MIIDGjCCAgKgAwIBAgIUbLd+/B7IaA/RJQIspVwlUEFjCZcwDQYJKoZIhvcNAQEL
+BQAwFDESMBAGA1UEAwwJMTI3LjAuMC4xMB4XDTI2MDcxNDE0MDY0MFoXDTM2MDcx
+MTE0MDY0MFowFDESMBAGA1UEAwwJMTI3LjAuMC4xMIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEA4zTvD4puMVojFM1kWVe9/2qF5QBHDMrGa+NaUTjizSkY
+Hjqnb9rckl8t705ztCx7p9qtybgTE9ta/GrH/w7F1tSucZThc+alk6gd7SOoqSTr
+iHuHuf73IvNkDv3TFALKCZDxl73CvCwYEtD0LhK0ZJWzhLUY1SJDHTVvdFZ5o92o
+mksKJkVEk58llvl+e9okPmqbxvRJ+3I9v80ek5H5FoQy/juu0o7XCIASlT/iopDi
+zZxPQcd3Clt4ygsR8KUdaxeiVvI6CYeHP6+lmZGmTThQOWeNXoUNp8875c/u/uNk
+gHvEWXduTG+DzXx/qO6JyXp+VGLN22sa1DGpEtnCcQIDAQABo2QwYjAdBgNVHQ4E
+FgQUWsHznlXzQy1YbMgIMSXgiTW/7UYwHwYDVR0jBBgwFoAUWsHznlXzQy1YbMgI
+MSXgiTW/7UYwDwYDVR0TAQH/BAUwAwEB/zAPBgNVHREECDAGhwR/AAABMA0GCSqG
+SIb3DQEBCwUAA4IBAQBkmRyr73A4f814jnGJBV6tN1Eq+iWfTCwwPOmRwjFwLXkA
+iTbvlyLaNhLGC83fFe3v8C8sAJCTy7q6X7n8fYzEdHR5W4x9CM90klIcT6cjLBYg
+iwnlW0Auzz0ZHuRWks5mnN2BxtDB4OzHLRMSw38LpTe22FesYtaC8YDE9Ar+74GG
+lbgFbnnM/Q/uMw+234ggjAj6fT+ATLuajFfxNmtoEY8kPKaDdkXTp4/Bs7N2oIg/
+JX/GmPEshIWOHwEqD0zk4wjYz6xYTbC1P0WumV0cVyPaQVmYOLUdSqCL3zocJJ6h
+KLDF42+5to1QZuI2ZKv6L6rzaTL1AIzw9d0OHmRW
+-----END CERTIFICATE-----`;
+
+const TEST_SELF_SIGNED_KEY = `-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA4zTvD4puMVojFM1kWVe9/2qF5QBHDMrGa+NaUTjizSkYHjqn
+b9rckl8t705ztCx7p9qtybgTE9ta/GrH/w7F1tSucZThc+alk6gd7SOoqSTriHuH
+uf73IvNkDv3TFALKCZDxl73CvCwYEtD0LhK0ZJWzhLUY1SJDHTVvdFZ5o92omksK
+JkVEk58llvl+e9okPmqbxvRJ+3I9v80ek5H5FoQy/juu0o7XCIASlT/iopDizZxP
+Qcd3Clt4ygsR8KUdaxeiVvI6CYeHP6+lmZGmTThQOWeNXoUNp8875c/u/uNkgHvE
+WXduTG+DzXx/qO6JyXp+VGLN22sa1DGpEtnCcQIDAQABAoIBAA3/HIv/Sd8B77/Q
+EFK9qD90CzgKfpX/5t3OFWoEAFrFoY35LIfkOmrM8Lo5gcCzbdGvE74luA0k2fPL
+SzM/8HmVxAJMut/GMWSJeoB5jiIPW3AetgOD/Kr7Repzgf2NV29j7bIcl0K6z6fX
+FffBoLnCjBrMgjFdCTfjKxDGY/tvZjtXr2cehtkq56LIAywluYNPNHoGapVT+IbE
+VdOMrziFsQPyRtiYkIRc+FSy4Hz2tLQxbbYVTT6I/rLLeio/4XAZuQvTILMXCfK3
+noGaqeRtoDOXnStXnMIxhQymBTSZmbKBgU7i07u6gz3NyNLV/rl+wA7vX1bcTcZ1
+T/5TvYECgYEA/ZZwhBRwGSQmYgbudWYTCHrIvUFE73Zz0rEykbmPGKVtUM2jVsac
+HmURs5Vz0KLPGv2S2mw73GThyyLS7pNuGkf0c7MVRhq9fbWxKInptHjeXA5sEGMo
+0no5lyoLU/zYhNSkeiCs778HlHIEqfyeiMOzAb+BawV8ci9G0+eNG5ECgYEA5V4/
+xetpN5DneTgVsPObSEaHA1Uq6n264WVTMVfYwXP+9b4vkqk1mGIm4WPgOQGJNWgR
+lDB9VQBbj1M45s889fshtudyVAgran3k+9WT+IuKT6drW5FeigpDfzdRJWQ+kLg9
+lMxeNw38H/jpiSFUlNzJXqP57IvcY2JpOgt4COECgYEAmIH/TQ/VkukwxEeS5bvr
+um/NhjRYtwMwCQhUd1t3ecUTh0ME9s0fWxBBoxVAv7sKfxr9VKs/HP725GofHShB
+UUDw/Rw4sR6n05CP6Od4S/ddE1QBHaHlDSBAvm6kvXAU713LRT+dgdoLPvWLZIfu
++CVp5KU9uhVkkG9qU0qwjGECgYEAn+EMbvdjBhp5XuObKxcDXGPc5JPPMFinlUk9
+rh1ft6kVRVJmcsKD204/b8hgmRva+mEqL7OFCWUQbV1DQo+eHJAKtiWqaaywJrDO
+lkQPuqX5qQA4M0GnNm1lEx4J8BhqDBKAymGSIqoa3mZw0udqv8EOlGuUYDA1VQlZ
+893es8ECgYAn1jbkC2qY/aTmeCtC9Vt7l1n47lV0rL89WRnB6lbrmT5VhpXoT4S3
+3nZR+vxKO87eoC1k6/JXQTSRtqS64WdqaRuR+u7PLkWFxBSaRIVmJQoN+/iBBVI/
+tfFbVnWJ+ztxB+Iv5sCzryGtH9Owi2kVFhcjxO8qSjmQNAtUIS/dBw==
+-----END RSA PRIVATE KEY-----`;

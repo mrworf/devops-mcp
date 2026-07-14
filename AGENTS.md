@@ -11,3 +11,4 @@
 - Service must work from both ChatGPT and Codex
 - Minimal OAuth implementation to support the use-cases
 - Do not use MCP transport `mcp-session-id` as a hard authorization boundary; supported clients may reinitialize or vary transport sessions between tool calls.
+- When changing downstream HTTP transport, verify `tls.verify: false` with an actual self-signed HTTPS test so metadata and socket behavior cannot drift apart.
