@@ -69,6 +69,16 @@ logging:
   level: debug
 ```
 
+## Audit
+Audit events are kept in memory for the current process and can also be written as append-only JSONL:
+
+```yaml
+audit:
+  file: /var/lib/agent-credential-gateway/audit/audit.jsonl
+```
+
+Mount the audit directory on persistent writable storage in Docker. Audit events are sanitized and do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or downstream response bodies. Opaque downstream credential tokens are still in-memory only and expire on restart.
+
 ## Services
 Each service defines destinations, credentials, access users, TLS behavior, and policy. Credential sources support:
 

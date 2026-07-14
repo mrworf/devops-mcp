@@ -7,6 +7,8 @@ services:
     volumes:
       - ./examples/config.yaml:/config/config.yaml:ro
       - ./secrets:/run/secrets:ro
+      - ./oauth:/run/oauth:ro
+      - ./audit:/var/lib/agent-credential-gateway/audit
     environment:
       CONFIG_PATH: /config/config.yaml
       AGENT_GATEWAY_MCP_TOKEN: change-me-dev-token

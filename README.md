@@ -61,8 +61,12 @@ services:
     volumes:
       - ./config.yaml:/config/config.yaml:ro
       - ./secrets:/run/secrets:ro
+      - ./oauth:/run/oauth:ro
+      - ./audit:/var/lib/agent-credential-gateway/audit
     environment:
       CONFIG_PATH: /config/config.yaml
 ```
+
+Use the writable audit mount for `audit.file`, for example `/var/lib/agent-credential-gateway/audit/audit.jsonl`. When using `auth.mode: builtin_oauth`, keep `auth.builtin_oauth.signing_key_file` on stable mounted storage such as `/run/oauth/oauth_signing_key.pem`; changing that key forces clients to reauthenticate.
 
 Expose the service through an HTTPS endpoint such as `https://gateway.example.org/mcp` when using remote MCP clients.

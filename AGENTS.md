@@ -12,3 +12,4 @@
 - Minimal OAuth implementation to support the use-cases
 - Do not use MCP transport `mcp-session-id` as a hard authorization boundary; supported clients may reinitialize or vary transport sessions between tool calls.
 - When changing downstream HTTP transport, verify `tls.verify: false` with an actual self-signed HTTPS test so metadata and socket behavior cannot drift apart.
+- Docker examples should keep opaque gateway tokens ephemeral, but mount stable OAuth signing keys and writable audit storage when restart continuity or audit trails matter.

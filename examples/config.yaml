@@ -20,6 +20,9 @@ limits:
 logging:
   level: info
 
+audit:
+  file: /var/lib/agent-credential-gateway/audit/audit.jsonl
+
 services:
   portainer-prod:
     type: http
