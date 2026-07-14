@@ -100,6 +100,16 @@ export function validateSecretlintConfig(raw: unknown): SecretlintConfig {
   };
 }
 
+export function resolveSecretlintRules(
+  configured: SecretlintConfig,
+  defaults: SecretlintRuleConfig[],
+): SecretlintRuleConfig[] {
+  if (configured.mode === "replace") return configured.rules;
+  const merged = new Map(defaults.map((rule) => [rule.id, rule]));
+  for (const rule of configured.rules) merged.set(rule.id, rule);
+  return [...merged.values()];
+}
+
 function parseDuration(value: string): number {
   const match = durationPattern.exec(value);
   if (!match) throw configError("Invalid Secretlint timeout");
