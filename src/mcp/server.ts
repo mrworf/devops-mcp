@@ -69,7 +69,12 @@ export async function handleMcpRequest(
     return;
   }
 
-  if (sessionId !== undefined || !isInitializeRequest(parsedBody)) {
+  if (sessionId !== undefined) {
+    writeJsonRpcError(response, 400, -32001, "MCP session expired or is no longer available. Reinitialize the MCP connection and retry the request.");
+    return;
+  }
+
+  if (!isInitializeRequest(parsedBody)) {
     writeJsonRpcError(response, 400, -32000, "Bad Request: No valid session ID provided");
     return;
   }

@@ -77,6 +77,34 @@ describe("MCP surface", () => {
     }
   });
 
+  it("returns a clear error for stale MCP sessions and allows reinitialization", async () => {
+    const fixture = await startFixtureServer();
+    try {
+      const stale = await postMcp(fixture.url, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      }, "stale-session-id");
+      expect(stale.response.status).toBe(400);
+      expect(stale.body.error.code).toBe(-32001);
+      expect(stale.body.error.message).toContain("MCP session expired");
+
+      const initialize = await postMcp(fixture.url, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "mcp-surface-test", version: "1.0.0" },
+        },
+      });
+      expect(initialize.response.headers.get("mcp-session-id")).toBeTruthy();
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("issues opaque tokens through request_tokens without configured secrets", async () => {
     const fixture = await startFixtureServer();
     try {
