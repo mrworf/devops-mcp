@@ -1,7 +1,7 @@
 import type { ToolResult } from "./results.js";
 import { toolError, toolSuccess } from "./results.js";
 import { audit } from "../audit.js";
-import { listVisibleServices } from "../registry.js";
+import { describeServicePolicy, listVisibleServices } from "../registry.js";
 import type { AuthContext, GatewayConfig } from "../types.js";
 import { getTokenBroker, type TokenRequestInput } from "../tokens.js";
 import { GatewayError } from "../errors.js";
@@ -9,6 +9,8 @@ import { executeServiceRequest, type ServiceRequestInput } from "../gateway.js";
 import { explainDenial } from "../denials.js";
 import {
   emptyInputSchema,
+  describeServicePolicyInputSchema,
+  describeServicePolicyOutputSchema,
   errorOutputSchema,
   explainDenialInputSchema,
   explainDenialOutputSchema,
@@ -88,6 +90,25 @@ export const toolDescriptors: ToolDescriptor[] = [
     },
   },
   {
+    name: "describe_service_policy",
+    title: "Describe service policy",
+    description: "Describe the configured destinations, credential usage hints, and ordered allow/deny policy rules for a service this authenticated user can access. Does not return raw credentials.",
+    inputSchema: describeServicePolicyInputSchema,
+    outputSchema: describeServicePolicyOutputSchema,
+    securitySchemes: readSecurity,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+      idempotentHint: true,
+    },
+    _meta: {
+      securitySchemes: readSecurity,
+      "openai/toolInvocation/invoking": "Describing service policy",
+      "openai/toolInvocation/invoked": "Service policy described",
+    },
+  },
+  {
     name: "service_request",
     title: "Send service HTTP request",
     description: "Send an HTTP request to a configured service through the gateway. Opaque tokens in headers, query, or body are replaced with real credentials only after authorization and policy checks.",
@@ -149,6 +170,12 @@ export async function callTool(
       auditTool(config, auth, name, "allow", { service: input.service });
       return toolSuccess({ tokens: result.tokens }, `Issued ${result.tokens.length} opaque token(s).`);
     }
+    if (name === "describe_service_policy") {
+      const service = readString(args ?? {}, "service");
+      const description = describeServicePolicy(config, auth, service);
+      auditTool(config, auth, name, "allow", { service });
+      return toolSuccess(description as unknown as Record<string, unknown>, `Policy for ${service} described.`);
+    }
     if (name === "service_request") {
       const input = parseServiceRequest(args);
       const result = await executeServiceRequest(config, auth, input);
@@ -185,7 +212,7 @@ function auditTool(
   outcome: "allow" | "deny" | "error",
   fields: { service?: string; request_id?: string; error_code?: string } = {},
 ): void {
-  if (tool !== "list_services" && tool !== "request_tokens" && tool !== "service_request" && tool !== "explain_denial") return;
+  if (tool !== "list_services" && tool !== "describe_service_policy" && tool !== "request_tokens" && tool !== "service_request" && tool !== "explain_denial") return;
   audit({
     type: "tool_invocation",
     subject: auth.subject,

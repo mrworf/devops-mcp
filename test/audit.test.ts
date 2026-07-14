@@ -102,6 +102,7 @@ describe("audit logging", () => {
         reason: "Denied audit.",
       })).rejects.toThrow();
       await callTool("list_services", {}, config, auth);
+      await callTool("describe_service_policy", { service: "demo-service" }, config, auth);
       await callTool("explain_denial", { request_id: "missing-denial" }, config, auth);
 
       const events = readJsonl(auditFile);
@@ -112,7 +113,7 @@ describe("audit logging", () => {
         "tool_invocation",
       ]));
       expect(events.filter((event) => event.type === "service_request").map((event) => event.policy_decision)).toEqual(expect.arrayContaining(["allow", "deny"]));
-      expect(events.filter((event) => event.type === "tool_invocation").map((event) => event.tool)).toEqual(expect.arrayContaining(["list_services", "explain_denial"]));
+      expect(events.filter((event) => event.type === "tool_invocation").map((event) => event.tool)).toEqual(expect.arrayContaining(["list_services", "describe_service_policy", "explain_denial"]));
       expect(serialized).not.toContain("raw-secret");
       expect(serialized).not.toContain(issued.tokens[0]?.token ?? "");
       expect(serialized).not.toContain("Authorization");

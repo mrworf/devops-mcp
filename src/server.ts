@@ -146,7 +146,7 @@ function requiredScopesForMcpBody(body: unknown): string[] {
   if (message.method !== "tools/call") return [];
   if (message.params?.name === "request_tokens") return ["gateway.tokens"];
   if (message.params?.name === "service_request") return ["gateway.request"];
-  if (message.params?.name === "list_services" || message.params?.name === "explain_denial") return ["gateway.read"];
+  if (message.params?.name === "list_services" || message.params?.name === "describe_service_policy" || message.params?.name === "explain_denial") return ["gateway.read"];
   return [];
 }
 

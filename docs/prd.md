@@ -225,6 +225,7 @@ Full instructions should also include:
 * Use absolute URLs only when they match a configured destination.
 * Include a specific reason for every token request.
 * Include a specific reason for every service request.
+* Use `describe_service_policy` when endpoint policy needs to be inspected before attempting a request.
 * If denied, call `explain_denial`.
 * Do not retry denied requests by changing hosts, paths, or token placement unless the denial explanation says it is allowed.
 * Treat TLS verification warnings as meaningful risk signals.
@@ -232,10 +233,11 @@ Full instructions should also include:
 
 ## 9.3 MCP tools
 
-MVP exposes exactly four model-visible tools:
+MVP exposes five model-visible tools:
 
 ```text
 list_services
+describe_service_policy
 request_tokens
 service_request
 explain_denial
@@ -421,7 +423,93 @@ Recommended descriptor properties:
 auto
 ```
 
-## 11.2 Tool: `request_tokens`
+## 11.2 Tool: `describe_service_policy`
+
+### Purpose
+
+Describe configured destinations, credential usage hints, and ordered allow/deny policy rules for a service the authenticated user can access.
+
+### Input
+
+```json
+{
+  "service": "portainer-prod"
+}
+```
+
+### Output
+
+```json
+{
+  "id": "portainer-prod",
+  "name": "Portainer Production",
+  "description": "Main Portainer instance",
+  "api_docs_url": "https://api.example.org/portainer/openapi.json",
+  "destinations": [
+    {
+      "id": "primary",
+      "base_url_hint": "https://portainer.example.org:9443",
+      "tls_verify": false
+    }
+  ],
+  "credentials": [
+    {
+      "id": "api_key",
+      "usage_hint": "Use token as X-API-Key header"
+    }
+  ],
+  "policy": {
+    "mode": "deny",
+    "rules": [
+      {
+        "id": "allow-stack-read",
+        "effect": "allow",
+        "priority": 100,
+        "methods": ["GET"],
+        "hosts": [],
+        "paths": ["/api/stacks.*"],
+        "reason": "Read-only stack inventory"
+      }
+    ]
+  }
+}
+```
+
+### Descriptor requirements
+
+Recommended descriptor properties:
+
+```ts
+{
+  title: "Describe service policy",
+  description:
+    "Describe the configured destinations, credential usage hints, and ordered allow/deny policy rules for a service this authenticated user can access. Does not return raw credentials.",
+  securitySchemes: [
+    { type: "oauth2", scopes: ["gateway.read"] }
+  ],
+  _meta: {
+    securitySchemes: [
+      { type: "oauth2", scopes: ["gateway.read"] }
+    ],
+    "openai/toolInvocation/invoking": "Describing service policy",
+    "openai/toolInvocation/invoked": "Service policy described"
+  },
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    openWorldHint: false,
+    idempotentHint: true
+  }
+}
+```
+
+### Recommended OpenAI approval behavior
+
+```text
+auto
+```
+
+## 11.3 Tool: `request_tokens`
 
 ### Purpose
 
@@ -499,7 +587,7 @@ prompt
 
 Rationale: issuing a token does not call the downstream service, but it grants temporary capability to use a downstream credential through the gateway.
 
-## 11.3 Tool: `service_request`
+## 11.4 Tool: `service_request`
 
 ### Purpose
 
@@ -601,7 +689,7 @@ prompt
 
 The gateway itself must still enforce service policy. Client approval is not a security boundary.
 
-## 11.4 Tool: `explain_denial`
+## 11.5 Tool: `explain_denial`
 
 ### Purpose
 
@@ -1406,6 +1494,9 @@ default_tools_approval_mode = "prompt"
 [mcp_servers.agent_credential_gateway.tools.list_services]
 approval_mode = "auto"
 
+[mcp_servers.agent_credential_gateway.tools.describe_service_policy]
+approval_mode = "auto"
+
 [mcp_servers.agent_credential_gateway.tools.explain_denial]
 approval_mode = "auto"
 
@@ -1527,9 +1618,10 @@ MVP is complete when:
 5. An authenticated Codex CLI session can connect to the MCP server.
 6. `codex mcp login <server-name>` works for OAuth mode.
 7. Codex can read server initialization instructions.
-8. Codex can discover exactly four tools:
+8. Codex can discover exactly five tools:
 
    * `list_services`
+   * `describe_service_policy`
    * `request_tokens`
    * `service_request`
    * `explain_denial`
@@ -1538,7 +1630,7 @@ MVP is complete when:
 11. Tool descriptors include `securitySchemes`.
 12. Tool descriptors mirror `securitySchemes` under `_meta.securitySchemes`.
 13. Tool descriptors include appropriate annotations.
-14. `list_services` and `explain_denial` are marked read-only.
+14. `list_services`, `describe_service_policy`, and `explain_denial` are marked read-only.
 15. `service_request` is marked as potentially destructive and open-world.
 16. An authenticated agent can list available services.
 17. An authenticated agent can request an opaque credential token with a reason.

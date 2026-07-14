@@ -49,6 +49,36 @@ export const requestTokensInputSchema = {
   additionalProperties: false,
 } as const;
 
+export const describeServicePolicyInputSchema = {
+  type: "object",
+  properties: {
+    service: { type: "string" },
+  },
+  required: ["service"],
+  additionalProperties: false,
+} as const;
+
+export const describeServicePolicyOutputSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    name: { type: "string" },
+    description: { type: "string" },
+    api_docs_url: { type: "string" },
+    destinations: {
+      type: "array",
+      items: { type: "object" },
+    },
+    credentials: {
+      type: "array",
+      items: { type: "object" },
+    },
+    policy: { type: "object" },
+  },
+  required: ["id", "name", "destinations", "credentials", "policy"],
+  additionalProperties: false,
+} as const;
+
 export const requestTokensOutputSchema = {
   type: "object",
   properties: {

@@ -1,5 +1,5 @@
 import { GatewayError } from "./errors.js";
-import type { AuthContext, CredentialConfig, GatewayConfig, ServiceConfig } from "./types.js";
+import type { AuthContext, CredentialConfig, GatewayConfig, PolicyRuleConfig, ServiceConfig } from "./types.js";
 import { resolveDestinationTarget, type ResolvedTarget, type TargetInput } from "./urlValidation.js";
 
 export interface ServiceSummary {
@@ -19,10 +19,69 @@ export interface ServiceSummary {
   policy_summary: string;
 }
 
+export interface ServicePolicyDescription {
+  id: string;
+  name: string;
+  description?: string;
+  api_docs_url?: string;
+  destinations: Array<{
+    id: string;
+    base_url_hint: string;
+    tls_verify: boolean;
+  }>;
+  credentials: Array<{
+    id: string;
+    usage_hint: string;
+  }>;
+  policy: {
+    mode: "allow" | "deny";
+    rules: Array<{
+      id: string;
+      effect: "allow" | "deny";
+      priority: number;
+      methods: string[];
+      hosts: string[];
+      paths: string[];
+      reason?: string;
+    }>;
+  };
+}
+
 export function listVisibleServices(config: GatewayConfig, auth: AuthContext): ServiceSummary[] {
   return Object.values(config.services)
     .filter((service) => canAccessService(service, auth))
     .map(serviceSummary);
+}
+
+export function describeServicePolicy(config: GatewayConfig, auth: AuthContext, serviceId: string): ServicePolicyDescription {
+  const service = getService(config, serviceId, auth);
+  return {
+    id: service.id,
+    name: service.name,
+    ...(service.description === undefined ? {} : { description: service.description }),
+    ...(service.apiDocsUrl === undefined ? {} : { api_docs_url: service.apiDocsUrl }),
+    destinations: service.destinations.map((destination) => ({
+      id: destination.id,
+      base_url_hint: destination.baseUrl,
+      tls_verify: destination.tls.verify,
+    })),
+    credentials: service.credentials.map((credential) => ({
+      id: credential.id,
+      usage_hint: usageHint(credential),
+    })),
+    policy: {
+      mode: service.policy.mode,
+      rules: orderedRules(service.policy.rules).map((rule) => ({
+        id: rule.id,
+        effect: rule.effect,
+        priority: rule.priority,
+        methods: rule.methods,
+        hosts: rule.hosts,
+        paths: rule.paths,
+        ...(rule.reason === undefined ? {} : { reason: rule.reason }),
+      })),
+    },
+  };
 }
 
 export function getService(config: GatewayConfig, serviceId: string, auth?: AuthContext): ServiceConfig {
@@ -80,4 +139,12 @@ function serviceSummary(service: ServiceConfig): ServiceSummary {
 function usageHint(credential: CredentialConfig): string {
   if (credential.usage.name) return `Use token as ${credential.usage.name} ${credential.usage.kind}`;
   return `Use token as ${credential.usage.kind}`;
+}
+
+function orderedRules(rules: PolicyRuleConfig[]): PolicyRuleConfig[] {
+  return [...rules].sort((a, b) => {
+    if (a.priority !== b.priority) return b.priority - a.priority;
+    if (a.effect === b.effect) return 0;
+    return a.effect === "deny" ? -1 : 1;
+  });
 }

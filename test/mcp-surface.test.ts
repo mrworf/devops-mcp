@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config.js";
 import { MCP_INSTRUCTIONS } from "../src/mcp/instructions.js";
-import { toolDescriptors } from "../src/mcp/tools.js";
+import { callTool, toolDescriptors } from "../src/mcp/tools.js";
 import { createGatewayServer } from "../src/server.js";
 
 describe("MCP surface", () => {
@@ -13,10 +13,11 @@ describe("MCP surface", () => {
     expect(MCP_INSTRUCTIONS.slice(0, 512)).toContain(requiredOpening);
   });
 
-  it("defines exactly four OpenAI-compatible tool descriptors", () => {
+  it("defines exactly five OpenAI-compatible tool descriptors", () => {
     expect(toolDescriptors.map((tool) => tool.name)).toEqual([
       "list_services",
       "request_tokens",
+      "describe_service_policy",
       "service_request",
       "explain_denial",
     ]);
@@ -36,6 +37,12 @@ describe("MCP surface", () => {
     }
 
     expect(toolDescriptors.find((tool) => tool.name === "list_services")?.annotations.readOnlyHint).toBe(true);
+    expect(toolDescriptors.find((tool) => tool.name === "describe_service_policy")?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
+    expect(toolDescriptors.find((tool) => tool.name === "describe_service_policy")?.securitySchemes).toEqual([{ type: "oauth2", scopes: ["gateway.read"] }]);
     expect(toolDescriptors.find((tool) => tool.name === "explain_denial")?.annotations.readOnlyHint).toBe(true);
     expect(toolDescriptors.find((tool) => tool.name === "service_request")?.annotations.destructiveHint).toBe(true);
     expect(toolDescriptors.find((tool) => tool.name === "service_request")?.annotations.openWorldHint).toBe(true);
@@ -67,6 +74,7 @@ describe("MCP surface", () => {
       expect(list.body.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
         "list_services",
         "request_tokens",
+        "describe_service_policy",
         "service_request",
         "explain_denial",
       ]);
@@ -286,6 +294,69 @@ describe("MCP surface", () => {
     }
   });
 
+  it("describes service policy for authorized users without raw credentials", async () => {
+    const config = fixtureConfig();
+    const call = await callTool("describe_service_policy", {
+      service: "demo-service",
+    }, config, {
+      subject: "bearer-dev",
+      scopes: ["gateway.read"],
+      mode: "bearer",
+    });
+    const serialized = JSON.stringify(call);
+
+    expect(call.isError).not.toBe(true);
+    expect(call.structuredContent).toMatchObject({
+      id: "demo-service",
+      name: "Demo Service",
+      description: "Demo HTTP API",
+      api_docs_url: "https://api.example.org/demo/openapi.json",
+      destinations: [{ id: "primary", base_url_hint: "https://demo.internal" }],
+      credentials: [{ id: "api_key", usage_hint: "Use token as X-API-Key header" }],
+      policy: {
+        mode: "deny",
+        rules: [
+          { id: "deny-delete", effect: "deny", priority: 200, methods: ["DELETE"], paths: ["/.*"] },
+          { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/echo"] },
+        ],
+      },
+    });
+    expect(serialized).not.toContain("super-secret-api-key");
+    expect(serialized).not.toContain("dev-token");
+  });
+
+  it("does not let unauthorized users inspect service policy", async () => {
+    const config = fixtureConfig();
+    const call = await callTool("describe_service_policy", {
+      service: "demo-service",
+    }, config, {
+      subject: "ada@example.com",
+      scopes: ["gateway.read"],
+      mode: "bearer",
+    });
+    const serialized = JSON.stringify(call);
+
+    expect(call.isError).toBe(true);
+    expect(serialized).toContain("Not authorized for service");
+    expect(serialized).not.toContain("super-secret-api-key");
+    expect(serialized).not.toContain("dev-token");
+  });
+
+  it("rejects malformed service policy requests without raw credentials", async () => {
+    const config = fixtureConfig();
+    const call = await callTool("describe_service_policy", {}, config, {
+      subject: "bearer-dev",
+      scopes: ["gateway.read"],
+      mode: "bearer",
+    });
+    const serialized = JSON.stringify(call);
+
+    expect(call.isError).toBe(true);
+    expect(serialized).toContain("service must be a string");
+    expect(serialized).not.toContain("super-secret-api-key");
+    expect(serialized).not.toContain("dev-token");
+  });
+
 
   it("returns a safe error for unknown MCP paths", async () => {
     const fixture = await startFixtureServer();
@@ -306,37 +377,7 @@ describe("MCP surface", () => {
 });
 
 async function startFixtureServer(options: { destinationBaseUrl?: string } = {}) {
-  const config = validateConfig({
-    server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
-    auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
-    services: {
-      "demo-service": {
-        type: "http",
-        name: "Demo Service",
-        destinations: [{
-          name: "primary",
-          base_url: options.destinationBaseUrl ?? "https://demo.internal",
-          ...(options.destinationBaseUrl === undefined ? {} : { schemes: ["http"], hosts: [{ exact: "127.0.0.1" }] }),
-        }],
-        tls: { verify: options.destinationBaseUrl === undefined },
-        credentials: [{
-          id: "api_key",
-          usage: { kind: "header", name: "X-API-Key" },
-          source: { kind: "env", name: "DEMO_API_KEY" },
-        }],
-        access: { users: ["bearer-dev"] },
-        policy: options.destinationBaseUrl === undefined ? undefined : {
-          mode: "deny",
-          rules: [
-            { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/echo"] },
-          ],
-        },
-      },
-    },
-  }, {
-    TEST_GATEWAY_TOKEN: "dev-token",
-    DEMO_API_KEY: "super-secret-api-key",
-  });
+  const config = fixtureConfig(options);
   const server = createGatewayServer(config);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -350,6 +391,43 @@ async function startFixtureServer(options: { destinationBaseUrl?: string } = {})
       server.close((error) => error ? reject(error) : resolve());
     }),
   };
+}
+
+function fixtureConfig(options: { destinationBaseUrl?: string } = {}) {
+  return validateConfig({
+    server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
+    auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
+    services: {
+      "demo-service": {
+        type: "http",
+        name: "Demo Service",
+        description: "Demo HTTP API",
+        api_docs_url: "https://api.example.org/demo/openapi.json",
+        destinations: [{
+          name: "primary",
+          base_url: options.destinationBaseUrl ?? "https://demo.internal",
+          ...(options.destinationBaseUrl === undefined ? {} : { schemes: ["http"], hosts: [{ exact: "127.0.0.1" }] }),
+        }],
+        tls: { verify: options.destinationBaseUrl === undefined },
+        credentials: [{
+          id: "api_key",
+          usage: { kind: "header", name: "X-API-Key" },
+          source: { kind: "env", name: "DEMO_API_KEY" },
+        }],
+        access: { users: ["bearer-dev"] },
+        policy: {
+          mode: "deny",
+          rules: [
+            { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/echo"] },
+            { id: "deny-delete", effect: "deny", priority: 200, methods: ["DELETE"], paths: ["/.*"] },
+          ],
+        },
+      },
+    },
+  }, {
+    TEST_GATEWAY_TOKEN: "dev-token",
+    DEMO_API_KEY: "super-secret-api-key",
+  });
 }
 
 async function startDownstream() {

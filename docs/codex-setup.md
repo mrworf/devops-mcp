@@ -14,6 +14,9 @@ tool_timeout_sec = 60
 [mcp_servers.agent_credential_gateway.tools.list_services]
 approval_mode = "auto"
 
+[mcp_servers.agent_credential_gateway.tools.describe_service_policy]
+approval_mode = "auto"
+
 [mcp_servers.agent_credential_gateway.tools.explain_denial]
 approval_mode = "auto"
 
@@ -73,6 +76,6 @@ Use these values in the ChatGPT developer-mode app form:
 3. Set Authentication to OAuth.
 4. Open Advanced OAuth settings, allow the discovered OAuth settings, and select the required scopes, usually `gateway.read`, `gateway.tokens`, and `gateway.request`.
 5. Complete the OAuth login.
-6. Confirm the app shows actions after OAuth completes: `list_services`, `request_tokens`, `service_request`, and `explain_denial`.
+6. Confirm the app shows actions after OAuth completes: `list_services`, `describe_service_policy`, `request_tokens`, `service_request`, and `explain_denial`.
 
 If ChatGPT says the app is connected but shows "No app actions available yet", OAuth probably completed but ChatGPT did not reach MCP `initialize` or `tools/list`. Check that the app Server URL ends with `/mcp`, and that the reverse proxy forwards `/mcp` to the gateway unchanged.
