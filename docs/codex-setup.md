@@ -46,11 +46,13 @@ default_tools_approval_mode = "prompt"
 ChatGPT desktop uses the shared Codex MCP host configuration. Configure the server for Codex, then restart or refresh ChatGPT desktop so it can see the MCP server.
 
 ## ChatGPT Web
-ChatGPT web developer-mode apps connect to the hosted MCP endpoint, for example:
+ChatGPT web developer-mode apps connect to the hosted MCP endpoint. The ChatGPT app Server URL must be the full MCP endpoint URL, including the configured `server.mcp_path`:
 
 ```text
 https://mcp.example.org/mcp
 ```
+
+Do not enter only the public origin as the app Server URL. `server.resource` and `auth.builtin_oauth.issuer` use the origin, such as `https://mcp.example.org`; the ChatGPT Server URL uses that origin plus `/mcp`.
 
 Use `auth.mode: builtin_oauth` or an external OAuth provider for hosted ChatGPT. Bearer mode publishes protected resource metadata with `authorization_servers: []`, so ChatGPT cannot start an OAuth login flow and may report "No OAuth" during setup.
 
@@ -61,3 +63,14 @@ For the built-in private OAuth mode:
 3. Mount an RSA private signing key at `auth.builtin_oauth.signing_key_file`.
 4. Add ChatGPT's CIMD origin or exact client metadata URL to `auth.builtin_oauth.allowed_clients`.
 5. In ChatGPT developer mode, create the app with the public `/mcp` URL.
+
+Use these values in the ChatGPT developer-mode app form:
+
+1. Set Connection to Server URL.
+2. Set Server URL to `https://mcp.example.org/mcp`.
+3. Set Authentication to OAuth.
+4. Open Advanced OAuth settings, allow the discovered OAuth settings, and select the required scopes, usually `gateway.read`, `gateway.tokens`, and `gateway.request`.
+5. Complete the OAuth login.
+6. Confirm the app shows actions after OAuth completes: `list_services`, `request_tokens`, `service_request`, and `explain_denial`.
+
+If ChatGPT says the app is connected but shows "No app actions available yet", OAuth probably completed but ChatGPT did not reach MCP `initialize` or `tools/list`. Check that the app Server URL ends with `/mcp`, and that the reverse proxy forwards `/mcp` to the gateway unchanged.

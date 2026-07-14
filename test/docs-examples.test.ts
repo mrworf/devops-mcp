@@ -36,4 +36,13 @@ describe("documentation examples", () => {
     expect(joined).not.toContain("raw-secret");
     expect(joined).not.toContain("super-secret-api-key");
   });
+
+  it("documents the full ChatGPT web MCP endpoint URL", () => {
+    const docs = readFileSync("docs/codex-setup.md", "utf8");
+    const chatgptWeb = docs.slice(docs.indexOf("## ChatGPT Web"));
+
+    expect(chatgptWeb).toContain("Server URL to `https://mcp.example.org/mcp`");
+    expect(chatgptWeb).toContain("origin plus `/mcp`");
+    expect(chatgptWeb).not.toMatch(/Server URL to `https:\/\/mcp\.example\.org`/);
+  });
 });
