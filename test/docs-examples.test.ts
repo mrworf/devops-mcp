@@ -23,6 +23,7 @@ describe("documentation examples", () => {
 
   it("does not include example raw downstream credentials in docs", () => {
     const files = [
+      "README.md",
       "docker-compose.example.yaml",
       "examples/config.yaml",
       "docs/config-reference.md",
