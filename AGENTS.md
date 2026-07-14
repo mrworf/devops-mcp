@@ -2,7 +2,8 @@
 - Never log raw credentials, opaque token values, Authorization headers, cookies, or downstream response bodies by default.
 - Enforce auth, destination validation, and policy before credential substitution or downstream HTTP calls.
 - All new external inputs must have positive and negative tests.
-- Keep MVP scope limited to the four tools in docs/prd.md.
 - Do not add service-specific tools or profile packs unless explicitly requested.
 - Do not include real personal, internal, or deployment hostnames in MCP documentation or examples; use `example.org` stand-ins instead.
-- When the user asks to start or continue the next milestone, use `.codex/skills/devops-mcp-next-milestone/SKILL.md` if the project-local skill is not auto-discovered.
+- Update AGENTS.md when findings are important to remember beyond current session
+- Service must work from both ChatGPT and Codex
+- Minimal OAuth implementation to support the use-cases
