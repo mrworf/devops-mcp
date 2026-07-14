@@ -6,6 +6,7 @@ export interface ServiceSummary {
   id: string;
   name: string;
   description?: string;
+  api_docs_url?: string;
   destinations: Array<{
     id: string;
     base_url_hint: string;
@@ -69,7 +70,11 @@ function serviceSummary(service: ServiceConfig): ServiceSummary {
     })),
     policy_summary: `mode=${service.policy.mode}`,
   };
-  return service.description === undefined ? summary : { ...summary, description: service.description };
+  return {
+    ...summary,
+    ...(service.description === undefined ? {} : { description: service.description }),
+    ...(service.apiDocsUrl === undefined ? {} : { api_docs_url: service.apiDocsUrl }),
+  };
 }
 
 function usageHint(credential: CredentialConfig): string {

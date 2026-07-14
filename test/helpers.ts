@@ -10,6 +10,7 @@ export function registryConfig(): GatewayConfig {
         type: "http",
         name: "Portainer Production",
         description: "Main Portainer instance",
+        api_docs_url: "https://api.example.org/portainer/openapi.json",
         destinations: [{
           name: "primary",
           base_url: "https://portainer.internal:9443",

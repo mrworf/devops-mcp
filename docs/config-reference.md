@@ -80,7 +80,18 @@ audit:
 Mount the audit directory on persistent writable storage in Docker. Audit events are sanitized and do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or downstream response bodies. Opaque downstream credential tokens are still in-memory only and expire on restart.
 
 ## Services
-Each service defines destinations, credentials, access users, TLS behavior, and policy. Credential sources support:
+Each service defines LLM-facing metadata, destinations, credentials, access users, TLS behavior, and policy. `description` should briefly explain what the service is for. `api_docs_url` may point to human or machine-readable API documentation, such as an OpenAPI JSON file; the gateway exposes the URL but does not fetch or proxy it.
+
+```yaml
+services:
+  example-api:
+    type: http
+    name: Example API
+    description: Inventory and deployment metadata API
+    api_docs_url: https://api.example.org/openapi.json
+```
+
+Credential sources support:
 
 ```yaml
 source:

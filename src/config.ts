@@ -95,6 +95,7 @@ const rawConfigSchema = z.object({
     type: z.literal("http").default("http"),
     name: z.string().min(1),
     description: z.string().optional(),
+    api_docs_url: z.string().url().optional(),
     destinations: z.array(z.object({
       id: z.string().min(1).optional(),
       name: z.string().min(1).optional(),
@@ -300,6 +301,7 @@ function normalizeServices(
       type: "http" as const,
       name: raw.name,
       ...(raw.description === undefined ? {} : { description: raw.description }),
+      ...(raw.api_docs_url === undefined ? {} : { apiDocsUrl: raw.api_docs_url }),
       destinations,
       tls,
       credentials,

@@ -85,6 +85,15 @@ describe("config validation", () => {
     expect(config.logging.level).toBe("debug");
   });
 
+  it("accepts service API documentation URLs", () => {
+    const raw = validRaw();
+    raw.services["portainer-prod"].api_docs_url = "https://api.example.org/openapi.json";
+
+    const config = validateConfig(raw, validEnv);
+
+    expect(config.services["portainer-prod"]?.apiDocsUrl).toBe("https://api.example.org/openapi.json");
+  });
+
   it("resolves file credential sources", () => {
     const dir = mkdtempSync(join(tmpdir(), "gateway-config-"));
     const secretPath = join(dir, "api-key");
@@ -137,6 +146,13 @@ describe("config validation", () => {
   it("fails invalid base urls", () => {
     const raw = validRaw();
     raw.services["portainer-prod"].destinations[0].base_url = "not-a-url";
+
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+  });
+
+  it("fails invalid service API documentation URLs", () => {
+    const raw = validRaw();
+    raw.services["portainer-prod"].api_docs_url = "not-a-url";
 
     expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
   });

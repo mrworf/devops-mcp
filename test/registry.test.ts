@@ -9,6 +9,10 @@ describe("service registry", () => {
     const services = listVisibleServices(config, auth("henric@example.com"));
 
     expect(services.map((service) => service.id)).toEqual(["portainer-prod"]);
+    expect(services[0]).toMatchObject({
+      description: "Main Portainer instance",
+      api_docs_url: "https://api.example.org/portainer/openapi.json",
+    });
     expect(services[0]?.destinations[0]).toMatchObject({
       id: "primary",
       base_url_hint: "https://portainer.internal:9443",

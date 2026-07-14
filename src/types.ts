@@ -85,6 +85,7 @@ export interface ServiceConfig {
   type: "http";
   name: string;
   description?: string;
+  apiDocsUrl?: string;
   destinations: DestinationConfig[];
   tls: TlsConfig;
   credentials: CredentialConfig[];
