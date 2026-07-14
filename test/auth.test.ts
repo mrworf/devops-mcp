@@ -11,6 +11,7 @@ import { hashBuiltinOAuthPassword } from "../src/builtinOAuth.js";
 import { validateConfig } from "../src/config.js";
 import { GatewayError } from "../src/errors.js";
 import { createGatewayServer } from "../src/server.js";
+import { TokenBroker } from "../src/tokens.js";
 import type { GatewayConfig } from "../src/types.js";
 
 describe("auth", () => {
@@ -149,6 +150,49 @@ describe("auth", () => {
     } finally {
       await fixture.close();
     }
+  });
+
+  it("keeps built-in OAuth access tokens valid across restart with the same signing key", async () => {
+    const signingKeyPath = await createSigningKeyFile();
+    const config = await builtinOAuthConfig({ signingKeyPath });
+    const fixture = await startServer(config);
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+
+    try {
+      const verifier = "restart-verifier";
+      const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier);
+      const token = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: tokenBody(code, redirectUri, verifier),
+      });
+      expect(token.status).toBe(200);
+      const tokenBodyJson = JSON.parse(token.body) as { access_token: string };
+
+      await fixture.close();
+      const restartedConfig = await builtinOAuthConfig({ signingKeyPath });
+      const context = await authenticateRequest(requestWithBearer(tokenBodyJson.access_token), restartedConfig, ["gateway.read"]);
+      expect(context).toMatchObject({ subject: "admin@example.com", mode: "builtin_oauth" });
+    } finally {
+      await fixture.close().catch(() => undefined);
+    }
+  });
+
+  it("does not keep opaque gateway tokens across fresh token broker instances", () => {
+    const config = opaqueTokenRestartConfig();
+    const broker = new TokenBroker(config);
+    const issued = broker.issueTokens({ subject: "henric@example.com", scopes: ["gateway.tokens"], mode: "bearer" }, {
+      service: "demo-service",
+      destination: "primary",
+      credential_ids: ["api_key"],
+      reason: "Issue token before restart.",
+    });
+
+    const restartedBroker = new TokenBroker(config);
+    expect(() => restartedBroker.validateTokenUse({ subject: "henric@example.com", scopes: ["gateway.request"], mode: "bearer" }, {
+      service: "demo-service",
+      destination: "primary",
+    }, issued.tokens[0]?.token ?? "")).toThrow("Unknown opaque token");
   });
 
   it("accepts matching or omitted built-in OAuth token resources and rejects mismatches", async () => {
@@ -515,12 +559,8 @@ function oauthConfig(jwksUri: string): GatewayConfig {
   });
 }
 
-async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allowedClients?: string[]; loggingLevel?: "info" | "debug" } = {}): Promise<GatewayConfig> {
-  const { privateKey } = await generateKeyPair("RS256", { extractable: true });
-  const dir = mkdtempSync(join(tmpdir(), "gateway-builtin-oauth-"));
-  const keyPath = join(dir, "signing-key.pem");
-  writeFileSync(keyPath, await exportPKCS8(privateKey));
-
+async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allowedClients?: string[]; loggingLevel?: "info" | "debug"; signingKeyPath?: string } = {}): Promise<GatewayConfig> {
+  const keyPath = options.signingKeyPath ?? await createSigningKeyFile();
   return validateConfig({
     ...baseRawConfig({
       mode: "builtin_oauth",
@@ -544,6 +584,37 @@ async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allo
   }, {
     ADMIN_USERNAME: "admin@example.com",
     ADMIN_PASSWORD_HASH: hashBuiltinOAuthPassword("correct horse battery staple", "test-salt", 1000),
+    DEMO_API_KEY: "secret",
+  });
+}
+
+async function createSigningKeyFile(): Promise<string> {
+  const { privateKey } = await generateKeyPair("RS256", { extractable: true });
+  const dir = mkdtempSync(join(tmpdir(), "gateway-builtin-oauth-"));
+  const keyPath = join(dir, "signing-key.pem");
+  writeFileSync(keyPath, await exportPKCS8(privateKey));
+  return keyPath;
+}
+
+function opaqueTokenRestartConfig(): GatewayConfig {
+  return validateConfig({
+    server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
+    auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
+    services: {
+      "demo-service": {
+        type: "http",
+        name: "Demo Service",
+        destinations: [{ name: "primary", base_url: "https://demo.internal" }],
+        credentials: [{
+          id: "api_key",
+          usage: { kind: "header", name: "X-API-Key" },
+          source: { kind: "env", name: "DEMO_API_KEY" },
+        }],
+        access: { users: ["henric@example.com"] },
+      },
+    },
+  }, {
+    TEST_GATEWAY_TOKEN: "dev-token",
     DEMO_API_KEY: "secret",
   });
 }
