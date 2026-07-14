@@ -4,4 +4,5 @@
 - All new external inputs must have positive and negative tests.
 - Keep MVP scope limited to the four tools in docs/prd.md.
 - Do not add service-specific tools or profile packs unless explicitly requested.
+- Do not include real personal, internal, or deployment hostnames in MCP documentation or examples; use `example.org` stand-ins instead.
 - When the user asks to start or continue the next milestone, use `.codex/skills/devops-mcp-next-milestone/SKILL.md` if the project-local skill is not auto-discovered.

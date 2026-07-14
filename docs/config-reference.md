@@ -38,12 +38,12 @@ Built-in OAuth mode for a private ChatGPT-hosted MCP:
 
 ```yaml
 server:
-  resource: https://mcp-devops.sensenet.nu
+  resource: https://mcp.example.org
 
 auth:
   mode: builtin_oauth
   builtin_oauth:
-    issuer: https://mcp-devops.sensenet.nu
+    issuer: https://mcp.example.org
     admin_username_env: AGENT_GATEWAY_ADMIN_USERNAME
     admin_password_hash_env: AGENT_GATEWAY_ADMIN_PASSWORD_HASH
     signing_key_file: /run/secrets/oauth_signing_key.pem

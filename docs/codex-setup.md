@@ -5,7 +5,7 @@ Add the MCP server to Codex config:
 
 ```toml
 [mcp_servers.agent_credential_gateway]
-url = "https://gateway.home.arpa/mcp"
+url = "https://gateway.example.org/mcp"
 enabled = true
 auth = "oauth"
 default_tools_approval_mode = "prompt"
@@ -49,14 +49,14 @@ ChatGPT desktop uses the shared Codex MCP host configuration. Configure the serv
 ChatGPT web developer-mode apps connect to the hosted MCP endpoint, for example:
 
 ```text
-https://mcp-devops.sensenet.nu/mcp
+https://mcp.example.org/mcp
 ```
 
 Use `auth.mode: builtin_oauth` or an external OAuth provider for hosted ChatGPT. Bearer mode publishes protected resource metadata with `authorization_servers: []`, so ChatGPT cannot start an OAuth login flow and may report "No OAuth" during setup.
 
 For the built-in private OAuth mode:
 
-1. Set `server.resource` and `auth.builtin_oauth.issuer` to the public HTTPS origin, for example `https://mcp-devops.sensenet.nu`.
+1. Set `server.resource` and `auth.builtin_oauth.issuer` to the public HTTPS origin, for example `https://mcp.example.org`.
 2. Configure one admin username and a PBKDF2 password hash through environment variables or mounted secret files.
 3. Mount an RSA private signing key at `auth.builtin_oauth.signing_key_file`.
 4. Add ChatGPT's CIMD origin or exact client metadata URL to `auth.builtin_oauth.allowed_clients`.

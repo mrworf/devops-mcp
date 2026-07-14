@@ -74,17 +74,17 @@ describe("auth", () => {
         authorization_servers: string[];
         scopes_supported: string[];
       };
-      expect(protectedBody.resource).toBe("https://mcp-devops.sensenet.nu");
-      expect(protectedBody.authorization_servers).toEqual(["https://mcp-devops.sensenet.nu"]);
+      expect(protectedBody.resource).toBe("https://mcp.example.org");
+      expect(protectedBody.authorization_servers).toEqual(["https://mcp.example.org"]);
       expect(protectedBody.scopes_supported).toEqual(["gateway.read", "gateway.tokens", "gateway.request"]);
 
       const metadata = await fetch(`${fixture.baseUrl}/.well-known/oauth-authorization-server`);
       const metadataBody = await metadata.json() as Record<string, unknown>;
       expect(metadataBody).toMatchObject({
-        issuer: "https://mcp-devops.sensenet.nu",
-        authorization_endpoint: "https://mcp-devops.sensenet.nu/oauth/authorize",
-        token_endpoint: "https://mcp-devops.sensenet.nu/oauth/token",
-        jwks_uri: "https://mcp-devops.sensenet.nu/oauth/jwks.json",
+        issuer: "https://mcp.example.org",
+        authorization_endpoint: "https://mcp.example.org/oauth/authorize",
+        token_endpoint: "https://mcp.example.org/oauth/token",
+        jwks_uri: "https://mcp.example.org/oauth/jwks.json",
         client_id_metadata_document_supported: true,
       });
       expect(metadataBody.code_challenge_methods_supported).toEqual(["S256"]);
@@ -413,7 +413,7 @@ async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allo
     ...baseRawConfig({
       mode: "builtin_oauth",
       builtin_oauth: {
-        issuer: "https://mcp-devops.sensenet.nu",
+        issuer: "https://mcp.example.org",
         admin_username_env: "ADMIN_USERNAME",
         admin_password_hash_env: "ADMIN_PASSWORD_HASH",
         signing_key_file: keyPath,
@@ -426,7 +426,7 @@ async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allo
     server: {
       listen: "127.0.0.1:8080",
       mcp_path: "/mcp",
-      resource: "https://mcp-devops.sensenet.nu",
+      resource: "https://mcp.example.org",
     },
   }, {
     ADMIN_USERNAME: "admin@example.com",
@@ -471,7 +471,7 @@ function authorizationBody(overrides: Record<string, string> = {}): string {
     state: "state",
     code_challenge_method: "S256",
     code_challenge: "challenge",
-    resource: "https://mcp-devops.sensenet.nu",
+    resource: "https://mcp.example.org",
     username: "admin@example.com",
     password: "correct horse battery staple",
     ...overrides,

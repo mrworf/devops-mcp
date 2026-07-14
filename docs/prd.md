@@ -194,7 +194,7 @@ The server must expose a URL suitable for Codex configuration.
 Example:
 
 ```text
-https://gateway.home.arpa/mcp
+https://gateway.example.org/mcp
 ```
 
 MVP does not require:
@@ -810,7 +810,7 @@ Example:
 ```yaml
 hosts:
   - exact: portainer.internal
-  - suffix: .home.arpa
+  - suffix: .example.org
   - regex: '^portainer-[a-z0-9-]+\.internal$'
 ```
 
@@ -1359,7 +1359,7 @@ OAuth example:
 
 ```toml
 [mcp_servers.agent_credential_gateway]
-url = "https://gateway.home.arpa/mcp"
+url = "https://gateway.example.org/mcp"
 enabled = true
 default_tools_approval_mode = "prompt"
 tool_timeout_sec = 60
@@ -1381,7 +1381,7 @@ Bearer-token development example:
 
 ```toml
 [mcp_servers.agent_credential_gateway]
-url = "https://gateway.home.arpa/mcp"
+url = "https://gateway.example.org/mcp"
 bearer_token_env_var = "AGENT_GATEWAY_MCP_TOKEN"
 enabled = true
 default_tools_approval_mode = "prompt"
