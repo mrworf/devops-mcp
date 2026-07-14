@@ -4,6 +4,9 @@
 - All new external inputs must have positive and negative tests.
 - Do not add service-specific tools or profile packs unless explicitly requested.
 - Do not include real personal, internal, or deployment hostnames in MCP documentation or examples; use `example.org` stand-ins instead.
+- ChatGPT web setup docs must distinguish OAuth origin values from the MCP Server URL: `server.resource` and OAuth issuer use the origin, while ChatGPT's Server URL must include the MCP path such as `https://mcp.example.org/mcp`.
+- When `npm test` fails with `listen EPERM` on `127.0.0.1`, rerun the same full-suite command with loopback/network permission rather than weakening listener-based tests.
+- In this sandbox, `.git` may be read-only; if staging or committing fails on `.git/index.lock`, request narrow Git escalation for the same `git add`/`git commit` command.
 - Update AGENTS.md when findings are important to remember beyond current session
 - Service must work from both ChatGPT and Codex
 - Minimal OAuth implementation to support the use-cases
