@@ -151,6 +151,83 @@ describe("auth", () => {
     }
   });
 
+  it("accepts matching or omitted built-in OAuth token resources and rejects mismatches", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+
+    try {
+      const matchingVerifier = "matching-resource-verifier";
+      const matchingCode = await authorizeCode(fixture.baseUrl, redirectUri, matchingVerifier);
+      const matching = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: tokenBody(matchingCode, redirectUri, matchingVerifier, { resource: "https://mcp.example.org" }),
+      });
+      expect(matching.status).toBe(200);
+
+      const omittedVerifier = "omitted-resource-verifier";
+      const omittedCode = await authorizeCode(fixture.baseUrl, redirectUri, omittedVerifier);
+      const omitted = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: tokenBody(omittedCode, redirectUri, omittedVerifier),
+      });
+      expect(omitted.status).toBe(200);
+
+      const mismatchedVerifier = "mismatched-resource-verifier";
+      const mismatchedCode = await authorizeCode(fixture.baseUrl, redirectUri, mismatchedVerifier);
+      const mismatched = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: tokenBody(mismatchedCode, redirectUri, mismatchedVerifier, { resource: "https://other.example.org" }),
+      });
+      expect(mismatched.status).toBe(400);
+      expect(JSON.parse(mismatched.body)).toEqual({ error: "invalid_target" });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("logs sanitized built-in OAuth outcomes in debug mode", async () => {
+    const config = await builtinOAuthConfig({ loggingLevel: "debug" });
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+
+    try {
+      const verifier = "log-verifier";
+      const authorize = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({
+          redirect_uri: redirectUri,
+          code_challenge: pkceChallenge(verifier),
+          username: "admin@example.com",
+          password: "correct horse battery staple",
+        }),
+      });
+      const code = new URL(authorize.headers.location ?? "").searchParams.get("code") ?? "";
+      const token = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST",
+        body: tokenBody(code, redirectUri, verifier, { resource: "https://mcp.example.org" }),
+      });
+      expect(token.status).toBe(200);
+
+      const logs = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+      expect(logs).toContain("oauth.authorize.completed");
+      expect(logs).toContain("oauth.token.completed");
+      expect(logs).toContain("\"resource_status\":\"match\"");
+      expect(logs).toContain("\"scope_count\":1");
+      expect(logs).not.toContain("admin@example.com");
+      expect(logs).not.toContain("correct horse battery staple");
+      expect(logs).not.toContain(code);
+      expect(logs).not.toContain(verifier);
+      expect(logs).not.toContain(JSON.parse(token.body).access_token);
+    } finally {
+      logSpy.mockRestore();
+      await fixture.close();
+    }
+  });
+
   it("rejects invalid built-in OAuth login without leaking credentials", async () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
@@ -403,7 +480,7 @@ function oauthConfig(jwksUri: string): GatewayConfig {
   });
 }
 
-async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allowedClients?: string[] } = {}): Promise<GatewayConfig> {
+async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allowedClients?: string[]; loggingLevel?: "info" | "debug" } = {}): Promise<GatewayConfig> {
   const { privateKey } = await generateKeyPair("RS256", { extractable: true });
   const dir = mkdtempSync(join(tmpdir(), "gateway-builtin-oauth-"));
   const keyPath = join(dir, "signing-key.pem");
@@ -428,6 +505,7 @@ async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allo
       mcp_path: "/mcp",
       resource: "https://mcp.example.org",
     },
+    logging: { level: options.loggingLevel ?? "info" },
   }, {
     ADMIN_USERNAME: "admin@example.com",
     ADMIN_PASSWORD_HASH: hashBuiltinOAuthPassword("correct horse battery staple", "test-salt", 1000),
@@ -478,13 +556,14 @@ function authorizationBody(overrides: Record<string, string> = {}): string {
   }).toString();
 }
 
-function tokenBody(code: string, redirectUri: string, verifier: string): string {
+function tokenBody(code: string, redirectUri: string, verifier: string, overrides: Record<string, string> = {}): string {
   return new URLSearchParams({
     grant_type: "authorization_code",
     code,
     client_id: "https://chatgpt.com/oauth/client",
     redirect_uri: redirectUri,
     code_verifier: verifier,
+    ...overrides,
   }).toString();
 }
 
@@ -519,6 +598,22 @@ async function localRequest(urlText: string, options: { method: string; body?: s
     request.on("error", reject);
     request.end(body);
   });
+}
+
+async function authorizeCode(baseUrl: string, redirectUri: string, verifier: string): Promise<string> {
+  const authorize = await localRequest(`${baseUrl}/oauth/authorize`, {
+    method: "POST",
+    body: authorizationBody({
+      redirect_uri: redirectUri,
+      code_challenge: pkceChallenge(verifier),
+      username: "admin@example.com",
+      password: "correct horse battery staple",
+    }),
+  });
+  expect(authorize.status).toBe(302);
+  const code = new URL(authorize.headers.location ?? "").searchParams.get("code");
+  expect(code).toBeTruthy();
+  return code ?? "";
 }
 
 async function startServer(config: GatewayConfig) {

@@ -1,6 +1,7 @@
 import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { exportJWK, importPKCS8, importSPKI, SignJWT } from "jose";
+import { createLogger } from "./logger.js";
 import type { BuiltinOAuthAuthConfig, GatewayConfig } from "./types.js";
 
 const AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
@@ -129,15 +130,34 @@ ${hidden}
 async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {
   const auth = config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth : undefined;
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
+  const logger = createLogger(config.logging);
 
   const body = await readFormBody(request);
   const validation = await validateAuthorizationRequest(config, body);
   if (!validation.ok) {
+    logger.debug("oauth.authorize.completed", {
+      endpoint: AUTHORIZE_PATH,
+      status: "error",
+      status_code: 400,
+      error_code: validation.error,
+      client_status: clientStatus(body.get("client_id"), auth.allowedClients),
+      resource_status: resourceStatus(body.get("resource"), config.server.resource ?? auth.issuer),
+      scope_count: scopesFromRequest(body.get("scope"), auth.requiredScopes).length,
+    });
     writeJson(response, 400, { error: validation.error });
     return;
   }
 
   if (body.get("username") !== auth.adminUsername || !verifyPassword(body.get("password") ?? "", auth.adminPasswordHash)) {
+    logger.debug("oauth.authorize.completed", {
+      endpoint: AUTHORIZE_PATH,
+      status: "error",
+      status_code: 401,
+      error_code: "invalid_login",
+      client_status: "allowed",
+      resource_status: "match",
+      scope_count: validation.scopes.length,
+    });
     response.writeHead(401, { "content-type": "text/html; charset=utf-8" });
     response.end("<!doctype html><html><body><p>Invalid username or password.</p></body></html>");
     return;
@@ -158,6 +178,14 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
   redirect.searchParams.set("code", code);
   const state = body.get("state");
   if (state) redirect.searchParams.set("state", state);
+  logger.debug("oauth.authorize.completed", {
+    endpoint: AUTHORIZE_PATH,
+    status: "success",
+    status_code: 302,
+    client_status: "allowed",
+    resource_status: "match",
+    scope_count: validation.scopes.length,
+  });
   response.writeHead(302, { location: redirect.toString() });
   response.end();
 }
@@ -165,9 +193,11 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
 async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {
   const auth = config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth : undefined;
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
+  const logger = createLogger(config.logging);
 
   const body = await readFormBody(request);
   if (body.get("grant_type") !== "authorization_code") {
+    logTokenOutcome(logger, "error", 400, "unsupported_grant_type", "unavailable", "unavailable");
     writeOAuthError(response, 400, "unsupported_grant_type");
     return;
   }
@@ -175,17 +205,26 @@ async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, 
   const record = authorizationCodes.get(code);
   if (record === undefined || record.expiresAt <= Date.now()) {
     authorizationCodes.delete(code);
+    logTokenOutcome(logger, "error", 400, "invalid_grant", "unavailable", "unavailable");
     writeOAuthError(response, 400, "invalid_grant");
     return;
   }
   authorizationCodes.delete(code);
 
   if (body.get("client_id") !== record.clientId || body.get("redirect_uri") !== record.redirectUri) {
+    logTokenOutcome(logger, "error", 400, "invalid_grant", resourceStatus(body.get("resource"), record.resource), record.scopes.length);
     writeOAuthError(response, 400, "invalid_grant");
+    return;
+  }
+  const requestedResource = body.get("resource");
+  if (requestedResource !== null && requestedResource !== record.resource) {
+    logTokenOutcome(logger, "error", 400, "invalid_target", "mismatch", record.scopes.length);
+    writeOAuthError(response, 400, "invalid_target");
     return;
   }
   const codeVerifier = body.get("code_verifier") ?? "";
   if (pkceChallenge(codeVerifier) !== record.codeChallenge) {
+    logTokenOutcome(logger, "error", 400, "invalid_grant", resourceStatus(requestedResource, record.resource), record.scopes.length);
     writeOAuthError(response, 400, "invalid_grant");
     return;
   }
@@ -200,6 +239,7 @@ async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, 
     .setExpirationTime(now + Math.floor(auth.accessTokenTtlMs / 1000))
     .sign(await getPrivateKey(auth.signingPrivateKeyPem));
 
+  logTokenOutcome(logger, "success", 200, undefined, resourceStatus(requestedResource, record.resource), record.scopes.length);
   writeJson(response, 200, {
     access_token: accessToken,
     token_type: "Bearer",
@@ -270,6 +310,35 @@ function isAllowedClient(allowedClients: string[], clientId: string): boolean {
     } catch {
       return false;
     }
+  });
+}
+
+function clientStatus(clientId: string | null, allowedClients: string[]): "allowed" | "rejected" | "missing" {
+  if (!clientId) return "missing";
+  return isAllowedClient(allowedClients, clientId) ? "allowed" : "rejected";
+}
+
+function resourceStatus(resource: string | null, expectedResource: string): "match" | "mismatch" | "missing" | "omitted" {
+  if (resource === null) return "omitted";
+  if (resource === "") return "missing";
+  return resource === expectedResource ? "match" : "mismatch";
+}
+
+function logTokenOutcome(
+  logger: ReturnType<typeof createLogger>,
+  status: "success" | "error",
+  statusCode: number,
+  errorCode: string | undefined,
+  resourceStatusValue: ReturnType<typeof resourceStatus> | "unavailable",
+  scopeCount: number | "unavailable",
+): void {
+  logger.debug("oauth.token.completed", {
+    endpoint: TOKEN_PATH,
+    status,
+    status_code: statusCode,
+    ...(errorCode === undefined ? {} : { error_code: errorCode }),
+    resource_status: resourceStatusValue,
+    scope_count: scopeCount,
   });
 }
 
