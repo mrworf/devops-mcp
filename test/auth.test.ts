@@ -320,6 +320,30 @@ describe("auth", () => {
     }
   });
 
+  it("rejects excess OAuth body readers by direct source regardless of forwarding headers", async () => {
+    const config = await builtinOAuthConfig({ maxUnauthenticatedInflight: 2, maxUnauthenticatedInflightPerSource: 1 });
+    const fixture = await startServer(config);
+    const stalled = httpRequest(`${fixture.baseUrl}/oauth/authorize`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "x-forwarded-for": "198.51.100.20" },
+    });
+    stalled.on("error", () => undefined);
+    stalled.write("partial=body");
+    await once(stalled, "socket");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      const rejected = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST", body: "grant_type=authorization_code", headers: { "x-forwarded-for": "203.0.113.30" },
+      });
+      expect(rejected.status).toBe(429);
+      expect(rejected.headers["retry-after"]).toBe("1");
+      expect(JSON.parse(rejected.body)).toEqual({ error: "temporarily_unavailable" });
+    } finally {
+      stalled.destroy();
+      await fixture.close();
+    }
+  });
+
   it("rejects unallowed built-in OAuth CIMD clients and redirect mismatches", async () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
@@ -607,7 +631,15 @@ function oauthConfig(jwksUri: string): GatewayConfig {
   });
 }
 
-async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allowedClients?: string[]; loggingLevel?: "info" | "debug"; signingKeyPath?: string; maxInboundBody?: string } = {}): Promise<GatewayConfig> {
+async function builtinOAuthConfig(options: {
+  authorizationCodeTtl?: string;
+  allowedClients?: string[];
+  loggingLevel?: "info" | "debug";
+  signingKeyPath?: string;
+  maxInboundBody?: string;
+  maxUnauthenticatedInflight?: number;
+  maxUnauthenticatedInflightPerSource?: number;
+} = {}): Promise<GatewayConfig> {
   const keyPath = options.signingKeyPath ?? await createSigningKeyFile();
   return validateConfig({
     ...baseRawConfig({
@@ -629,7 +661,11 @@ async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allo
       resource: "https://mcp.example.org",
     },
     logging: { level: options.loggingLevel ?? "info" },
-    limits: { max_inbound_body: options.maxInboundBody ?? "1mb" },
+    limits: {
+      max_inbound_body: options.maxInboundBody ?? "1mb",
+      max_unauthenticated_inflight: options.maxUnauthenticatedInflight ?? 32,
+      max_unauthenticated_inflight_per_source: options.maxUnauthenticatedInflightPerSource ?? 4,
+    },
   }, {
     ADMIN_USERNAME: "admin@example.com",
     ADMIN_PASSWORD_HASH: hashBuiltinOAuthPassword("correct horse battery staple", "test-salt", 1000),
@@ -726,7 +762,7 @@ function pkceChallenge(verifier: string): string {
   return Buffer.from(createHash("sha256").update(verifier).digest()).toString("base64url");
 }
 
-async function localRequest(urlText: string, options: { method: string; body?: string }): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+async function localRequest(urlText: string, options: { method: string; body?: string; headers?: Record<string, string> }): Promise<{ status: number; headers: Record<string, string>; body: string }> {
   const url = new URL(urlText);
   const body = options.body ?? "";
   return new Promise((resolve, reject) => {
@@ -738,6 +774,7 @@ async function localRequest(urlText: string, options: { method: string; body?: s
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         "content-length": Buffer.byteLength(body),
+        ...options.headers,
       },
     }, (response) => {
       const chunks: Buffer[] = [];

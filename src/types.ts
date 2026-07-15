@@ -69,6 +69,8 @@ export interface TokenConfig {
 export interface LimitsConfig {
   maxInboundBodyBytes: number;
   inboundBodyTimeoutMs: number;
+  maxUnauthenticatedInflight: number;
+  maxUnauthenticatedInflightPerSource: number;
   maxRequestBodyBytes: number;
   maxResponseBodyBytes: number;
   timeoutMs: number;

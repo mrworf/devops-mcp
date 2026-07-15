@@ -107,6 +107,19 @@ describe("config validation", () => {
     expectConfigError(() => validateConfig(defaults, validEnv), "limits.inbound_body_timeout");
   });
 
+  it("defaults and validates unauthenticated in-flight limits", () => {
+    const raw = validRaw();
+    const defaults = validateConfig(raw, validEnv).limits;
+    expect(defaults.maxUnauthenticatedInflight).toBe(32);
+    expect(defaults.maxUnauthenticatedInflightPerSource).toBe(4);
+
+    raw.limits.max_unauthenticated_inflight = 2;
+    raw.limits.max_unauthenticated_inflight_per_source = 3;
+    expectConfigError(() => validateConfig(raw, validEnv), "must not exceed");
+    raw.limits.max_unauthenticated_inflight_per_source = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+  });
+
   it("accepts service API documentation URLs", () => {
     const raw = validRaw();
     raw.services["portainer-prod"].api_docs_url = "https://api.example.org/openapi.json";

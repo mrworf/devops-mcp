@@ -14,6 +14,8 @@ tokens:
 limits:
   max_inbound_body: 1mb
   inbound_body_timeout: 10s
+  max_unauthenticated_inflight: 32
+  max_unauthenticated_inflight_per_source: 4
   max_request_body: 1mb
   max_response_body: 5mb
   timeout: 30s

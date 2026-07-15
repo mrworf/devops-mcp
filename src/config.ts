@@ -84,10 +84,16 @@ const rawConfigSchema = z.object({
   limits: z.object({
     max_inbound_body: z.string().default("1mb"),
     inbound_body_timeout: z.string().default("10s"),
+    max_unauthenticated_inflight: z.number().int().positive().default(32),
+    max_unauthenticated_inflight_per_source: z.number().int().positive().default(4),
     max_request_body: z.string().default("1mb"),
     max_response_body: z.string().default("5mb"),
     timeout: z.string().default("30s"),
-  }).default({ max_inbound_body: "1mb", inbound_body_timeout: "10s", max_request_body: "1mb", max_response_body: "5mb", timeout: "30s" }),
+  }).default({
+    max_inbound_body: "1mb", inbound_body_timeout: "10s",
+    max_unauthenticated_inflight: 32, max_unauthenticated_inflight_per_source: 4,
+    max_request_body: "1mb", max_response_body: "5mb", timeout: "30s",
+  }),
   logging: z.object({
     level: z.enum(["info", "debug"]).default("info"),
   }).default({ level: "info" }),
@@ -290,7 +296,18 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
   if (maxInboundBodyBytes <= 0 || inboundBodyTimeoutMs <= 0 || maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || timeoutMs <= 0) {
     throw configError("limits values must be positive");
   }
-  return { maxInboundBodyBytes, inboundBodyTimeoutMs, maxRequestBodyBytes, maxResponseBodyBytes, timeoutMs };
+  if (raw.max_unauthenticated_inflight_per_source > raw.max_unauthenticated_inflight) {
+    throw configError("limits.max_unauthenticated_inflight_per_source must not exceed limits.max_unauthenticated_inflight");
+  }
+  return {
+    maxInboundBodyBytes,
+    inboundBodyTimeoutMs,
+    maxUnauthenticatedInflight: raw.max_unauthenticated_inflight,
+    maxUnauthenticatedInflightPerSource: raw.max_unauthenticated_inflight_per_source,
+    maxRequestBodyBytes,
+    maxResponseBodyBytes,
+    timeoutMs,
+  };
 }
 
 function normalizeServices(

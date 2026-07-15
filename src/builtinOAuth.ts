@@ -4,6 +4,7 @@ import { exportJWK, importPKCS8, importSPKI, SignJWT } from "jose";
 import { createLogger } from "./logger.js";
 import type { BuiltinOAuthAuthConfig, GatewayConfig } from "./types.js";
 import { readBoundedBody, RequestBodyError } from "./httpBody.js";
+import { InflightLimiter } from "./inflightLimiter.js";
 
 const AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 const OPENID_CONFIGURATION_PATH = "/.well-known/openid-configuration";
@@ -24,6 +25,7 @@ interface AuthorizationCode {
 const authorizationCodes = new Map<string, AuthorizationCode>();
 const privateKeyCache = new Map<string, ReturnType<typeof importPKCS8>>();
 const publicKeyCache = new Map<string, ReturnType<typeof importSPKI>>();
+const bodyLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
 
 export function isBuiltinOAuthRequest(config: GatewayConfig, request: IncomingMessage): boolean {
   if (config.auth.mode !== "builtin_oauth") return false;
@@ -135,7 +137,9 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
 
   let body: URLSearchParams;
   try {
-    body = await readFormBody(request, config.limits.maxInboundBodyBytes, config.limits.inboundBodyTimeoutMs);
+    const limitedBody = await readLimitedFormBody(config, request, response);
+    if (limitedBody === undefined) return;
+    body = limitedBody;
   } catch (error) {
     if (error instanceof RequestBodyError) {
       closeAfterResponse(request, response);
@@ -208,7 +212,9 @@ async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, 
 
   let body: URLSearchParams;
   try {
-    body = await readFormBody(request, config.limits.maxInboundBodyBytes, config.limits.inboundBodyTimeoutMs);
+    const limitedBody = await readLimitedFormBody(config, request, response);
+    if (limitedBody === undefined) return;
+    body = limitedBody;
   } catch (error) {
     if (error instanceof RequestBodyError) {
       closeAfterResponse(request, response);
@@ -409,6 +415,34 @@ async function readFormBody(request: IncomingMessage, maxBytes?: number, timeout
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+}
+
+async function readLimitedFormBody(
+  config: GatewayConfig,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<URLSearchParams | undefined> {
+  let limiter = bodyLimiters.get(config);
+  if (limiter === undefined) {
+    limiter = new InflightLimiter(
+      config.limits.maxUnauthenticatedInflight,
+      config.limits.maxUnauthenticatedInflightPerSource,
+    );
+    bodyLimiters.set(config, limiter);
+  }
+  const source = request.socket.remoteAddress ?? "unknown";
+  const release = limiter.acquire(source);
+  if (release === undefined) {
+    response.setHeader("retry-after", "1");
+    closeAfterResponse(request, response);
+    writeOAuthError(response, 429, "temporarily_unavailable");
+    return undefined;
+  }
+  try {
+    return await readFormBody(request, config.limits.maxInboundBodyBytes, config.limits.inboundBodyTimeoutMs);
+  } finally {
+    release();
+  }
 }
 
 function oauthBodyError(error: RequestBodyError): string {

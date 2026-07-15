@@ -151,6 +151,7 @@ Scanner capacity defaults to `min(4, availableParallelism)` workers, a 32-job gl
 
 - `limits.max_inbound_body` defaults to `1mb` and is enforced while reading authenticated MCP POST bodies and both built-in OAuth form endpoints, including chunked requests and inaccurate `Content-Length` values. Oversize requests receive `413` before JSON or form parsing and cannot consume an authorization code.
 - `limits.inbound_body_timeout` defaults to `10s`. Incomplete MCP or OAuth bodies receive `408`, and their connections are closed without parsing partial input.
+- Built-in OAuth permits at most `limits.max_unauthenticated_inflight` body readers globally (default `32`) and `limits.max_unauthenticated_inflight_per_source` per direct socket address (default `4`). Excess work receives `429`; forwarding headers never select the limiter identity.
 - Caller-supplied HTTP authority, forwarding, and hop-by-hop headers are rejected before credential substitution. This includes `Host`, `:authority`, `Forwarded`, every `X-Forwarded-*` header, `Connection`, `Keep-Alive`, proxy authorization headers, `TE`, `Trailer`, `Transfer-Encoding`, and `Upgrade`. The outbound `Host` header is derived from the validated destination URL.
 - `Cookie`, `Cookie2`, `Set-Cookie`, and `Set-Cookie2` are prohibited. Request occurrences are rejected; response occurrences are removed with sanitized warnings.
 - Caller-supplied `Content-Length` is discarded and recomputed after request substitution and response transformation.
