@@ -5,6 +5,7 @@ export type LogSink = (line: string) => void;
 export interface Logger {
   debug(event: string, fields?: Record<string, unknown>): void;
   info(event: string, fields?: Record<string, unknown>): void;
+  warn(event: string, fields?: Record<string, unknown>): void;
   error(event: string, fields?: Record<string, unknown>): void;
 }
 
@@ -15,6 +16,7 @@ export function createLogger(config: LoggingConfig, sink: LogSink = console.log)
   return {
     debug: (event, fields) => write("debug", event, fields, config, sink),
     info: (event, fields) => write("info", event, fields, config, sink),
+    warn: (event, fields) => write("warn", event, fields, config, sink),
     error: (event, fields) => write("error", event, fields, config, sink),
   };
 }
@@ -55,7 +57,7 @@ function isSensitiveKey(key: string): boolean {
 }
 
 function write(
-  level: "debug" | "info" | "error",
+  level: "debug" | "info" | "warn" | "error",
   event: string,
   fields: Record<string, unknown> | undefined,
   config: LoggingConfig,

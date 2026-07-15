@@ -6,6 +6,7 @@ import { getService, resolveDestination } from "./registry.js";
 import { audit } from "./audit.js";
 import { denialStore } from "./denials.js";
 import { bodySummary, createLogger, headerNames } from "./logger.js";
+import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
 import { redactResponse } from "./redaction.js";
 import { substituteTokens } from "./substitution.js";
 import { getTokenBroker } from "./tokens.js";
@@ -107,6 +108,13 @@ export async function executeServiceRequest(
   const broker = getTokenBroker(config);
   const tokenTarget = { service: service.id, destination: target.destination.id };
   const headers = input.headers ?? {};
+  const requestCookieHeaders = prohibitedCookieHeaderNames(headers);
+  if (requestCookieHeaders.length > 0) {
+    logger.warn("service_request.cookie_rejected", {
+      direction: "request", service: service.id, destination: target.destination.id, header_types: requestCookieHeaders,
+    });
+    throw new GatewayError("cookie_not_allowed", "Cookie headers are not allowed in service requests.");
+  }
   const headerSubstitution = substituteTokens(headers, broker, auth, tokenTarget, service);
   const querySubstitution = substituteTokens(input.query ?? {}, broker, auth, tokenTarget, service);
   const bodySubstitution = substituteTokens(input.body, broker, auth, tokenTarget, service);
@@ -138,7 +146,13 @@ export async function executeServiceRequest(
   });
   const started = Date.now();
   const response = await fetchWithTimeout(downstream, config.limits.timeoutMs);
-  const responseHeaders = Object.fromEntries(response.headers.entries());
+  const cookieFiltered = stripCookieHeaders(Object.fromEntries(response.headers.entries()));
+  if (cookieFiltered.removed.length > 0) {
+    logger.warn("service_request.cookie_removed", {
+      direction: "response", service: service.id, destination: target.destination.id, header_types: cookieFiltered.removed,
+    });
+  }
+  const responseHeaders = cookieFiltered.headers;
   const rawBody = await limitedResponseText(response, config.limits.maxResponseBodyBytes);
   const redacted = redactResponse({ body: rawBody.body, headers: responseHeaders }, service.credentials.map((credential) => credential.secret));
   const requestId = `req_${started}`;

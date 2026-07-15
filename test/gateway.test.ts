@@ -239,6 +239,25 @@ describe("HTTP gateway", () => {
       expect(downstream.requests).toHaveLength(1);
     } finally { await downstream.close(); }
   });
+
+  it("rejects request cookies and removes downstream response cookies", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        headers: { Cookie: "session=secret" }, reason: "Reject cookies.",
+      }), "cookie_not_allowed");
+      expect(downstream.requests).toHaveLength(0);
+
+      const response = await executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/cookies", reason: "Strip cookies.",
+      });
+      expect(Object.keys(response.headers).map((name) => name.toLowerCase())).not.toContain("set-cookie");
+      expect(response.headers["x-safe"]).toBe("yes");
+    } finally { await downstream.close(); }
+  });
 });
 
 function gatewayConfig(baseUrl: string, options: {
@@ -282,6 +301,7 @@ function gatewayConfig(baseUrl: string, options: {
             { id: "allow-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/large"] },
             { id: "allow-redirect", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/redirect"] },
             { id: "allow-slow", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/slow"] },
+            { id: "allow-cookies", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/cookies"] },
             { id: "deny-blocked", effect: "deny", priority: 200, methods: ["GET"], paths: ["/api/blocked"] },
           ],
         },
@@ -335,6 +355,11 @@ async function startDownstream() {
     }
     if (request.url?.startsWith("/api/large")) {
       response.end("x".repeat(100));
+      return;
+    }
+    if (request.url?.startsWith("/api/cookies")) {
+      response.writeHead(200, { "set-cookie": ["session=secret; HttpOnly", "other=value"], "x-safe": "yes" });
+      response.end("cookie response");
       return;
     }
     response.writeHead(200, {

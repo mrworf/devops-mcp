@@ -79,4 +79,12 @@ describe("safe debug logging", () => {
       },
     });
   });
+
+  it("emits warning-level events without exposing sensitive fields", () => {
+    const lines: string[] = [];
+    createLogger({ level: "info" }, (line) => lines.push(line)).warn("cookie.removed", { cookie: "session=secret", direction: "response" });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('"level":"warn"');
+    expect(lines[0]).not.toContain("session=secret");
+  });
 });

@@ -16,6 +16,7 @@ export type GatewayErrorCode =
   | "downstream_error"
   | "response_too_large"
   | "unsupported_transfer_encoding"
+  | "cookie_not_allowed"
   | "config_error";
 
 export class GatewayError extends Error {
