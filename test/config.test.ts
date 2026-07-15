@@ -86,6 +86,15 @@ describe("config validation", () => {
     expect(config.logging.level).toBe("debug");
   });
 
+  it("defaults and validates the in-memory audit capacity", () => {
+    const raw = validRaw();
+    expect(validateConfig(raw, validEnv).audit.memoryEvents).toBe(1000);
+    raw.audit = { memory_events: 2 };
+    expect(validateConfig(raw, validEnv).audit.memoryEvents).toBe(2);
+    raw.audit.memory_events = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+  });
+
   it("defaults and validates built-in OAuth login rate limits", async () => {
     const keyPath = join(mkdtempSync(join(tmpdir(), "gateway-login-limit-")), "key.pem");
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });

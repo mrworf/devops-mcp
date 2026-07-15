@@ -74,7 +74,6 @@ export class TokenBroker {
   private readonly responseSecretsById = new Map<string, ResponseSecretTokenRecord>();
   private readonly tokenValuesById = new Map<string, string>();
   private readonly secretIndexKey = randomBytes(32);
-  readonly auditEvents: TokenIssuedAuditEvent[] = [];
 
   constructor(
     private readonly config: GatewayConfig,
@@ -134,7 +133,6 @@ export class TokenBroker {
       reason: input.reason,
       timestamp: new Date(now).toISOString(),
     }, this.config);
-    this.auditEvents.push(audit);
     return { tokens: issued, audit };
   }
 

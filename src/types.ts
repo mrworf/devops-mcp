@@ -95,6 +95,7 @@ export interface LoggingConfig {
 
 export interface AuditConfig {
   file?: string;
+  memoryEvents: number;
 }
 
 export interface ServiceConfig {

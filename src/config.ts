@@ -114,7 +114,8 @@ const rawConfigSchema = z.object({
   }).default({ level: "info" }),
   audit: z.object({
     file: z.string().min(1).optional(),
-  }).default({}),
+    memory_events: z.number().int().positive().default(1000),
+  }).default({ memory_events: 1000 }),
   services: z.record(z.string().min(1), z.object({
     type: z.literal("http").default("http"),
     name: z.string().min(1),
@@ -183,7 +184,10 @@ export function validateConfig(raw: unknown, env: NodeJS.ProcessEnv = process.en
   const tokens = normalizeTokens(parsed.tokens);
   const limits = normalizeLimits(parsed.limits);
   const logging: LoggingConfig = { level: parsed.logging.level };
-  const audit: AuditConfig = parsed.audit.file === undefined ? {} : { file: parsed.audit.file };
+  const audit: AuditConfig = {
+    memoryEvents: parsed.audit.memory_events,
+    ...(parsed.audit.file === undefined ? {} : { file: parsed.audit.file }),
+  };
   const services = normalizeServices(parsed.services, env, warnings);
 
   return { server, auth, tokens, limits, logging, audit, services, warnings };

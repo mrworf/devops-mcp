@@ -65,10 +65,23 @@ export interface ToolInvocationAuditEvent {
 
 export type AuditEvent = TokenIssuedAuditEvent | ServiceRequestAuditEvent | ToolInvocationAuditEvent | InvalidOpaqueResponseTokensAuditEvent;
 
-export const auditEvents: AuditEvent[] = [];
+const auditEventStores = new WeakMap<GatewayConfig, AuditEvent[]>();
+const fallbackAuditEvents: AuditEvent[] = [];
+
+export function getAuditEvents(config?: GatewayConfig): readonly AuditEvent[] {
+  return config === undefined ? fallbackAuditEvents : auditEventStores.get(config) ?? [];
+}
+
+export function clearAuditEvents(config?: GatewayConfig): void {
+  if (config === undefined) fallbackAuditEvents.length = 0;
+  else auditEventStores.delete(config);
+}
 
 export function audit(event: AuditEvent, config?: GatewayConfig): void {
-  auditEvents.push(event);
+  const events = auditStore(config);
+  events.push(event);
+  const capacity = config?.audit.memoryEvents ?? 1000;
+  if (events.length > capacity) events.splice(0, events.length - capacity);
   if (config?.audit.file === undefined) return;
   try {
     mkdirSync(dirname(config.audit.file), { recursive: true });
@@ -79,6 +92,16 @@ export function audit(event: AuditEvent, config?: GatewayConfig): void {
       error,
     });
   }
+}
+
+function auditStore(config?: GatewayConfig): AuditEvent[] {
+  if (config === undefined) return fallbackAuditEvents;
+  let events = auditEventStores.get(config);
+  if (events === undefined) {
+    events = [];
+    auditEventStores.set(config, events);
+  }
+  return events;
 }
 
 export function tokenIssuedAuditEvent(input: TokenIssuedAuditEvent, config?: GatewayConfig): TokenIssuedAuditEvent {

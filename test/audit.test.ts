@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { auditEvents, type AuditEvent } from "../src/audit.js";
+import { audit, clearAuditEvents, getAuditEvents, type AuditEvent } from "../src/audit.js";
 import { validateConfig } from "../src/config.js";
 import { executeServiceRequest } from "../src/gateway.js";
 import { callTool } from "../src/mcp/tools.js";
@@ -13,7 +13,6 @@ import type { AuthContext, GatewayConfig } from "../src/types.js";
 
 describe("audit logging", () => {
   it("omits raw credentials, opaque tokens, auth headers, cookies, and bodies from token and service request events", async () => {
-    auditEvents.length = 0;
     const config = validateConfig({
       server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
       auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
@@ -35,6 +34,7 @@ describe("audit logging", () => {
       TEST_GATEWAY_TOKEN: "dev-token",
       DEMO_API_KEY: "raw-secret",
     });
+    clearAuditEvents(config);
     const broker = new TokenBroker(config);
     defaultTokenBrokers.set(config, broker);
     const auth = actor();
@@ -58,6 +58,7 @@ describe("audit logging", () => {
       reason: "Denied request audit.",
     })).rejects.toThrow();
 
+    const auditEvents = getAuditEvents(config);
     const serialized = JSON.stringify(auditEvents);
     expect(serialized).not.toContain("raw-secret");
     expect(serialized).not.toContain(issued.tokens[0]?.token ?? "");
@@ -69,11 +70,11 @@ describe("audit logging", () => {
   });
 
   it("persists sanitized audit events as JSONL when audit.file is configured", async () => {
-    auditEvents.length = 0;
     const downstream = await startDownstream();
     try {
       const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-audit-")), "audit.jsonl");
       const config = auditConfig(auditFile, downstream.baseUrl);
+      clearAuditEvents(config);
       const broker = new TokenBroker(config);
       defaultTokenBrokers.set(config, broker);
       const auth = actor();
@@ -129,9 +130,9 @@ describe("audit logging", () => {
   });
 
   it("does not fail tool execution when the audit file cannot be appended", () => {
-    auditEvents.length = 0;
     const auditDirectory = mkdtempSync(join(tmpdir(), "gateway-audit-dir-"));
     const config = auditConfig(auditDirectory, "http://127.0.0.1:1");
+    clearAuditEvents(config);
     const broker = new TokenBroker(config);
     defaultTokenBrokers.set(config, broker);
 
@@ -141,7 +142,19 @@ describe("audit logging", () => {
       credential_ids: ["api_key"],
       reason: "Audit file failure should not block issuance.",
     })).not.toThrow();
-    expect(auditEvents.map((event) => event.type)).toContain("token_issued");
+    expect(getAuditEvents(config).map((event) => event.type)).toContain("token_issued");
+  });
+
+  it("bounds memory history while preserving every file-backed event", () => {
+    const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-audit-ring-")), "audit.jsonl");
+    const config = auditConfig(auditFile, "http://127.0.0.1:1", 2);
+    clearAuditEvents(config);
+    for (const tool of ["list_services", "request_tokens", "service_request"] as const) {
+      audit({ type: "tool_invocation", subject: "actor", tool, outcome: "allow", timestamp: new Date().toISOString() }, config);
+    }
+    expect(getAuditEvents(config).map((event) => event.type)).toEqual(["tool_invocation", "tool_invocation"]);
+    expect((getAuditEvents(config)[0] as { tool: string }).tool).toBe("request_tokens");
+    expect(readJsonl(auditFile)).toHaveLength(3);
   });
 });
 
@@ -149,11 +162,11 @@ function actor(): AuthContext {
   return { subject: "henric@example.com", scopes: ["gateway.request"], mode: "bearer" };
 }
 
-function auditConfig(auditFile: string, baseUrl: string): GatewayConfig {
+function auditConfig(auditFile: string, baseUrl: string, memoryEvents = 1000): GatewayConfig {
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
     auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
-    audit: { file: auditFile },
+    audit: { file: auditFile, memory_events: memoryEvents },
     services: {
       "demo-service": {
         type: "http",
