@@ -67,6 +67,18 @@ const rawConfigSchema = z.object({
         authorization_code_ttl: z.string().default("5m"),
         allowed_clients: z.array(z.string().min(1)).min(1),
         required_scopes: z.array(z.string().min(1)).default(["gateway.read", "gateway.tokens", "gateway.request"]),
+        login_rate_limit: z.object({
+          window: z.string().default("15m"),
+          per_source: z.number().int().positive().default(10),
+          per_account: z.number().int().positive().default(10),
+          global: z.number().int().positive().default(100),
+          initial_lockout: z.string().default("15m"),
+          max_lockout: z.string().default("1h"),
+          max_entries: z.number().int().positive().default(1000),
+        }).default({
+          window: "15m", per_source: 10, per_account: 10, global: 100,
+          initial_lockout: "15m", max_lockout: "1h", max_entries: 1000,
+        }),
       }).strict(),
     }).strict(),
     z.object({
@@ -260,6 +272,7 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
         authorizationCodeTtlMs: parseDuration(raw.builtin_oauth.authorization_code_ttl, "auth.builtin_oauth.authorization_code_ttl"),
         allowedClients: raw.builtin_oauth.allowed_clients,
         requiredScopes: raw.builtin_oauth.required_scopes,
+        loginRateLimit: normalizeLoginRateLimit(raw.builtin_oauth.login_rate_limit),
       },
     };
   }
@@ -276,6 +289,22 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
   }
 
   return { mode: "bearer", bearer: { token: readSecretFile(tokenFile), source: "file" } };
+}
+
+function normalizeLoginRateLimit(raw: {
+  window: string; per_source: number; per_account: number; global: number;
+  initial_lockout: string; max_lockout: string; max_entries: number;
+}) {
+  const windowMs = parseDuration(raw.window, "auth.builtin_oauth.login_rate_limit.window");
+  const initialLockoutMs = parseDuration(raw.initial_lockout, "auth.builtin_oauth.login_rate_limit.initial_lockout");
+  const maxLockoutMs = parseDuration(raw.max_lockout, "auth.builtin_oauth.login_rate_limit.max_lockout");
+  if (windowMs <= 0 || initialLockoutMs <= 0 || maxLockoutMs < initialLockoutMs) {
+    throw configError("auth.builtin_oauth.login_rate_limit durations must be positive and max_lockout must not be shorter than initial_lockout");
+  }
+  return {
+    windowMs, perSource: raw.per_source, perAccount: raw.per_account, global: raw.global,
+    initialLockoutMs, maxLockoutMs, maxEntries: raw.max_entries,
+  };
 }
 
 function keyIdForPublicKey(publicKeyPem: string): string {

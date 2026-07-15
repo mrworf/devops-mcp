@@ -6,6 +6,7 @@ import { createLogger } from "./logger.js";
 import type { BuiltinOAuthAuthConfig, GatewayConfig } from "./types.js";
 import { readBoundedBody, RequestBodyError } from "./httpBody.js";
 import { InflightLimiter } from "./inflightLimiter.js";
+import { LoginAttemptLimiter } from "./loginAttemptLimiter.js";
 
 const AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 const OPENID_CONFIGURATION_PATH = "/.well-known/openid-configuration";
@@ -28,6 +29,7 @@ const privateKeyCache = new Map<string, ReturnType<typeof importPKCS8>>();
 const publicKeyCache = new Map<string, ReturnType<typeof importSPKI>>();
 const bodyLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
 const passwordLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
+const loginAttemptLimiters = new WeakMap<GatewayConfig, LoginAttemptLimiter>();
 const pbkdf2Async = promisify(pbkdf2);
 
 export function isBuiltinOAuthRequest(config: GatewayConfig, request: IncomingMessage): boolean {
@@ -166,6 +168,16 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
     return;
   }
 
+  const source = request.socket.remoteAddress ?? "unknown";
+  const account = (body.get("username") ?? "").trim().toLowerCase();
+  const attemptLimiter = getLoginAttemptLimiter(config);
+  const admission = attemptLimiter.check(source, account);
+  if (!admission.allowed) {
+    response.setHeader("retry-after", String(Math.max(1, Math.ceil(admission.retryAfterMs / 1000))));
+    writeOAuthError(response, 429, "temporarily_unavailable");
+    return;
+  }
+
   let passwordValid = false;
   if (body.get("username") === auth.adminUsername) {
     const release = acquirePasswordVerification(config, request);
@@ -181,6 +193,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
     }
   }
   if (!passwordValid) {
+    attemptLimiter.recordFailure(source, account);
     logger.debug("oauth.authorize.completed", {
       endpoint: AUTHORIZE_PATH,
       status: "error",
@@ -194,6 +207,8 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
     response.end("<!doctype html><html><body><p>Invalid username or password.</p></body></html>");
     return;
   }
+
+  attemptLimiter.recordSuccess(source, account);
 
   const code = randomBytes(32).toString("base64url");
   authorizationCodes.set(code, {
@@ -232,6 +247,18 @@ function acquirePasswordVerification(config: GatewayConfig, request: IncomingMes
     passwordLimiters.set(config, limiter);
   }
   return limiter.acquire(request.socket.remoteAddress ?? "unknown");
+}
+
+function getLoginAttemptLimiter(config: GatewayConfig): LoginAttemptLimiter {
+  let limiter = loginAttemptLimiters.get(config);
+  if (limiter === undefined) {
+    limiter = new LoginAttemptLimiter(config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth.loginRateLimit : {
+      windowMs: 15 * 60_000, perSource: 10, perAccount: 10, global: 100,
+      initialLockoutMs: 15 * 60_000, maxLockoutMs: 60 * 60_000, maxEntries: 1000,
+    });
+    loginAttemptLimiters.set(config, limiter);
+  }
+  return limiter;
 }
 
 async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {

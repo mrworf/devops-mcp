@@ -50,7 +50,18 @@ export interface BuiltinOAuthAuthConfig {
     authorizationCodeTtlMs: number;
     allowedClients: string[];
     requiredScopes: string[];
+    loginRateLimit: LoginRateLimitConfig;
   };
+}
+
+export interface LoginRateLimitConfig {
+  windowMs: number;
+  perSource: number;
+  perAccount: number;
+  global: number;
+  initialLockoutMs: number;
+  maxLockoutMs: number;
+  maxEntries: number;
 }
 
 export interface BearerAuthConfig {

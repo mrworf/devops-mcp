@@ -8,5 +8,5 @@ This companion record tracks remediation of the findings in `security-review-202
 | SEC-002 | Remediated | Inbound bodies are size-, time-, and concurrency-bounded; password verification uses asynchronous PBKDF2 with bounded concurrency. |
 | SEC-003 | Pending | |
 | SEC-004 | Pending | |
-| SEC-005 | Pending | |
+| SEC-005 | Remediated | Built-in OAuth applies bounded source, account, and global failure limits before PBKDF2 with temporary exponential lockouts. |
 | SEC-006 | Pending | |

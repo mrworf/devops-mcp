@@ -294,6 +294,35 @@ describe("auth", () => {
     }
   });
 
+  it("returns identical failures for invalid usernames and passwords, then throttles before verification", async () => {
+    const config = await builtinOAuthConfig({ loginRateLimit: {
+      window: "1m", per_source: 2, per_account: 2, global: 10,
+      initial_lockout: "1m", max_lockout: "2m", max_entries: 20,
+    } });
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    try {
+      const wrongUsername = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST", body: authorizationBody({ username: "nobody@example.org", code_challenge: pkceChallenge("wrong-user") }),
+      });
+      const wrongPassword = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST", body: authorizationBody({ password: "wrong-password", code_challenge: pkceChallenge("wrong-password") }),
+      });
+      expect(wrongUsername.status).toBe(401);
+      expect(wrongPassword.status).toBe(401);
+      expect(wrongUsername.body).toBe(wrongPassword.body);
+
+      const throttled = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST", body: authorizationBody({ code_challenge: pkceChallenge("throttled") }),
+      });
+      expect(throttled.status).toBe(429);
+      expect(throttled.headers["retry-after"]).toBe("60");
+      expect(JSON.parse(throttled.body)).toEqual({ error: "temporarily_unavailable" });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("keeps health responsive during asynchronous password verification", async () => {
     const config = await builtinOAuthConfig({ passwordIterations: 500_000 });
     const fixture = await startServer(config);
@@ -699,6 +728,10 @@ async function builtinOAuthConfig(options: {
   adminPasswordHash?: string;
   maxPasswordVerifications?: number;
   maxPasswordVerificationsPerSource?: number;
+  loginRateLimit?: {
+    window: string; per_source: number; per_account: number; global: number;
+    initial_lockout: string; max_lockout: string; max_entries: number;
+  };
 } = {}): Promise<GatewayConfig> {
   const keyPath = options.signingKeyPath ?? await createSigningKeyFile();
   return validateConfig({
@@ -713,6 +746,7 @@ async function builtinOAuthConfig(options: {
         authorization_code_ttl: options.authorizationCodeTtl ?? "5m",
         allowed_clients: options.allowedClients ?? ["https://chatgpt.com"],
         required_scopes: ["gateway.read", "gateway.tokens", "gateway.request"],
+        ...(options.loginRateLimit === undefined ? {} : { login_rate_limit: options.loginRateLimit }),
       },
     }),
     server: {

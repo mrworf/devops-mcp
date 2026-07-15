@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { GatewayError } from "../src/errors.js";
@@ -83,6 +84,29 @@ describe("config validation", () => {
     const config = validateConfig(raw, validEnv);
 
     expect(config.logging.level).toBe("debug");
+  });
+
+  it("defaults and validates built-in OAuth login rate limits", async () => {
+    const keyPath = join(mkdtempSync(join(tmpdir(), "gateway-login-limit-")), "key.pem");
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    writeFileSync(keyPath, privateKey.export({ type: "pkcs8", format: "pem" }));
+    const raw = validRaw();
+    raw.auth = {
+      mode: "builtin_oauth",
+      builtin_oauth: {
+        issuer: "https://mcp.example.org", admin_username_env: "ADMIN_USERNAME",
+        admin_password_hash_env: "ADMIN_HASH", signing_key_file: keyPath,
+        allowed_clients: ["https://chatgpt.com"],
+      },
+    };
+    const env = { ...validEnv, ADMIN_USERNAME: "admin@example.com", ADMIN_HASH: "pbkdf2-sha256$1000$salt$hash" };
+    const defaults = validateConfig(raw, env).auth;
+    expect(defaults.mode).toBe("builtin_oauth");
+    if (defaults.mode !== "builtin_oauth") throw new Error("Expected built-in OAuth");
+    expect(defaults.builtinOAuth.loginRateLimit).toMatchObject({ perSource: 10, perAccount: 10, global: 100, maxEntries: 1000 });
+
+    raw.auth.builtin_oauth.login_rate_limit = { initial_lockout: "1h", max_lockout: "15m" };
+    expectConfigError(() => validateConfig(raw, env), "max_lockout");
   });
 
   it("defaults and validates the inbound request body limit", () => {

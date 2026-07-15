@@ -61,6 +61,8 @@ auth:
 
 Password verification uses asynchronous PBKDF2 so expensive login checks do not block MCP traffic or health checks. At most `limits.max_password_verifications` checks run globally (default `2`) and `limits.max_password_verifications_per_source` per direct socket address (default `1`); excess checks receive `429` before PBKDF2 starts.
 
+Built-in login failures are limited over a 15-minute window to 10 per direct source, 10 per account, and 100 globally. Lockouts start at 15 minutes and double on repetition up to one hour. Override these values under `auth.builtin_oauth.login_rate_limit`; forwarding headers are ignored and failures never log submitted usernames or passwords.
+
 ## Logging
 `logging.level` defaults to `info`. Set it to `debug` while setting up the MCP server to emit sanitized structural diagnostics and response-tokenization counts.
 
