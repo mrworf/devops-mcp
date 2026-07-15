@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { GatewayError } from "./errors.js";
 import { getCredential, getService } from "./registry.js";
 import type { TokenIssuedAuditEvent } from "./audit.js";
@@ -41,8 +41,31 @@ export interface TokenRecord {
   maxExpiresAt: number;
 }
 
+export interface ResponseSecretTokenRecord {
+  id: string;
+  tokenHash: string;
+  subject: string;
+  service: string;
+  secret: string;
+  issuedAt: number;
+  lastUsedAt: number;
+  idleExpiresAt: number;
+  maxExpiresAt: number;
+}
+
+export interface ResponseSecretIssueResult {
+  token: string;
+  record: ResponseSecretTokenRecord;
+  reused: boolean;
+}
+
 export class TokenBroker {
   private readonly recordsByHash = new Map<string, TokenRecord>();
+  private readonly responseSecretsByHash = new Map<string, ResponseSecretTokenRecord>();
+  private readonly responseSecretIdsByIndex = new Map<string, string>();
+  private readonly responseSecretsById = new Map<string, ResponseSecretTokenRecord>();
+  private readonly tokenValuesById = new Map<string, string>();
+  private readonly secretIndexKey = randomBytes(32);
   readonly auditEvents: TokenIssuedAuditEvent[] = [];
 
   constructor(
@@ -82,6 +105,7 @@ export class TokenBroker {
         maxExpiresAt: now + this.config.tokens.maxTtlMs,
       };
       this.recordsByHash.set(record.tokenHash, record);
+      this.tokenValuesById.set(record.id, token);
       internalTokenIds.push(id);
       issued.push({
         credential_id: credentialId,
@@ -126,6 +150,76 @@ export class TokenBroker {
     record.idleExpiresAt = Math.min(now + this.config.tokens.idleTtlMs, record.maxExpiresAt);
     return record;
   }
+
+  issueOrReuseResponseSecret(auth: AuthContext, service: string, secret: string): ResponseSecretIssueResult {
+    if (!secret) throw new GatewayError("token_invalid", "Response secret must not be empty.");
+    const index = this.responseSecretIndex(auth.subject, service, secret);
+    const existingId = this.responseSecretIdsByIndex.get(index);
+    if (existingId !== undefined) {
+      const existing = this.responseSecretsById.get(existingId);
+      const token = this.tokenValuesById.get(existingId);
+      if (existing && token && !this.isExpired(existing)) {
+        this.refresh(existing);
+        return { token, record: existing, reused: true };
+      }
+      this.deleteResponseSecret(existingId, index);
+    }
+
+    const now = this.now();
+    const token = generateResponseSecretTokenValue();
+    const record: ResponseSecretTokenRecord = {
+      id: `secrec_${randomUUID()}`,
+      tokenHash: hashToken(token),
+      subject: auth.subject,
+      service,
+      secret,
+      issuedAt: now,
+      lastUsedAt: now,
+      idleExpiresAt: now + this.config.tokens.idleTtlMs,
+      maxExpiresAt: now + this.config.tokens.maxTtlMs,
+    };
+    this.responseSecretsByHash.set(record.tokenHash, record);
+    this.responseSecretsById.set(record.id, record);
+    this.responseSecretIdsByIndex.set(index, record.id);
+    this.tokenValuesById.set(record.id, token);
+    return { token, record, reused: false };
+  }
+
+  validateResponseSecretUse(auth: AuthContext, service: string, tokenValue: string): ResponseSecretTokenRecord {
+    const record = this.responseSecretsByHash.get(hashToken(tokenValue));
+    if (!record) throw new GatewayError("token_invalid", "Unknown response secret token.");
+    if (this.isExpired(record)) {
+      this.deleteResponseSecret(record.id, this.responseSecretIndex(record.subject, record.service, record.secret));
+      throw new GatewayError("token_expired", "Response secret token has expired.");
+    }
+    if (record.subject !== auth.subject) throw new GatewayError("token_invalid", "Response secret token is not bound to this subject.");
+    if (record.service !== service) throw new GatewayError("token_invalid", "Response secret token is not bound to this service.");
+    this.refresh(record);
+    return record;
+  }
+
+  private responseSecretIndex(subject: string, service: string, secret: string): string {
+    return createHmac("sha256", this.secretIndexKey).update(subject).update("\0").update(service).update("\0").update(secret).digest("base64url");
+  }
+
+  private isExpired(record: { idleExpiresAt: number; maxExpiresAt: number }): boolean {
+    const now = this.now();
+    return record.idleExpiresAt <= now || record.maxExpiresAt <= now;
+  }
+
+  private refresh(record: { lastUsedAt: number; idleExpiresAt: number; maxExpiresAt: number }): void {
+    const now = this.now();
+    record.lastUsedAt = now;
+    record.idleExpiresAt = Math.min(now + this.config.tokens.idleTtlMs, record.maxExpiresAt);
+  }
+
+  private deleteResponseSecret(id: string, index: string): void {
+    const record = this.responseSecretsById.get(id);
+    if (record) this.responseSecretsByHash.delete(record.tokenHash);
+    this.responseSecretsById.delete(id);
+    this.responseSecretIdsByIndex.delete(index);
+    this.tokenValuesById.delete(id);
+  }
 }
 
 export const defaultTokenBrokers = new WeakMap<GatewayConfig, TokenBroker>();
@@ -149,6 +243,10 @@ function resolveTokenDestination(destinationIds: string[], requested: string | u
 
 function generateTokenValue(): string {
   return `tok_${randomBytes(24).toString("base64url")}`;
+}
+
+function generateResponseSecretTokenValue(): string {
+  return `sec_${randomBytes(24).toString("base64url")}`;
 }
 
 function hashToken(token: string): string {

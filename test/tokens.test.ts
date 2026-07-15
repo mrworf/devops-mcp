@@ -118,6 +118,38 @@ describe("token broker", () => {
       destination: "secondary",
     }, token), "token_invalid");
   });
+
+  it("issues and reuses service-scoped response secret tokens", () => {
+    let now = 1_000;
+    const broker = new TokenBroker(tokenConfig(), () => now);
+    const first = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
+    expect(first.token).toMatch(/^sec_/);
+    expect(first.token).not.toContain("returned-secret");
+    expect(first.reused).toBe(false);
+
+    now += 20;
+    const reused = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
+    expect(reused.token).toBe(first.token);
+    expect(reused.reused).toBe(true);
+    expect(reused.record.lastUsedAt).toBe(now);
+    expect(broker.validateResponseSecretUse(auth("henric@example.com"), "portainer-prod", first.token).secret).toBe("returned-secret");
+  });
+
+  it("isolates response secret tokens by subject and service and expires them", () => {
+    let now = 1_000;
+    const broker = new TokenBroker(tokenConfig(), () => now);
+    const issued = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
+    const otherSubject = broker.issueOrReuseResponseSecret(auth("ada@example.com"), "portainer-prod", "returned-secret");
+    const otherService = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "opnsense-home", "returned-secret");
+    expect(otherSubject.token).not.toBe(issued.token);
+    expect(otherService.token).not.toBe(issued.token);
+    expectGatewayError(() => broker.validateResponseSecretUse(auth("ada@example.com"), "portainer-prod", issued.token), "token_invalid");
+    expectGatewayError(() => broker.validateResponseSecretUse(auth("henric@example.com"), "opnsense-home", issued.token), "token_invalid");
+    now += 101;
+    expectGatewayError(() => broker.validateResponseSecretUse(auth("henric@example.com"), "portainer-prod", issued.token), "token_expired");
+    const replacement = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
+    expect(replacement.token).not.toBe(issued.token);
+  });
 });
 
 function tokenConfig(): GatewayConfig {
