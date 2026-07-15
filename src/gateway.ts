@@ -155,6 +155,9 @@ export async function executeServiceRequest(
   const responseHeaders = cookieFiltered.headers;
   const rawBody = await limitedResponseText(response, config.limits.maxResponseBodyBytes);
   const tokenized = await getResponseTokenizer(config).tokenizeWithTransferEncoding({ body: rawBody.body, headers: responseHeaders }, auth, service);
+  const returnedHeaders = bodyChanged(rawBody.body, tokenized.body, rawBody.truncated)
+    ? withContentLength(tokenized.headers, Buffer.byteLength(tokenized.body))
+    : tokenized.headers;
   const requestId = `req_${started}`;
   audit({
     type: "service_request",
@@ -195,7 +198,7 @@ export async function executeServiceRequest(
   return {
     request_id: requestId,
     status_code: response.status,
-    headers: tokenized.headers,
+    headers: returnedHeaders,
     body: tokenized.body,
     secret_tokenized: tokenized.secretTokenized,
     secret_tokenization_count: tokenized.secretTokenizationCount,
@@ -359,6 +362,17 @@ function removeHeader(headers: Record<string, string>, name: string): void {
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === lower) delete headers[key];
   }
+}
+
+function withContentLength(headers: Record<string, string>, length: number): Record<string, string> {
+  const normalized = { ...headers };
+  removeHeader(normalized, "content-length");
+  normalized["content-length"] = String(length);
+  return normalized;
+}
+
+function bodyChanged(before: string, after: string, truncated: boolean): boolean {
+  return truncated || before !== after;
 }
 
 function defaultPort(protocol: string): string {

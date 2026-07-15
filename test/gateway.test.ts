@@ -40,6 +40,7 @@ describe("HTTP gateway", () => {
       expect(response.secret_tokenized).toBe(true);
       expect(response.secret_tokenization_count).toBeGreaterThan(0);
       expect(response).not.toHaveProperty("redacted");
+      expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(response.body)));
       expect(downstream.requests).toHaveLength(1);
       expect(downstream.requests[0]?.headers["x-api-key"]).toBe("demo-secret");
       expect(downstream.requests[0]?.url).toContain("api_key=demo-secret");
@@ -216,6 +217,7 @@ describe("HTTP gateway", () => {
 
       expect(response.truncated).toBe(true);
       expect(response.body.length).toBeLessThanOrEqual(10);
+      expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(response.body)));
     } finally {
       await downstream.close();
     }
@@ -275,6 +277,20 @@ describe("HTTP gateway", () => {
       expect(response.secret_tokenized).toBe(true);
     } finally { await downstream.close(); }
   });
+
+  it("recomputes returned length after Base64 tokenization", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const response = await executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/base64", reason: "Test Base64 framing.",
+      });
+      const decoded = Buffer.from(response.body, "base64").toString("utf8");
+      expect(decoded).toMatch(/^sec_/);
+      expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(response.body)));
+    } finally { await downstream.close(); }
+  });
 });
 
 function gatewayConfig(baseUrl: string, options: {
@@ -320,6 +336,7 @@ function gatewayConfig(baseUrl: string, options: {
             { id: "allow-slow", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/slow"] },
             { id: "allow-cookies", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/cookies"] },
             { id: "allow-forged", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/forged"] },
+            { id: "allow-base64", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/base64"] },
             { id: "deny-blocked", effect: "deny", priority: 200, methods: ["GET"], paths: ["/api/blocked"] },
           ],
         },
@@ -382,6 +399,12 @@ async function startDownstream() {
     }
     if (request.url?.startsWith("/api/forged")) {
       response.end(`tok_ghp_${"z".repeat(36)}`);
+      return;
+    }
+    if (request.url?.startsWith("/api/base64")) {
+      const encoded = Buffer.from(`sec_sk-proj-${"q".repeat(48)}`, "utf8").toString("base64");
+      response.writeHead(200, { "content-transfer-encoding": "base64", "content-length": String(Buffer.byteLength(encoded)) });
+      response.end(encoded);
       return;
     }
     response.writeHead(200, {
