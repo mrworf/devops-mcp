@@ -29,7 +29,7 @@ Any new dependency must be justified in the milestone implementation notes and m
 - `tokens`: opaque token issuance, lookup, expiry, binding, in-memory store.
 - `policy`: allow/deny evaluation, priority handling, denial explanation context.
 - `gateway`: service request validation, token substitution, downstream HTTP execution.
-- `redaction`: exact plaintext and JSON-escaped credential redaction.
+- `response tokenization`: raw-text Secretlint scanning and reversible subject/service-bound opaque placeholders.
 - `audit`: sanitized JSON audit events, request IDs, denial records.
 
 ## Security Invariants

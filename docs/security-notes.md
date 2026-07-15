@@ -3,10 +3,15 @@
 - The gateway is not a secrets vault. It is a service-scoped HTTP gateway that keeps configured credentials out of MCP tool results.
 - Policy is enforced before credential substitution.
 - Destination scheme, host, and port are validated before credential substitution.
-- Opaque tokens are bound to subject, service, destination, and credential. MCP transport session IDs may be recorded when available, but are not a hard token boundary because ChatGPT and Codex may reinitialize or vary transport sessions between tool calls.
+- Configured-credential `tok_…` values are bound to subject, service, destination, and credential. Response-derived `sec_…` values are bound to subject and service so they can be reused across that service's destinations. MCP transport session IDs are not a hard token boundary.
 - `tls.verify: false` is supported for self-signed homelab services and is reported in response metadata and audit events.
-- MVP redaction covers exact plaintext credential values and JSON-escaped forms in response headers and body.
-- MVP redaction does not detect URL-encoded values, base64 values, derived secrets, private keys, or newly generated downstream tokens.
+- Secretlint scans response header values and UTF-8 body source text. JSON is never parsed or reserialized, so all bytes outside replacement ranges remain unchanged.
+- Exact configured credentials are always tokenized, even when endpoint Secretlint rules are disabled.
+- `tok_` and `sec_` are reserved prefixes. A candidate is exempted only when it is live and belongs to the current subject/service; forged, expired, or wrong-scope candidates are wrapped in a new `sec_…` and audited without their values.
+- A whole response body is Base64-decoded only when declared by `Content-Transfer-Encoding: base64`; decoded data must be UTF-8 and is re-encoded canonically after scanning.
+- Cookie headers are rejected on proxied requests and removed from proxied responses. Cookie-dependent downstream APIs are unsupported.
+- Request and returned response `Content-Length` values are computed from final transmitted/returned bytes after substitution or tokenization. Caller-supplied transfer encoding is rejected.
+- Scanning uses a bounded worker pool and fails closed on overload, timeout, malformed input, or scanner failure.
 - Avoid allowing endpoints that return backups, complete config dumps, token lists, private keys, or other bulk secret material.
 - Audit events do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or response bodies.
-- Debug logging is opt-in through `logging.level: debug` and is sanitized before writing. It is intended for setup diagnostics and records structural details such as methods, service IDs, destination IDs, target hosts and paths, status codes, durations, and redaction counts.
+- Debug logging is opt-in through `logging.level: debug` and records only sanitized structural details and tokenization counts.

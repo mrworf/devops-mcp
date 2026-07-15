@@ -57,11 +57,11 @@ milestones:
     notes: "Implemented service_request gateway flow, token substitution, policy-before-substitution, redirects disabled, timeout/limits; npm test and npm run build pass."
   - id: "08"
     title: "Redaction, Audit, And Denials"
-    file: "docs/milestones/08-redaction-audit-denials.md"
+    file: "docs/milestones/08-response-tokenization-audit-denials.md"
     status: "completed"
     completed_at: "2026-07-10T05:10:57Z"
     commit_hash: null
-    notes: "Implemented redaction module, sanitized audit events, request IDs, denial explanations; npm test and npm run build pass."
+    notes: "Implemented reversible response-secret tokenization, forged-prefix protection, bounded Secretlint workers, sanitized audit events, request IDs, and denial explanations."
   - id: "09"
     title: "Docker And Docs"
     file: "docs/milestones/09-docker-docs.md"

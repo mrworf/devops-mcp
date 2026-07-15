@@ -111,7 +111,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "service_request",
     title: "Send service HTTP request",
-    description: "Send an HTTP request to a configured service through the gateway. Opaque tokens in headers, query, or body are replaced with real credentials only after authorization and policy checks.",
+    description: "Send an HTTP request to a configured service through the gateway. Opaque tokens in headers, query, or body are replaced only after authorization and policy checks; detected response secrets are returned as sec_ tokens. Cookie headers are not supported.",
     inputSchema: serviceRequestInputSchema,
     outputSchema: serviceRequestOutputSchema,
     securitySchemes: requestSecurity,

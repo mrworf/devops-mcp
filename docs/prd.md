@@ -79,7 +79,7 @@ Dedicated MCP servers for every service provide stronger controls but are time-c
 * Provide audit logs for token issuance and downstream API requests.
 * Support self-signed TLS by allowing per-service certificate verification disablement.
 * Support explicit allow/deny policy with default deny.
-* Support exact-match credential redaction from downstream responses.
+* Replace configured credentials and Secretlint findings in downstream responses with scoped opaque tokens.
 * Require reason fields for both token requests and service requests.
 * Provide explainable policy denials.
 
@@ -131,7 +131,7 @@ Example:
 ```yaml
 destinations:
   - name: primary
-    base_url: https://portainer.internal:9443
+    base_url: https://portainer.example.org:9443
 ```
 
 A service may have multiple destinations.
@@ -141,9 +141,9 @@ Example:
 ```yaml
 destinations:
   - name: prod
-    base_url: https://portainer.internal:9443
+    base_url: https://portainer.example.org:9443
   - name: lab
-    base_url: https://portainer-lab.internal:9443
+    base_url: https://lab.portainer.example.org:9443
 ```
 
 ## 8.3 Credential
@@ -284,8 +284,8 @@ Example:
       "content-type": "application/json"
     },
     "body": "[...]",
-    "redacted": false,
-    "redaction_count": 0,
+    "secret_tokenized": true,
+    "secret_tokenization_count": 2,
     "tls": {
       "verify": false
     },
@@ -373,7 +373,7 @@ List services and destinations available to the authenticated user.
       "destinations": [
         {
           "id": "primary",
-          "base_url_hint": "https://portainer.internal:9443",
+          "base_url_hint": "https://portainer.example.org:9443",
           "tls_verify": false
         }
       ],
@@ -644,8 +644,8 @@ OPTIONS
     "content-type": "application/json"
   },
   "body": "[...]",
-  "redacted": false,
-  "redaction_count": 0,
+  "secret_tokenized": true,
+  "secret_tokenization_count": 2,
   "tls": {
     "verify": false
   },
@@ -829,7 +829,7 @@ For every `service_request`, the MCP server must:
 9. validate opaque token usage
 10. replace opaque tokens with real credential values
 11. perform the downstream HTTP request
-12. redact response headers and body
+12. validate cookie/encoding constraints and tokenize response headers and body source text
 13. return structured response to the agent
 14. write audit log entries
 
@@ -859,7 +859,7 @@ Example:
 
 ```json
 {
-  "url": "https://portainer.internal:9443/api/stacks"
+  "url": "https://portainer.example.org:9443/api/stacks"
 }
 ```
 
@@ -897,9 +897,9 @@ Example:
 
 ```yaml
 hosts:
-  - exact: portainer.internal
+  - exact: portainer.example.org
   - suffix: .example.org
-  - regex: '^portainer-[a-z0-9-]+\.internal$'
+  - regex: '^[a-z0-9-]+\.portainer\.example\.org$'
 ```
 
 Host matching must be performed against the normalized hostname only.
@@ -923,7 +923,7 @@ The server should warn on broad host regexes such as:
 ```text
 .*
 ^.*$
-.*internal.*
+.*example.*
 ```
 
 MVP may warn instead of rejecting broad regexes.
@@ -1123,51 +1123,15 @@ The server must reject:
 * tokens belonging to another destination, unless explicitly allowed
 * tokens used against an invalid destination
 
-## 20. Response redaction
+## 20. Response secret tokenization
 
-## 20.1 MVP redaction
+The gateway must scan response header values and UTF-8 body source text without parsing JSON. Exact configured credentials and Secretlint findings are replaced with reversible opaque placeholders. `sec_…` placeholders are bound to authenticated subject and service; valid existing `tok_…` placeholders may be reused for configured credentials.
 
-MVP must redact exact raw credential values from:
+`tok_` and `sec_` are reserved prefixes. Only live tokens owned by the current subject/service pass through. Invalid candidates are themselves wrapped in `sec_…` and produce sanitized audit warnings.
 
-* response headers
-* response body
+Whole Base64 bodies are decoded and scanned only when declared with `Content-Transfer-Encoding: base64`. Cookie headers are prohibited on the proxied surface. Scanning is bounded and fails closed.
 
-Minimum MVP redaction:
-
-* exact plaintext match of configured credential values
-
-Recommended MVP redaction:
-
-* exact plaintext match
-* JSON-escaped match
-
-Not required for MVP:
-
-* URL-encoded match
-* base64-encoded match
-* derived secrets
-* newly generated downstream tokens
-* private keys
-* full secret scanning
-
-## 20.2 Redaction metadata
-
-If redaction occurs, response metadata must indicate that redaction happened.
-
-Example:
-
-```json
-{
-  "redacted": true,
-  "redaction_count": 2
-}
-```
-
-## 20.3 Redaction limitations
-
-Documentation must clearly state that MVP redaction does not guarantee removal of all secrets from downstream responses.
-
-Users should deny or restrict endpoints that may return configuration backups, token lists, private keys, or other sensitive material.
+Response metadata reports `secret_tokenized` and `secret_tokenization_count`.
 
 ## 21. Request and response limits
 
@@ -1212,7 +1176,7 @@ The server must audit:
 * request timestamp
 * request duration
 * TLS verification mode
-* redaction count
+* response tokenization count and matched rule IDs
 * error details if denied or failed
 
 Audit logs must not include:
@@ -1337,11 +1301,11 @@ services:
 
     destinations:
       - name: primary
-        base_url: https://portainer.internal:9443
+        base_url: https://portainer.example.org:9443
         schemes: [https]
         hosts:
-          - exact: portainer.internal
-          - regex: '^portainer-[a-z0-9-]+\.internal$'
+          - exact: portainer.example.org
+          - regex: '^[a-z0-9-]+\.portainer\.example\.org$'
         ports: [9443]
 
     tls:
@@ -1526,7 +1490,7 @@ The server must never return raw configured credential values through MCP tools.
 
 The server must not log raw credentials.
 
-The server must redact raw credential values from downstream responses using MVP redaction rules.
+The server must replace raw configured credentials and detected response secrets with scoped opaque tokens.
 
 ## 30.2 Destination binding
 
@@ -1580,7 +1544,7 @@ denied_requests_total
 downstream_errors_total
 token_requests_total
 active_tokens
-redactions_total
+response_secret_tokenizations_total
 tls_verify_disabled_requests_total
 ```
 
@@ -1643,7 +1607,7 @@ MVP is complete when:
 24. The server denies tokens bound to another user/session/service/destination.
 25. The server supports `tls.verify: false`.
 26. The server records disabled TLS verification in response metadata and audit logs.
-27. The server redacts exact raw credential values from response headers and body.
+27. The server tokenizes configured credentials and Secretlint findings in response headers and body source text.
 28. Audit logs are written for token requests and service requests.
 29. Audit logs do not contain raw credentials or raw opaque token values.
 30. Denied requests include request IDs and explainable denial reasons.
@@ -1717,9 +1681,9 @@ MVP is complete when:
 * hosts
 * deny wins ties
 
-### Phase 8: Redaction and audit
+### Phase 8: Response tokenization and audit
 
-* exact-match credential redaction
+* exact configured-credential and Secretlint response tokenization
 * structured audit logs
 * request IDs
 * explain denial tool
@@ -1760,9 +1724,7 @@ MVP is complete when:
 * Vault integration
 * 1Password integration
 * AWS/GCP/Azure KMS integrations
-* response secret scanning beyond exact match
-* URL-encoded redaction
-* base64 redaction
+* URL-encoded response-secret decoding
 * OpenAPI-based policy generation
 * request diff previews
 * dry-run support where downstream APIs support it

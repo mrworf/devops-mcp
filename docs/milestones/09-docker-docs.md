@@ -13,7 +13,7 @@ Do not add a web admin UI or hosted integration.
 - Document `codex mcp login <server-name>`.
 - Document ChatGPT desktop shared Codex MCP config.
 - Document ChatGPT web limitation.
-- Document self-signed TLS and redaction limitations.
+- Document self-signed TLS and response-tokenization limits.
 
 ## Non-Scope
 - No ChatGPT web plugin.
@@ -45,7 +45,7 @@ Negative:
 - A homelab user can run the MVP in Docker.
 - Codex CLI and ChatGPT desktop setup are documented.
 - ChatGPT web limitation is explicit.
-- Self-signed TLS and MVP redaction limitations are clear.
+- Self-signed TLS and response-tokenization limits are clear.
 - `npm test` passes.
 
 ## Completion Checklist

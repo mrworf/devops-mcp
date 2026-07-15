@@ -13,13 +13,15 @@ The service acts as an MCP-controlled credential gateway. Agents request tempora
 - A small generic tool surface for listing services, requesting opaque tokens, making service requests, and explaining denials.
 - Server-side credential substitution after auth, destination validation, and policy checks.
 - Default-deny request policy with explainable denials.
-- Exact-match credential redaction for downstream responses.
+- Secretlint response scanning that replaces detected values with reversible, service-scoped `sec_…` tokens.
 - Structured audit logging designed to avoid raw credentials, opaque token values, authorization headers, cookies, and downstream response bodies.
 - Docker deployment with a non-root runtime user and healthcheck.
 
 ## Safety Model
 
 Agents should never receive raw API keys, passwords, bearer tokens, cookies, or other configured downstream secrets. They receive opaque token placeholders that only work through this MCP server.
+
+The proxied HTTP surface is deliberately cookie-free: caller-supplied cookie headers are rejected and downstream cookie headers are discarded. APIs that require browser-style cookie sessions are not supported. Response JSON is scanned as source text without parsing or reserialization. A whole response body is decoded and scanned as Base64 only when it declares `Content-Transfer-Encoding: base64`.
 
 For every downstream request, the gateway validates the authenticated client, requested service, destination, URL, method, token binding, and configured policy before replacing opaque tokens with real credentials. If a request is denied, the client can ask for an explanation instead of guessing around policy boundaries.
 
@@ -60,11 +62,13 @@ services:
       - "8080:8080"
     volumes:
       - ./config.yaml:/config/config.yaml:ro
+      - ./secretlint.yaml:/config/secretlint.yaml:ro
       - ./secrets:/run/secrets:ro
       - ./oauth:/run/oauth:ro
       - ./audit:/var/lib/agent-credential-gateway/audit
     environment:
       CONFIG_PATH: /config/config.yaml
+      SECRETLINT_CONFIG_PATH: /config/secretlint.yaml
 ```
 
 Use the writable audit mount for `audit.file`, for example `/var/lib/agent-credential-gateway/audit/audit.jsonl`. When using `auth.mode: builtin_oauth`, keep `auth.builtin_oauth.signing_key_file` on stable mounted storage such as `/run/oauth/oauth_signing_key.pem`; changing that key forces clients to reauthenticate.

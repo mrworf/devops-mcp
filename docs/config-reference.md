@@ -1,6 +1,6 @@
 # Config Reference
 
-The gateway uses one YAML file, mounted read-only in Docker. Secrets are not stored in the config; use environment variables or mounted files.
+The gateway uses a primary YAML file plus a Secretlint rules YAML, both mounted read-only in Docker. Secrets are not stored in either file; use environment variables or mounted files.
 
 ## Server
 - `server.listen`: bind address in `host:port` form, for example `0.0.0.0:8080`.
@@ -60,7 +60,7 @@ auth:
 `builtin_oauth` is intended for a private single-admin deployment. It publishes authorization server discovery from this gateway, accepts ChatGPT's CIMD public-client flow with PKCE, and issues JWT access tokens for the MCP resource. Store `AGENT_GATEWAY_ADMIN_PASSWORD_HASH` as `pbkdf2-sha256$iterations$saltBase64url$hashBase64url`, not as a raw password. The signing key file must contain an RSA private key PEM and must be mounted from stable storage. If the signing key is regenerated inside an ephemeral container, existing ChatGPT OAuth tokens become invalid after every restart.
 
 ## Logging
-`logging.level` defaults to `info`. Set it to `debug` while setting up the MCP server to emit structured setup diagnostics such as MCP method names, required scopes, service IDs, destination IDs, target hosts and paths, TLS verification state, status codes, durations, and redaction counts.
+`logging.level` defaults to `info`. Set it to `debug` while setting up the MCP server to emit sanitized structural diagnostics and response-tokenization counts.
 
 Debug logs are sanitized before writing. They do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or response bodies.
 
@@ -106,3 +106,50 @@ source:
 ```
 
 `policy.mode` defaults to `deny`. Rules use regex path patterns in MVP.
+
+Endpoint rules may selectively disable response scanning:
+
+```yaml
+policy:
+  rules:
+    - id: allow-status
+      effect: allow
+      priority: 100
+      methods: [GET]
+      paths: ["/api/status"]
+      secretlint:
+        disabled_rules:
+          - "@secretlint/secretlint-rule-github"
+```
+
+Use `secretlint: { enabled: false }` to disable all Secretlint rules for a matched endpoint. These settings never disable exact configured-credential protection, forged opaque-prefix protection, cookie handling, Base64 validation, or framing normalization.
+
+## Secretlint Rules
+
+`SECRETLINT_CONFIG_PATH` defaults to `/config/secretlint.yaml`. The file uses:
+
+```yaml
+version: 1
+mode: extend
+limits:
+  max_unique_secrets: 100
+  timeout: 5s
+rules:
+  - id: "@secretlint/secretlint-rule-github"
+  - id: "@secretlint/secretlint-rule-pattern"
+    options:
+      patterns:
+        - name: custom-key
+          patterns: ["/(?<key>custom_[A-Za-z0-9_-]+)/g"]
+```
+
+`extend` overlays entries on the bundled strict catalog; `replace` uses only the listed rules. Unknown packages, duplicate IDs, invalid patterns, and invalid limits stop startup.
+
+Scanner capacity defaults to `min(4, availableParallelism)` workers, a 32-job global queue, and one active plus four queued scans per subject. Override these with `SECRETLINT_WORKERS`, `SECRETLINT_QUEUE_MAX`, `SECRETLINT_SUBJECT_ACTIVE_MAX`, `SECRETLINT_SUBJECT_QUEUE_MAX`, and `SECRETLINT_QUEUE_TIMEOUT_MS`.
+
+## Proxied HTTP Constraints
+
+- `Cookie`, `Cookie2`, `Set-Cookie`, and `Set-Cookie2` are prohibited. Request occurrences are rejected; response occurrences are removed with sanitized warnings.
+- Caller-supplied `Transfer-Encoding` is rejected. `Content-Length` is recomputed after request substitution and response transformation.
+- `Content-Transfer-Encoding: base64` declares a whole Base64 response body. Other transfer encodings fail closed.
+- Ordinary and decoded Base64 response bodies must be valid UTF-8.

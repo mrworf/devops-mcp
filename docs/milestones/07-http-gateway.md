@@ -1,7 +1,7 @@
 # Milestone 07: HTTP Gateway
 
 ## Context
-Use the architecture in `00-architecture.md`. This milestone implements the main service request execution flow. The critical safety order is auth, authorization, destination validation, policy, token validation, substitution, downstream request, redaction/audit hooks.
+Use the architecture in `00-architecture.md`. This milestone implements the main service request execution flow. The critical safety order is auth, authorization, destination validation, policy, token validation, substitution, downstream request, response tokenization, and audit hooks.
 
 Policy and destination validation must happen before credential substitution.
 
