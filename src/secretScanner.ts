@@ -13,9 +13,11 @@ interface WorkerResult {
   error?: string;
 }
 
-const workerSource = `
-const { parentPort, workerData } = require("node:worker_threads");
-(async () => {
+export const SECRET_SCANNER_WORKER_SOURCE = `
+const { parentPort } = require("node:worker_threads");
+let runtime;
+async function getRuntime() {
+  if (runtime) return runtime;
   const [{ lintSource }, preset, pattern] = await Promise.all([
     import("@secretlint/core"),
     import("@secretlint/secretlint-rule-preset-recommend"),
@@ -23,7 +25,13 @@ const { parentPort, workerData } = require("node:worker_threads");
   ]);
   const catalog = new Map(preset.rules.map((rule) => [rule.meta.id, rule]));
   catalog.set("@secretlint/secretlint-rule-pattern", pattern.creator);
-  const rules = workerData.rules.map((configured) => {
+  runtime = { lintSource, catalog };
+  return runtime;
+}
+parentPort.on("message", async ({ id, text, rules: configuredRules }) => {
+ try {
+  const { lintSource, catalog } = await getRuntime();
+  const rules = configuredRules.map((configured) => {
     const rule = catalog.get(configured.id);
     if (!rule) throw new Error("Unknown Secretlint rule");
     return {
@@ -34,16 +42,17 @@ const { parentPort, workerData } = require("node:worker_threads");
     };
   });
   const result = await lintSource({
-    source: { content: workerData.text, filePath: "response.txt", ext: ".txt", contentType: "text" },
+    source: { content: text, filePath: "response.txt", ext: ".txt", contentType: "text" },
     options: { config: { rules }, noPhysicFilePath: true, maskSecrets: true },
   });
-  parentPort.postMessage({ findings: result.messages.map((message) => ({
+  parentPort.postMessage({ id, findings: result.messages.map((message) => ({
     start: message.range[0],
     end: message.range[1],
     ruleId: message.ruleId,
     messageId: message.messageId,
   })) });
-})().catch(() => parentPort.postMessage({ error: "scan_failed" }));
+ } catch { parentPort.postMessage({ id, error: "scan_failed" }); }
+});
 `;
 
 export async function scanSecretText(
@@ -52,7 +61,7 @@ export async function scanSecretText(
   timeoutMs: number,
 ): Promise<SecretFinding[]> {
   return await new Promise<SecretFinding[]>((resolve, reject) => {
-    const worker = new Worker(workerSource, { eval: true, workerData: { text, rules } });
+    const worker = new Worker(SECRET_SCANNER_WORKER_SOURCE, { eval: true });
     const timeout = setTimeout(() => {
       void worker.terminate();
       reject(new Error("Secretlint scan timed out"));
@@ -74,6 +83,7 @@ export async function scanSecretText(
       clearTimeout(timeout);
       reject(new Error("Secretlint worker failed"));
     });
+    worker.postMessage({ id: 1, text, rules });
   });
 }
 
