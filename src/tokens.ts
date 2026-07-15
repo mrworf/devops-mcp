@@ -59,6 +59,11 @@ export interface ResponseSecretIssueResult {
   reused: boolean;
 }
 
+export interface ConfiguredTokenMatch {
+  token: string;
+  record: TokenRecord;
+}
+
 export class TokenBroker {
   private readonly recordsByHash = new Map<string, TokenRecord>();
   private readonly responseSecretsByHash = new Map<string, ResponseSecretTokenRecord>();
@@ -196,6 +201,29 @@ export class TokenBroker {
     if (record.service !== service) throw new GatewayError("token_invalid", "Response secret token is not bound to this service.");
     this.refresh(record);
     return record;
+  }
+
+  findConfiguredTokenForSecret(auth: AuthContext, service: string, secret: string): ConfiguredTokenMatch | undefined {
+    const configured = this.config.services[service];
+    if (!configured) return undefined;
+    const credentialIds = new Set(configured.credentials.filter((credential) => credential.secret === secret).map((credential) => credential.id));
+    if (credentialIds.size === 0) return undefined;
+    const matches: TokenRecord[] = [];
+    for (const [hash, record] of this.recordsByHash) {
+      if (this.isExpired(record)) {
+        this.recordsByHash.delete(hash);
+        this.tokenValuesById.delete(record.id);
+        continue;
+      }
+      if (record.subject === auth.subject && record.service === service && credentialIds.has(record.credentialId)) matches.push(record);
+    }
+    matches.sort((left, right) => right.lastUsedAt - left.lastUsedAt || right.issuedAt - left.issuedAt);
+    const record = matches[0];
+    if (!record) return undefined;
+    const token = this.tokenValuesById.get(record.id);
+    if (!token) return undefined;
+    this.refresh(record);
+    return { token, record };
   }
 
   private responseSecretIndex(subject: string, service: string, secret: string): string {

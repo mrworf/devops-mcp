@@ -150,6 +150,39 @@ describe("token broker", () => {
     const replacement = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
     expect(replacement.token).not.toBe(issued.token);
   });
+
+  it("reuses the most recently used configured token across destinations", () => {
+    let now = 1_000;
+    const broker = new TokenBroker(tokenConfig(), () => now);
+    const first = broker.issueTokens(auth("henric@example.com"), {
+      service: "portainer-prod", destination: "primary", credential_ids: ["api_key"], reason: "First token.",
+    }).tokens[0]?.token ?? "";
+    now += 10;
+    const second = broker.issueTokens(auth("henric@example.com"), {
+      service: "portainer-prod", destination: "secondary", credential_ids: ["api_key"], reason: "Second token.",
+    }).tokens[0]?.token ?? "";
+    now += 10;
+    broker.validateTokenUse(auth("henric@example.com"), { service: "portainer-prod", destination: "primary" }, first);
+    now += 10;
+
+    const match = broker.findConfiguredTokenForSecret(auth("henric@example.com"), "portainer-prod", "portainer-secret");
+    expect(match?.token).toBe(first);
+    expect(match?.record.lastUsedAt).toBe(now);
+    expect(match?.token).not.toBe(second);
+  });
+
+  it("does not reverse-match expired, cross-subject, cross-service, or unknown configured values", () => {
+    let now = 1_000;
+    const broker = new TokenBroker(tokenConfig(), () => now);
+    broker.issueTokens(auth("henric@example.com"), {
+      service: "portainer-prod", destination: "primary", credential_ids: ["api_key"], reason: "Token.",
+    });
+    expect(broker.findConfiguredTokenForSecret(auth("ada@example.com"), "portainer-prod", "portainer-secret")).toBeUndefined();
+    expect(broker.findConfiguredTokenForSecret(auth("henric@example.com"), "opnsense-home", "portainer-secret")).toBeUndefined();
+    expect(broker.findConfiguredTokenForSecret(auth("henric@example.com"), "portainer-prod", "unknown")).toBeUndefined();
+    now += 101;
+    expect(broker.findConfiguredTokenForSecret(auth("henric@example.com"), "portainer-prod", "portainer-secret")).toBeUndefined();
+  });
 });
 
 function tokenConfig(): GatewayConfig {
