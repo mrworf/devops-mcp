@@ -5,7 +5,7 @@ This companion record tracks remediation of the findings in `security-review-202
 | Finding | Status | Verification |
 |---|---|---|
 | SEC-001 | Remediated | Authority, forwarding, and hop-by-hop headers are rejected before substitution and HTTP/HTTPS I/O; outbound authority is derived from the validated URL. |
-| SEC-002 | In progress | Inbound bodies are bounded before parsing, and built-in OAuth password verification uses asynchronous PBKDF2. |
+| SEC-002 | Remediated | Inbound bodies are size-, time-, and concurrency-bounded; password verification uses asynchronous PBKDF2 with bounded concurrency. |
 | SEC-003 | Pending | |
 | SEC-004 | Pending | |
 | SEC-005 | Pending | |

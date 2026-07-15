@@ -27,6 +27,7 @@ const authorizationCodes = new Map<string, AuthorizationCode>();
 const privateKeyCache = new Map<string, ReturnType<typeof importPKCS8>>();
 const publicKeyCache = new Map<string, ReturnType<typeof importSPKI>>();
 const bodyLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
+const passwordLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
 const pbkdf2Async = promisify(pbkdf2);
 
 export function isBuiltinOAuthRequest(config: GatewayConfig, request: IncomingMessage): boolean {
@@ -165,7 +166,21 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
     return;
   }
 
-  if (body.get("username") !== auth.adminUsername || !await verifyPassword(body.get("password") ?? "", auth.adminPasswordHash)) {
+  let passwordValid = false;
+  if (body.get("username") === auth.adminUsername) {
+    const release = acquirePasswordVerification(config, request);
+    if (release === undefined) {
+      response.setHeader("retry-after", "1");
+      writeOAuthError(response, 429, "temporarily_unavailable");
+      return;
+    }
+    try {
+      passwordValid = await verifyPassword(body.get("password") ?? "", auth.adminPasswordHash);
+    } finally {
+      release();
+    }
+  }
+  if (!passwordValid) {
     logger.debug("oauth.authorize.completed", {
       endpoint: AUTHORIZE_PATH,
       status: "error",
@@ -205,6 +220,18 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
   });
   response.writeHead(302, { location: redirect.toString() });
   response.end();
+}
+
+function acquirePasswordVerification(config: GatewayConfig, request: IncomingMessage): (() => void) | undefined {
+  let limiter = passwordLimiters.get(config);
+  if (limiter === undefined) {
+    limiter = new InflightLimiter(
+      config.limits.maxPasswordVerifications,
+      config.limits.maxPasswordVerificationsPerSource,
+    );
+    passwordLimiters.set(config, limiter);
+  }
+  return limiter.acquire(request.socket.remoteAddress ?? "unknown");
 }
 
 async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {

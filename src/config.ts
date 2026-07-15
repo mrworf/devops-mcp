@@ -86,12 +86,15 @@ const rawConfigSchema = z.object({
     inbound_body_timeout: z.string().default("10s"),
     max_unauthenticated_inflight: z.number().int().positive().default(32),
     max_unauthenticated_inflight_per_source: z.number().int().positive().default(4),
+    max_password_verifications: z.number().int().positive().default(2),
+    max_password_verifications_per_source: z.number().int().positive().default(1),
     max_request_body: z.string().default("1mb"),
     max_response_body: z.string().default("5mb"),
     timeout: z.string().default("30s"),
   }).default({
     max_inbound_body: "1mb", inbound_body_timeout: "10s",
     max_unauthenticated_inflight: 32, max_unauthenticated_inflight_per_source: 4,
+    max_password_verifications: 2, max_password_verifications_per_source: 1,
     max_request_body: "1mb", max_response_body: "5mb", timeout: "30s",
   }),
   logging: z.object({
@@ -299,11 +302,16 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
   if (raw.max_unauthenticated_inflight_per_source > raw.max_unauthenticated_inflight) {
     throw configError("limits.max_unauthenticated_inflight_per_source must not exceed limits.max_unauthenticated_inflight");
   }
+  if (raw.max_password_verifications_per_source > raw.max_password_verifications) {
+    throw configError("limits.max_password_verifications_per_source must not exceed limits.max_password_verifications");
+  }
   return {
     maxInboundBodyBytes,
     inboundBodyTimeoutMs,
     maxUnauthenticatedInflight: raw.max_unauthenticated_inflight,
     maxUnauthenticatedInflightPerSource: raw.max_unauthenticated_inflight_per_source,
+    maxPasswordVerifications: raw.max_password_verifications,
+    maxPasswordVerificationsPerSource: raw.max_password_verifications_per_source,
     maxRequestBodyBytes,
     maxResponseBodyBytes,
     timeoutMs,

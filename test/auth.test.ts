@@ -311,6 +311,31 @@ describe("auth", () => {
     }
   });
 
+  it("rejects password verification above the direct-source concurrency limit", async () => {
+    const config = await builtinOAuthConfig({
+      passwordIterations: 500_000,
+      maxPasswordVerifications: 2,
+      maxPasswordVerificationsPerSource: 1,
+    });
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    try {
+      const first = localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST", body: authorizationBody({ code_challenge: pkceChallenge("first-verifier") }),
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const rejected = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST", body: authorizationBody({ code_challenge: pkceChallenge("second-verifier") }),
+      });
+      expect(rejected.status).toBe(429);
+      expect(rejected.headers["retry-after"]).toBe("1");
+      expect(JSON.parse(rejected.body)).toEqual({ error: "temporarily_unavailable" });
+      expect((await first).status).toBe(302);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("fails safely when the configured password hash is malformed", async () => {
     const config = await builtinOAuthConfig({ adminPasswordHash: "malformed" });
     const fixture = await startServer(config);
@@ -672,6 +697,8 @@ async function builtinOAuthConfig(options: {
   maxUnauthenticatedInflightPerSource?: number;
   passwordIterations?: number;
   adminPasswordHash?: string;
+  maxPasswordVerifications?: number;
+  maxPasswordVerificationsPerSource?: number;
 } = {}): Promise<GatewayConfig> {
   const keyPath = options.signingKeyPath ?? await createSigningKeyFile();
   return validateConfig({
@@ -698,6 +725,8 @@ async function builtinOAuthConfig(options: {
       max_inbound_body: options.maxInboundBody ?? "1mb",
       max_unauthenticated_inflight: options.maxUnauthenticatedInflight ?? 32,
       max_unauthenticated_inflight_per_source: options.maxUnauthenticatedInflightPerSource ?? 4,
+      max_password_verifications: options.maxPasswordVerifications ?? 2,
+      max_password_verifications_per_source: options.maxPasswordVerificationsPerSource ?? 1,
     },
   }, {
     ADMIN_USERNAME: "admin@example.com",

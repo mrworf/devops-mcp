@@ -71,6 +71,8 @@ export interface LimitsConfig {
   inboundBodyTimeoutMs: number;
   maxUnauthenticatedInflight: number;
   maxUnauthenticatedInflightPerSource: number;
+  maxPasswordVerifications: number;
+  maxPasswordVerificationsPerSource: number;
   maxRequestBodyBytes: number;
   maxResponseBodyBytes: number;
   timeoutMs: number;

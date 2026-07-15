@@ -120,6 +120,16 @@ describe("config validation", () => {
     expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
   });
 
+  it("defaults and validates password-verification limits", () => {
+    const raw = validRaw();
+    const defaults = validateConfig(raw, validEnv).limits;
+    expect(defaults.maxPasswordVerifications).toBe(2);
+    expect(defaults.maxPasswordVerificationsPerSource).toBe(1);
+    raw.limits.max_password_verifications = 1;
+    raw.limits.max_password_verifications_per_source = 2;
+    expectConfigError(() => validateConfig(raw, validEnv), "must not exceed");
+  });
+
   it("accepts service API documentation URLs", () => {
     const raw = validRaw();
     raw.services["portainer-prod"].api_docs_url = "https://api.example.org/openapi.json";
