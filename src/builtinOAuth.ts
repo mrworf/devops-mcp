@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { exportJWK, importPKCS8, importSPKI, SignJWT } from "jose";
 import { createLogger } from "./logger.js";
 import type { BuiltinOAuthAuthConfig, GatewayConfig } from "./types.js";
+import { readBoundedBody, RequestBodyError } from "./httpBody.js";
 
 const AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 const OPENID_CONFIGURATION_PATH = "/.well-known/openid-configuration";
@@ -132,7 +133,16 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
   const logger = createLogger(config.logging);
 
-  const body = await readFormBody(request);
+  let body: URLSearchParams;
+  try {
+    body = await readFormBody(request, config.limits.maxInboundBodyBytes);
+  } catch (error) {
+    if (error instanceof RequestBodyError) {
+      writeOAuthError(response, error.statusCode, error.code === "request_too_large" ? "request_too_large" : "invalid_request");
+      return;
+    }
+    throw error;
+  }
   const validation = await validateAuthorizationRequest(config, body);
   if (!validation.ok) {
     logger.debug("oauth.authorize.completed", {
@@ -379,7 +389,10 @@ function getPublicKey(publicKeyPem: string): ReturnType<typeof importSPKI> {
   return key;
 }
 
-async function readFormBody(request: IncomingMessage): Promise<URLSearchParams> {
+async function readFormBody(request: IncomingMessage, maxBytes?: number): Promise<URLSearchParams> {
+  if (maxBytes !== undefined) {
+    return new URLSearchParams((await readBoundedBody(request, maxBytes)).toString("utf8"));
+  }
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));

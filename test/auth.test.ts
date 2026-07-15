@@ -294,6 +294,32 @@ describe("auth", () => {
     }
   });
 
+  it("accepts exact-limit authorization forms and rejects limit-plus-one before parsing", async () => {
+    const body = authorizationBody({ code_challenge: pkceChallenge("bounded-verifier") });
+    const allowedConfig = await builtinOAuthConfig({ maxInboundBody: `${Buffer.byteLength(body)}b` });
+    const allowedFixture = await startServer(allowedConfig);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    try {
+      const allowed = await localRequest(`${allowedFixture.baseUrl}/oauth/authorize`, { method: "POST", body });
+      expect(allowed.status).toBe(302);
+    } finally {
+      await allowedFixture.close();
+    }
+
+    const rejectedConfig = await builtinOAuthConfig({ maxInboundBody: `${Buffer.byteLength(body) - 1}b` });
+    const rejectedFixture = await startServer(rejectedConfig);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const rejected = await localRequest(`${rejectedFixture.baseUrl}/oauth/authorize`, { method: "POST", body });
+      expect(rejected.status).toBe(413);
+      expect(JSON.parse(rejected.body)).toEqual({ error: "request_too_large" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      await rejectedFixture.close();
+    }
+  });
+
   it("rejects unallowed built-in OAuth CIMD clients and redirect mismatches", async () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
@@ -559,7 +585,7 @@ function oauthConfig(jwksUri: string): GatewayConfig {
   });
 }
 
-async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allowedClients?: string[]; loggingLevel?: "info" | "debug"; signingKeyPath?: string } = {}): Promise<GatewayConfig> {
+async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allowedClients?: string[]; loggingLevel?: "info" | "debug"; signingKeyPath?: string; maxInboundBody?: string } = {}): Promise<GatewayConfig> {
   const keyPath = options.signingKeyPath ?? await createSigningKeyFile();
   return validateConfig({
     ...baseRawConfig({
@@ -581,6 +607,7 @@ async function builtinOAuthConfig(options: { authorizationCodeTtl?: string; allo
       resource: "https://mcp.example.org",
     },
     logging: { level: options.loggingLevel ?? "info" },
+    limits: { max_inbound_body: options.maxInboundBody ?? "1mb" },
   }, {
     ADMIN_USERNAME: "admin@example.com",
     ADMIN_PASSWORD_HASH: hashBuiltinOAuthPassword("correct horse battery staple", "test-salt", 1000),
