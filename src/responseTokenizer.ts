@@ -56,6 +56,7 @@ export class ResponseTokenizer {
     if (uniqueSecrets.size > this.maxUniqueSecrets) {
       throw new GatewayError("secret_scan_failed", "Response contains too many unique secrets.");
     }
+    this.broker.assertResponseSecretCapacity(auth, service.id, uniqueSecrets);
 
     const internalRecordIds = new Set<string>();
     const ruleIds = new Set<string>();

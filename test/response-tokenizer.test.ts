@@ -73,6 +73,17 @@ describe("plain-text response tokenizer", () => {
     } finally { await fixture.pool.close(); }
   });
 
+  it("fails capacity checks before creating partial response-secret state", async () => {
+    const fixture = setup(100, 1);
+    try {
+      const one = `ghp_${"c".repeat(36)}`;
+      const two = `ghp_${"d".repeat(36)}`;
+      await expect(fixture.tokenizer.tokenize({ headers: {}, body: `${one} ${two}` }, fixture.auth, fixture.service))
+        .rejects.toMatchObject({ code: "capacity_exceeded" });
+      expect(fixture.broker.stats()).toEqual({ configured: 0, responseSecrets: 0, tokenValues: 0 });
+    } finally { await fixture.pool.close(); }
+  });
+
   it("decodes, tokenizes, and canonically re-encodes explicit Base64 responses", async () => {
     const fixture = setup();
     try {
@@ -105,9 +116,10 @@ describe("plain-text response tokenizer", () => {
   });
 });
 
-function setup(max = 100) {
+function setup(max = 100, maxTokenRecords = 10_000) {
   const config = validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" }, auth: { mode: "bearer", bearer: { token_env: "AUTH" } },
+    limits: { max_token_records: maxTokenRecords, max_token_records_per_subject: maxTokenRecords },
     services: { "service-a": { name: "A", destinations: [{ name: "primary", base_url: "https://a.example.org" }], credentials: [
       { id: "key", usage: { kind: "header" }, source: { kind: "env", name: "KEY" } },
       { id: "escaped", usage: { kind: "body" }, source: { kind: "env", name: "ESCAPED" } },

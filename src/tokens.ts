@@ -92,12 +92,14 @@ export class TokenBroker {
 
     const service = getService(this.config, input.service, auth);
     const destination = resolveTokenDestination(service.destinations.map((item) => item.id), input.destination);
+    const credentials = input.credential_ids.map((credentialId) => getCredential(service, credentialId));
+    this.ensureCapacity(auth.subject, credentials.length);
     const now = this.now();
     const issued: TokenIssueResult["tokens"] = [];
     const internalTokenIds: string[] = [];
 
-    for (const credentialId of input.credential_ids) {
-      const credential = getCredential(service, credentialId);
+    for (const credential of credentials) {
+      const credentialId = credential.id;
       const token = generateTokenValue();
       const id = `tokrec_${randomUUID()}`;
       const record: TokenRecord = {
@@ -175,6 +177,7 @@ export class TokenBroker {
     }
 
     const now = this.now();
+    this.ensureCapacity(auth.subject, 1);
     const token = generateResponseSecretTokenValue();
     const record: ResponseSecretTokenRecord = {
       id: `secrec_${randomUUID()}`,
@@ -277,6 +280,20 @@ export class TokenBroker {
     };
   }
 
+  assertResponseSecretCapacity(auth: AuthContext, service: string, secrets: Iterable<string>): void {
+    this.sweepExpired();
+    const indexes = new Set<string>();
+    for (const secret of secrets) {
+      if (this.findConfiguredTokenForSecret(auth, service, secret) !== undefined) continue;
+      const index = this.responseSecretIndex(auth.subject, service, secret);
+      const existingId = this.responseSecretIdsByIndex.get(index);
+      const existing = existingId === undefined ? undefined : this.responseSecretsById.get(existingId);
+      if (existing !== undefined && !this.isExpired(existing)) continue;
+      indexes.add(index);
+    }
+    this.ensureCapacity(auth.subject, indexes.size);
+  }
+
   private responseSecretIndex(subject: string, service: string, secret: string): string {
     return createHmac("sha256", this.secretIndexKey).update(subject).update("\0").update(service).update("\0").update(secret).digest("base64url");
   }
@@ -303,6 +320,17 @@ export class TokenBroker {
   private deleteConfiguredToken(hash: string, id: string): void {
     this.recordsByHash.delete(hash);
     this.tokenValuesById.delete(id);
+  }
+
+  private ensureCapacity(subject: string, additional: number): void {
+    if (additional === 0) return;
+    const total = this.recordsByHash.size + this.responseSecretsById.size;
+    let subjectTotal = 0;
+    for (const record of this.recordsByHash.values()) if (record.subject === subject) subjectTotal += 1;
+    for (const record of this.responseSecretsById.values()) if (record.subject === subject) subjectTotal += 1;
+    if (total + additional > this.config.limits.maxTokenRecords || subjectTotal + additional > this.config.limits.maxTokenRecordsPerSubject) {
+      throw new GatewayError("capacity_exceeded", "Opaque token capacity is exhausted.");
+    }
   }
 }
 

@@ -19,6 +19,7 @@ export type GatewayErrorCode =
   | "cookie_not_allowed"
   | "secret_scan_busy"
   | "secret_scan_failed"
+  | "capacity_exceeded"
   | "config_error";
 
 export class GatewayError extends Error {

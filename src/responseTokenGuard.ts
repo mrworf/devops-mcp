@@ -21,6 +21,10 @@ export function guardResponseTokenCandidates(
   auth: AuthContext,
   service: string,
 ): TokenGuardResult {
+  const invalidCandidates = [...value.matchAll(candidatePattern)]
+    .map((match) => match[0])
+    .filter((candidate) => !broker.inspectResponseToken(auth, service, candidate).valid);
+  broker.assertResponseSecretCapacity(auth, service, invalidCandidates);
   let count = 0;
   const warningCounts = new Map<string, TokenGuardWarning>();
   const guarded = value.replace(candidatePattern, (candidate) => {

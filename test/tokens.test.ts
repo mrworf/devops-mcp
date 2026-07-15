@@ -196,13 +196,34 @@ describe("token broker", () => {
     broker.sweepExpired(now);
     expect(broker.stats()).toEqual({ configured: 0, responseSecrets: 0, tokenValues: 0 });
   });
+
+  it("enforces global and per-subject capacity without partial multi-token issuance", () => {
+    const atomicBroker = new TokenBroker(tokenConfig({ maxTokenRecords: 1, maxTokenRecordsPerSubject: 1 }));
+    expectGatewayError(() => atomicBroker.issueTokens(auth("henric@example.com"), {
+      service: "portainer-prod", destination: "primary", credential_ids: ["api_key", "password"], reason: "Too many.",
+    }), "capacity_exceeded");
+    expect(atomicBroker.stats()).toEqual({ configured: 0, responseSecrets: 0, tokenValues: 0 });
+
+    atomicBroker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "one");
+    expectGatewayError(() => atomicBroker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "two"), "capacity_exceeded");
+    expectGatewayError(() => atomicBroker.issueOrReuseResponseSecret(auth("ada@example.com"), "portainer-prod", "other"), "capacity_exceeded");
+
+    const perSubject = new TokenBroker(tokenConfig({ maxTokenRecords: 2, maxTokenRecordsPerSubject: 1 }));
+    perSubject.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "one");
+    expectGatewayError(() => perSubject.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "two"), "capacity_exceeded");
+    expect(perSubject.issueOrReuseResponseSecret(auth("ada@example.com"), "portainer-prod", "other").token).toMatch(/^sec_/);
+  });
 });
 
-function tokenConfig(): GatewayConfig {
+function tokenConfig(options: { maxTokenRecords?: number; maxTokenRecordsPerSubject?: number } = {}): GatewayConfig {
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
     auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
     tokens: { idle_ttl: "50ms", max_ttl: "100ms" },
+    limits: {
+      max_token_records: options.maxTokenRecords ?? 10_000,
+      max_token_records_per_subject: options.maxTokenRecordsPerSubject ?? 1_000,
+    },
     services: {
       "portainer-prod": {
         type: "http",

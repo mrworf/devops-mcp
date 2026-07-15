@@ -174,6 +174,14 @@ describe("config validation", () => {
     expectConfigError(() => validateConfig(raw, validEnv), "limits.denial_ttl");
   });
 
+  it("defaults and validates opaque-token capacities", () => {
+    const raw = validRaw();
+    expect(validateConfig(raw, validEnv).limits).toMatchObject({ maxTokenRecords: 10_000, maxTokenRecordsPerSubject: 1_000 });
+    raw.limits.max_token_records = 1;
+    raw.limits.max_token_records_per_subject = 2;
+    expectConfigError(() => validateConfig(raw, validEnv), "must not exceed");
+  });
+
   it("accepts service API documentation URLs", () => {
     const raw = validRaw();
     raw.services["portainer-prod"].api_docs_url = "https://api.example.org/openapi.json";
