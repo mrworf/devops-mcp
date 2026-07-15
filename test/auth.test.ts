@@ -294,6 +294,37 @@ describe("auth", () => {
     }
   });
 
+  it("keeps health responsive during asynchronous password verification", async () => {
+    const config = await builtinOAuthConfig({ passwordIterations: 500_000 });
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    try {
+      const login = localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST", body: authorizationBody({ code_challenge: pkceChallenge("async-verifier") }),
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const health = await fetch(`${fixture.baseUrl}/health`);
+      expect(health.status).toBe(200);
+      expect((await login).status).toBe(302);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("fails safely when the configured password hash is malformed", async () => {
+    const config = await builtinOAuthConfig({ adminPasswordHash: "malformed" });
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    try {
+      const response = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST", body: authorizationBody({ code_challenge: pkceChallenge("malformed-verifier") }),
+      });
+      expect(response.status).toBe(401);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("accepts exact-limit authorization forms and rejects limit-plus-one before parsing", async () => {
     const body = authorizationBody({ code_challenge: pkceChallenge("bounded-verifier") });
     const allowedConfig = await builtinOAuthConfig({ maxInboundBody: `${Buffer.byteLength(body)}b` });
@@ -639,6 +670,8 @@ async function builtinOAuthConfig(options: {
   maxInboundBody?: string;
   maxUnauthenticatedInflight?: number;
   maxUnauthenticatedInflightPerSource?: number;
+  passwordIterations?: number;
+  adminPasswordHash?: string;
 } = {}): Promise<GatewayConfig> {
   const keyPath = options.signingKeyPath ?? await createSigningKeyFile();
   return validateConfig({
@@ -668,7 +701,8 @@ async function builtinOAuthConfig(options: {
     },
   }, {
     ADMIN_USERNAME: "admin@example.com",
-    ADMIN_PASSWORD_HASH: hashBuiltinOAuthPassword("correct horse battery staple", "test-salt", 1000),
+    ADMIN_PASSWORD_HASH: options.adminPasswordHash
+      ?? hashBuiltinOAuthPassword("correct horse battery staple", "test-salt", options.passwordIterations ?? 1000),
     DEMO_API_KEY: "secret",
   });
 }

@@ -1,4 +1,5 @@
-import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, pbkdf2, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { exportJWK, importPKCS8, importSPKI, SignJWT } from "jose";
 import { createLogger } from "./logger.js";
@@ -26,6 +27,7 @@ const authorizationCodes = new Map<string, AuthorizationCode>();
 const privateKeyCache = new Map<string, ReturnType<typeof importPKCS8>>();
 const publicKeyCache = new Map<string, ReturnType<typeof importSPKI>>();
 const bodyLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
+const pbkdf2Async = promisify(pbkdf2);
 
 export function isBuiltinOAuthRequest(config: GatewayConfig, request: IncomingMessage): boolean {
   if (config.auth.mode !== "builtin_oauth") return false;
@@ -163,7 +165,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
     return;
   }
 
-  if (body.get("username") !== auth.adminUsername || !verifyPassword(body.get("password") ?? "", auth.adminPasswordHash)) {
+  if (body.get("username") !== auth.adminUsername || !await verifyPassword(body.get("password") ?? "", auth.adminPasswordHash)) {
     logger.debug("oauth.authorize.completed", {
       endpoint: AUTHORIZE_PATH,
       status: "error",
@@ -374,14 +376,19 @@ function scopesFromRequest(scope: string | null, defaultScopes: string[]): strin
   return scope.split(/\s+/).filter(Boolean);
 }
 
-function verifyPassword(password: string, expectedHash: string): boolean {
+async function verifyPassword(password: string, expectedHash: string): Promise<boolean> {
   const parts = expectedHash.split("$");
   if (parts.length !== 4 || parts[0] !== "pbkdf2-sha256") return false;
   const iterations = Number(parts[1]);
   const salt = parts[2];
   const expected = parts[3];
   if (!Number.isInteger(iterations) || iterations <= 0 || !salt || !expected) return false;
-  const actual = pbkdf2Sync(password, salt, iterations, 32, "sha256");
+  let actual: Buffer;
+  try {
+    actual = await pbkdf2Async(password, salt, iterations, 32, "sha256");
+  } catch {
+    return false;
+  }
   const expectedBuffer = Buffer.from(expected, "base64url");
   return actual.length === expectedBuffer.length && timingSafeEqual(actual, expectedBuffer);
 }
