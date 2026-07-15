@@ -15,6 +15,7 @@ export type GatewayErrorCode =
   | "downstream_timeout"
   | "downstream_error"
   | "response_too_large"
+  | "unsupported_transfer_encoding"
   | "config_error";
 
 export class GatewayError extends Error {

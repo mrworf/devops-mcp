@@ -42,6 +42,7 @@ describe("HTTP gateway", () => {
       expect(downstream.requests[0]?.headers["x-api-key"]).toBe("demo-secret");
       expect(downstream.requests[0]?.url).toContain("api_key=demo-secret");
       expect(downstream.requests[0]?.body).toContain("demo-secret");
+      expect(downstream.requests[0]?.headers["content-length"]).toBe(String(Buffer.byteLength(downstream.requests[0]?.body ?? "")));
     } finally {
       await downstream.close();
     }
@@ -216,6 +217,27 @@ describe("HTTP gateway", () => {
     } finally {
       await downstream.close();
     }
+  });
+
+  it("rewrites request content length after substitution and rejects transfer encoding", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      const broker = installBroker(config);
+      const secretToken = broker.issueOrReuseResponseSecret(actor(), "demo-service", "longer-秘密-value").token;
+      await executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: { "Content-Length": "1", "content-LENGTH": "999" }, body: secretToken, reason: "Check framing.",
+      });
+      expect(downstream.requests[0]?.body).toBe("longer-秘密-value");
+      expect(downstream.requests[0]?.headers["content-length"]).toBe(String(Buffer.byteLength("longer-秘密-value")));
+
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: { "Transfer-Encoding": "chunked" }, body: "data", reason: "Reject framing.",
+      }), "unsupported_transfer_encoding");
+      expect(downstream.requests).toHaveLength(1);
+    } finally { await downstream.close(); }
   });
 });
 

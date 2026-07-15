@@ -213,6 +213,11 @@ function buildDownstreamRequest(
   }
 
   const requestHeaders = { ...headers };
+  if (hasHeader(requestHeaders, "transfer-encoding")) {
+    throw new GatewayError("unsupported_transfer_encoding", "Caller-supplied Transfer-Encoding is not allowed.");
+  }
+  removeHeader(requestHeaders, "transfer-encoding");
+  removeHeader(requestHeaders, "content-length");
   let requestBody: string | undefined;
   if (body !== undefined && method.toUpperCase() !== "GET" && method.toUpperCase() !== "HEAD") {
     if (typeof body === "string") {
@@ -224,6 +229,7 @@ function buildDownstreamRequest(
     if (Buffer.byteLength(requestBody) > config.limits.maxRequestBodyBytes) {
       throw new GatewayError("response_too_large", "Request body is too large.");
     }
+    requestHeaders["content-length"] = String(Buffer.byteLength(requestBody));
   }
 
   return {
@@ -332,6 +338,13 @@ async function limitedResponseText(response: Response, maxBytes: number): Promis
 function hasHeader(headers: Record<string, string>, name: string): boolean {
   const lower = name.toLowerCase();
   return Object.keys(headers).some((key) => key.toLowerCase() === lower);
+}
+
+function removeHeader(headers: Record<string, string>, name: string): void {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) delete headers[key];
+  }
 }
 
 function defaultPort(protocol: string): string {
