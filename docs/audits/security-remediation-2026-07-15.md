@@ -5,7 +5,7 @@ This companion record tracks remediation of the findings in `security-review-202
 | Finding | Status | Verification |
 |---|---|---|
 | SEC-001 | Remediated | Authority, forwarding, and hop-by-hop headers are rejected before substitution and HTTP/HTTPS I/O; outbound authority is derived from the validated URL. |
-| SEC-002 | In progress | MCP POST bodies and built-in OAuth authorization forms use bounded streaming reads before parsing. |
+| SEC-002 | In progress | MCP POST bodies and both built-in OAuth form endpoints use bounded streaming reads before parsing. |
 | SEC-003 | Pending | |
 | SEC-004 | Pending | |
 | SEC-005 | Pending | |

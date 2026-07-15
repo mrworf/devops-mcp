@@ -423,6 +423,28 @@ describe("auth", () => {
     }
   });
 
+  it("rejects oversized token forms without consuming the authorization code", async () => {
+    const config = await builtinOAuthConfig({ maxInboundBody: "1kb" });
+    const fixture = await startServer(config);
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    const verifier = "bounded-token-verifier";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    try {
+      const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier);
+      const normalBody = tokenBody(code, redirectUri, verifier);
+      const oversized = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST", body: `${normalBody}&padding=${"x".repeat(1024)}`,
+      });
+      expect(oversized.status).toBe(413);
+      expect(JSON.parse(oversized.body)).toEqual({ error: "request_too_large" });
+
+      const retry = await localRequest(`${fixture.baseUrl}/oauth/token`, { method: "POST", body: normalBody });
+      expect(retry.status).toBe(200);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("rejects expired built-in OAuth authorization codes", async () => {
     const config = await builtinOAuthConfig({ authorizationCodeTtl: "1ms" });
     const fixture = await startServer(config);

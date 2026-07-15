@@ -205,7 +205,16 @@ async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, 
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
   const logger = createLogger(config.logging);
 
-  const body = await readFormBody(request);
+  let body: URLSearchParams;
+  try {
+    body = await readFormBody(request, config.limits.maxInboundBodyBytes);
+  } catch (error) {
+    if (error instanceof RequestBodyError) {
+      writeOAuthError(response, error.statusCode, error.code === "request_too_large" ? "request_too_large" : "invalid_request");
+      return;
+    }
+    throw error;
+  }
   if (body.get("grant_type") !== "authorization_code") {
     logTokenOutcome(logger, "error", 400, "unsupported_grant_type", "unavailable", "unavailable");
     writeOAuthError(response, 400, "unsupported_grant_type");
