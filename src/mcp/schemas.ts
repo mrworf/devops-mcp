@@ -115,12 +115,12 @@ export const serviceRequestOutputSchema = {
     status_code: { type: "number" },
     headers: { type: "object" },
     body: {},
-    redacted: { type: "boolean" },
-    redaction_count: { type: "number" },
+    secret_tokenized: { type: "boolean" },
+    secret_tokenization_count: { type: "number" },
     tls: { type: "object" },
     truncated: { type: "boolean" },
   },
-  required: ["request_id", "status_code", "headers", "body", "redacted", "redaction_count", "tls", "truncated"],
+  required: ["request_id", "status_code", "headers", "body", "secret_tokenized", "secret_tokenization_count", "tls", "truncated"],
   additionalProperties: false,
 } as const;
 

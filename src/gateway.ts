@@ -7,7 +7,7 @@ import { audit } from "./audit.js";
 import { denialStore } from "./denials.js";
 import { bodySummary, createLogger, headerNames } from "./logger.js";
 import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
-import { redactResponse } from "./redaction.js";
+import { getResponseTokenizer } from "./secretRuntime.js";
 import { substituteTokens } from "./substitution.js";
 import { getTokenBroker } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
@@ -37,8 +37,8 @@ export interface ServiceResponse {
   status_code: number;
   headers: Record<string, string>;
   body: string;
-  redacted: boolean;
-  redaction_count: number;
+  secret_tokenized: boolean;
+  secret_tokenization_count: number;
   tls: {
     verify: boolean;
   };
@@ -84,7 +84,7 @@ export async function executeServiceRequest(
       request_timestamp: new Date().toISOString(),
       request_duration_ms: 0,
       tls_verify: target.tls.verify,
-      redaction_count: 0,
+      secret_tokenization_count: 0,
       error_code: "policy_denied",
       error_message: policy.reason,
     }, config);
@@ -154,7 +154,7 @@ export async function executeServiceRequest(
   }
   const responseHeaders = cookieFiltered.headers;
   const rawBody = await limitedResponseText(response, config.limits.maxResponseBodyBytes);
-  const redacted = redactResponse({ body: rawBody.body, headers: responseHeaders }, service.credentials.map((credential) => credential.secret));
+  const tokenized = await getResponseTokenizer(config).tokenizeWithTransferEncoding({ body: rawBody.body, headers: responseHeaders }, auth, service);
   const requestId = `req_${started}`;
   audit({
     type: "service_request",
@@ -174,7 +174,7 @@ export async function executeServiceRequest(
     request_timestamp: new Date(started).toISOString(),
     request_duration_ms: Date.now() - started,
     tls_verify: target.tls.verify,
-    redaction_count: redacted.redaction_count,
+    secret_tokenization_count: tokenized.secretTokenizationCount,
   }, config);
   logger.debug("service_request.completed", {
     request_id: requestId,
@@ -187,18 +187,18 @@ export async function executeServiceRequest(
     status_code: response.status,
     duration_ms: Date.now() - started,
     tls_verify: target.tls.verify,
-    redacted: redacted.redacted,
-    redaction_count: redacted.redaction_count,
+    secret_tokenized: tokenized.secretTokenized,
+    secret_tokenization_count: tokenized.secretTokenizationCount,
     truncated: rawBody.truncated,
   });
 
   return {
     request_id: requestId,
     status_code: response.status,
-    headers: redacted.headers,
-    body: redacted.body,
-    redacted: redacted.redacted,
-    redaction_count: redacted.redaction_count,
+    headers: tokenized.headers,
+    body: tokenized.body,
+    secret_tokenized: tokenized.secretTokenized,
+    secret_tokenization_count: tokenized.secretTokenizationCount,
     tls: { verify: target.tls.verify },
     truncated: rawBody.truncated,
   };

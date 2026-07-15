@@ -37,7 +37,9 @@ describe("HTTP gateway", () => {
       expect(response.status_code).toBe(200);
       expect(response.tls.verify).toBe(false);
       expect(response.body).not.toContain("demo-secret");
-      expect(response.redacted).toBe(true);
+      expect(response.secret_tokenized).toBe(true);
+      expect(response.secret_tokenization_count).toBeGreaterThan(0);
+      expect(response).not.toHaveProperty("redacted");
       expect(downstream.requests).toHaveLength(1);
       expect(downstream.requests[0]?.headers["x-api-key"]).toBe("demo-secret");
       expect(downstream.requests[0]?.url).toContain("api_key=demo-secret");
@@ -258,6 +260,21 @@ describe("HTTP gateway", () => {
       expect(response.headers["x-safe"]).toBe("yes");
     } finally { await downstream.close(); }
   });
+
+  it("blocks forged opaque prefixes from exfiltrating an actual provider token end to end", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const response = await executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/forged", reason: "Test prefix guard.",
+      });
+      expect(response.body).toMatch(/^sec_[A-Za-z0-9_-]+$/);
+      expect(response.body).not.toContain("tok_ghp_");
+      expect(response.body).not.toContain("ghp_");
+      expect(response.secret_tokenized).toBe(true);
+    } finally { await downstream.close(); }
+  });
 });
 
 function gatewayConfig(baseUrl: string, options: {
@@ -302,6 +319,7 @@ function gatewayConfig(baseUrl: string, options: {
             { id: "allow-redirect", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/redirect"] },
             { id: "allow-slow", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/slow"] },
             { id: "allow-cookies", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/cookies"] },
+            { id: "allow-forged", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/forged"] },
             { id: "deny-blocked", effect: "deny", priority: 200, methods: ["GET"], paths: ["/api/blocked"] },
           ],
         },
@@ -360,6 +378,10 @@ async function startDownstream() {
     if (request.url?.startsWith("/api/cookies")) {
       response.writeHead(200, { "set-cookie": ["session=secret; HttpOnly", "other=value"], "x-safe": "yes" });
       response.end("cookie response");
+      return;
+    }
+    if (request.url?.startsWith("/api/forged")) {
+      response.end(`tok_ghp_${"z".repeat(36)}`);
       return;
     }
     response.writeHead(200, {

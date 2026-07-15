@@ -25,7 +25,7 @@ interface Job {
 
 interface PoolWorker {
   worker: Worker;
-  job?: Job;
+  job: Job | undefined;
 }
 
 export class SecretScanBusyError extends Error {
@@ -79,7 +79,8 @@ export class SecretScannerPool {
   }
 
   private createWorker(): PoolWorker {
-    const entry: PoolWorker = { worker: new Worker(SECRET_SCANNER_WORKER_SOURCE, { eval: true }) };
+    const entry: PoolWorker = { worker: new Worker(SECRET_SCANNER_WORKER_SOURCE, { eval: true }), job: undefined };
+    entry.worker.unref();
     entry.worker.on("message", (message: { id?: number; findings?: unknown; error?: string }) => {
       const job = entry.job;
       if (!job || message.id !== job.id) return;

@@ -44,9 +44,10 @@ export class ResponseTokenizer {
     auth: AuthContext,
     service: ServiceConfig,
   ): Promise<TokenizedResponseText> {
-    const headerEntries = await Promise.all(Object.entries(response.headers).map(async ([name, value]) => [
-      name, await this.collect(value, auth, service),
-    ] as const));
+    const headerEntries: Array<readonly [string, CollectedText]> = [];
+    for (const [name, value] of Object.entries(response.headers)) {
+      headerEntries.push([name, await this.collect(value, auth, service)] as const);
+    }
     const body = await this.collect(response.body, auth, service);
     const all = [...headerEntries.map(([, collected]) => collected), body];
     const uniqueSecrets = new Set(all.flatMap((collected) => collected.ranges.map((range) => collected.original.slice(range.start, range.end))));

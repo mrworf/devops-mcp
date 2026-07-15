@@ -33,7 +33,7 @@ export interface ServiceRequestAuditEvent {
   request_timestamp: string;
   request_duration_ms: number;
   tls_verify: boolean;
-  redaction_count: number;
+  secret_tokenization_count: number;
   error_code?: string;
   error_message?: string;
 }

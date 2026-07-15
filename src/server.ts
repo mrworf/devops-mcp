@@ -7,6 +7,7 @@ import { handleOAuthMetadataRequest, isOAuthMetadataRequest } from "./oauthMetad
 import { createLogger } from "./logger.js";
 import type { GatewayConfig } from "./types.js";
 import type { AuthContext } from "./types.js";
+import { initializeSecretRuntime } from "./secretRuntime.js";
 
 type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
@@ -203,6 +204,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   try {
     const config = loadConfig(configPath);
+    initializeSecretRuntime(config);
     await startServer(config);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown startup error.";
