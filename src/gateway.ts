@@ -109,6 +109,7 @@ export async function executeServiceRequest(
   const broker = getTokenBroker(config);
   const tokenTarget = { service: service.id, destination: target.destination.id };
   const headers = input.headers ?? {};
+  rejectCallerControlledAuthority(headers);
   const requestCookieHeaders = prohibitedCookieHeaderNames(headers);
   if (requestCookieHeaders.length > 0) {
     logger.warn("service_request.cookie_rejected", {
@@ -132,7 +133,7 @@ export async function executeServiceRequest(
     destination: target.destination.id,
     method: input.method.toUpperCase(),
     target_scheme: target.url.protocol.replace(/:$/, ""),
-    target_host: target.url.hostname,
+    target_host: target.url.host,
     target_port: target.url.port || defaultPort(target.url.protocol),
     target_path: target.methodPath,
     tls_verify: target.tls.verify,
@@ -178,7 +179,7 @@ export async function executeServiceRequest(
     credential_ids: [...new Set(tokenRecords.map((record) => record.credentialId))],
     internal_token_ids: [...new Set(tokenRecords.map((record) => record.id))],
     method: input.method.toUpperCase(),
-    target_host: target.url.hostname,
+    target_host: target.url.host,
     target_path: target.methodPath,
     policy_decision: "allow",
     ...(policy.matchedRule === undefined ? {} : { matched_policy_rule: policy.matchedRule }),
@@ -208,7 +209,7 @@ export async function executeServiceRequest(
     service: service.id,
     destination: target.destination.id,
     method: input.method.toUpperCase(),
-    target_host: target.url.hostname,
+    target_host: target.url.host,
     target_path: target.methodPath,
     status_code: response.status,
     duration_ms: Date.now() - started,
@@ -260,6 +261,7 @@ function buildDownstreamRequest(
   }
   removeHeader(requestHeaders, "transfer-encoding");
   removeHeader(requestHeaders, "content-length");
+  requestHeaders["host"] = targetUrl.host;
   let requestBody: string | undefined;
   if (body !== undefined && method.toUpperCase() !== "GET" && method.toUpperCase() !== "HEAD") {
     if (typeof body === "string") {
@@ -281,6 +283,21 @@ function buildDownstreamRequest(
     ...(requestBody === undefined ? {} : { body: requestBody }),
     tlsVerify,
   };
+}
+
+const CALLER_CONTROLLED_AUTHORITY_HEADERS = new Set([
+  "host",
+  ":authority",
+  "forwarded",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+]);
+
+function rejectCallerControlledAuthority(headers: Record<string, string>): void {
+  const rejected = Object.keys(headers).find((name) => CALLER_CONTROLLED_AUTHORITY_HEADERS.has(name.toLowerCase()));
+  if (rejected !== undefined) {
+    throw new GatewayError("destination_not_allowed", `Caller-supplied ${rejected} header is not allowed.`);
+  }
 }
 
 async function fetchWithTimeout(downstream: DownstreamRequest, timeoutMs: number): Promise<Response> {

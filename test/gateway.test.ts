@@ -28,7 +28,7 @@ describe("HTTP gateway", () => {
         destination: "primary",
         method: "POST",
         path: "/api/echo",
-        headers: { "X-API-Key": token },
+        headers: { "X-API-Key": token, "X-Request-Mode": "ordinary" },
         query: { api_key: token },
         body: { credential: token },
         reason: "Exercise substitution.",
@@ -43,9 +43,51 @@ describe("HTTP gateway", () => {
       expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(response.body)));
       expect(downstream.requests).toHaveLength(1);
       expect(downstream.requests[0]?.headers["x-api-key"]).toBe("demo-secret");
+      expect(downstream.requests[0]?.headers["x-request-mode"]).toBe("ordinary");
+      expect(downstream.requests[0]?.headers["host"]).toBe(new URL(downstream.baseUrl).host);
       expect(downstream.requests[0]?.url).toContain("api_key=demo-secret");
       expect(downstream.requests[0]?.body).toContain("demo-secret");
       expect(downstream.requests[0]?.headers["content-length"]).toBe(String(Buffer.byteLength(downstream.requests[0]?.body ?? "")));
+    } finally {
+      await downstream.close();
+    }
+  });
+
+  it("rejects caller-controlled authority headers before substitution or HTTP I/O", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      const broker = installBroker(config);
+      const token = broker.issueTokens(actor(), {
+        service: "demo-service", destination: "primary", credential_ids: ["api_key"], reason: "Test authority rejection.",
+      }).tokens[0]?.token ?? "";
+
+      for (const name of ["Host", ":AUTHORITY", "Forwarded", "X-Forwarded-Host", "x-FORWARDED-proto"]) {
+        await expectGatewayError(() => executeServiceRequest(config, actor(), {
+          service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+          headers: { [name]: token }, reason: "Reject authority override.",
+        }), "destination_not_allowed");
+      }
+      expect(downstream.requests).toHaveLength(0);
+    } finally {
+      await downstream.close();
+    }
+  });
+
+  it("rejects caller-controlled authority before self-signed HTTPS I/O", async () => {
+    const downstream = await startHttpsDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl, { tlsVerify: false });
+      const broker = installBroker(config);
+      const token = broker.issueTokens(actor(), {
+        service: "demo-service", destination: "primary", credential_ids: ["api_key"], reason: "Test HTTPS authority rejection.",
+      }).tokens[0]?.token ?? "";
+
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        headers: { Host: "unapproved.example.org", "X-API-Key": token }, reason: "Reject HTTPS authority override.",
+      }), "destination_not_allowed");
+      expect(downstream.requests).toHaveLength(0);
     } finally {
       await downstream.close();
     }

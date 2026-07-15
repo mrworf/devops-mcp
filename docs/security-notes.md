@@ -3,6 +3,7 @@
 - The gateway is not a secrets vault. It is a service-scoped HTTP gateway that keeps configured credentials out of MCP tool results.
 - Policy is enforced before credential substitution.
 - Destination scheme, host, and port are validated before credential substitution.
+- Caller-controlled authority headers are rejected before credential substitution, and the outbound HTTP authority is derived from the validated destination URL.
 - Configured-credential `tok_…` values are bound to subject, service, destination, and credential. Response-derived `sec_…` values are bound to subject and service so they can be reused across that service's destinations. MCP transport session IDs are not a hard token boundary.
 - `tls.verify: false` is supported for self-signed homelab services and is reported in response metadata and audit events.
 - Secretlint scans response header values and UTF-8 body source text. JSON is never parsed or reserialized, so all bytes outside replacement ranges remain unchanged.
