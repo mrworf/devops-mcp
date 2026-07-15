@@ -1,12 +1,13 @@
 import { getCredential } from "./registry.js";
-import type { TokenBroker, TokenRecord, TokenUseTarget } from "./tokens.js";
+import type { ResponseSecretTokenRecord, TokenBroker, TokenRecord, TokenUseTarget } from "./tokens.js";
 import type { AuthContext, ServiceConfig } from "./types.js";
 
-const tokenPattern = /tok_[A-Za-z0-9_-]+/g;
+const tokenPattern = /(?:tok|sec)_[A-Za-z0-9_-]+/g;
 
 export interface SubstitutionResult<T> {
   value: T;
   records: TokenRecord[];
+  responseSecretRecords: ResponseSecretTokenRecord[];
 }
 
 export function substituteTokens<T>(
@@ -17,12 +18,18 @@ export function substituteTokens<T>(
   service: ServiceConfig,
 ): SubstitutionResult<T> {
   const records: TokenRecord[] = [];
+  const responseSecretRecords: ResponseSecretTokenRecord[] = [];
   const replaced = substituteValue(value, (token) => {
+    if (token.startsWith("sec_")) {
+      const record = broker.validateResponseSecretUse(auth, target.service, token);
+      responseSecretRecords.push(record);
+      return record.secret;
+    }
     const record = broker.validateTokenUse(auth, target, token);
     records.push(record);
     return getCredential(service, record.credentialId).secret;
   });
-  return { value: replaced as T, records };
+  return { value: replaced as T, records, responseSecretRecords };
 }
 
 function substituteValue(value: unknown, replaceToken: (token: string) => string): unknown {
