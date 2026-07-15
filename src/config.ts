@@ -106,6 +106,8 @@ const rawConfigSchema = z.object({
     max_token_records: z.number().int().positive().default(10000),
     max_token_records_per_subject: z.number().int().positive().default(1000),
     max_authorization_codes: z.number().int().positive().default(1000),
+    max_mcp_transports: z.number().int().positive().default(1000),
+    mcp_transport_idle_ttl: z.string().default("30m"),
     max_request_body: z.string().default("1mb"),
     max_response_body: z.string().default("5mb"),
     timeout: z.string().default("30s"),
@@ -116,6 +118,7 @@ const rawConfigSchema = z.object({
     max_denial_records: 1000, denial_ttl: "15m", state_sweep_interval: "1m",
     max_token_records: 10000, max_token_records_per_subject: 1000,
     max_authorization_codes: 1000,
+    max_mcp_transports: 1000, mcp_transport_idle_ttl: "30m",
     max_request_body: "1mb", max_response_body: "5mb", timeout: "30s",
   }),
   logging: z.object({
@@ -340,7 +343,8 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
   const timeoutMs = parseDuration(raw.timeout, "limits.timeout");
   const denialTtlMs = parseDuration(raw.denial_ttl, "limits.denial_ttl");
   const stateSweepIntervalMs = parseDuration(raw.state_sweep_interval, "limits.state_sweep_interval");
-  if (maxInboundBodyBytes <= 0 || inboundBodyTimeoutMs <= 0 || maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || timeoutMs <= 0 || denialTtlMs <= 0 || stateSweepIntervalMs <= 0) {
+  const mcpTransportIdleTtlMs = parseDuration(raw.mcp_transport_idle_ttl, "limits.mcp_transport_idle_ttl");
+  if (maxInboundBodyBytes <= 0 || inboundBodyTimeoutMs <= 0 || maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || timeoutMs <= 0 || denialTtlMs <= 0 || stateSweepIntervalMs <= 0 || mcpTransportIdleTtlMs <= 0) {
     throw configError("limits values must be positive");
   }
   if (raw.max_unauthenticated_inflight_per_source > raw.max_unauthenticated_inflight) {
@@ -365,6 +369,8 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
     maxTokenRecords: raw.max_token_records,
     maxTokenRecordsPerSubject: raw.max_token_records_per_subject,
     maxAuthorizationCodes: raw.max_authorization_codes,
+    maxMcpTransports: raw.max_mcp_transports,
+    mcpTransportIdleTtlMs,
     maxRequestBodyBytes,
     maxResponseBodyBytes,
     timeoutMs,

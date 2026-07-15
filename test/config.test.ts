@@ -189,6 +189,16 @@ describe("config validation", () => {
     expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
   });
 
+  it("defaults and validates MCP transport retention", () => {
+    const raw = validRaw();
+    expect(validateConfig(raw, validEnv).limits).toMatchObject({ maxMcpTransports: 1000, mcpTransportIdleTtlMs: 1_800_000 });
+    raw.limits.max_mcp_transports = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+    raw.limits.max_mcp_transports = 1;
+    raw.limits.mcp_transport_idle_ttl = "never";
+    expectConfigError(() => validateConfig(raw, validEnv), "limits.mcp_transport_idle_ttl");
+  });
+
   it("accepts service API documentation URLs", () => {
     const raw = validRaw();
     raw.services["portainer-prod"].api_docs_url = "https://api.example.org/openapi.json";

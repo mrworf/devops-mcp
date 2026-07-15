@@ -135,6 +135,54 @@ describe("MCP surface", () => {
     }
   });
 
+  it("bounds MCP transports without disturbing existing sessions", async () => {
+    const fixture = await startFixtureServer({ maxMcpTransports: 1 });
+    try {
+      const first = await postMcp(fixture.url, {
+        jsonrpc: "2.0", id: 1, method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "first", version: "1.0" } },
+      });
+      const firstSession = first.response.headers.get("mcp-session-id") ?? undefined;
+      expect(firstSession).toBeTruthy();
+
+      const rejected = await postMcp(fixture.url, {
+        jsonrpc: "2.0", id: 2, method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "second", version: "1.0" } },
+      });
+      expect(rejected.response.status).toBe(429);
+      expect(rejected.body.error.code).toBe(-32003);
+
+      const existing = await postMcp(fixture.url, { jsonrpc: "2.0", id: 3, method: "tools/list" }, firstSession);
+      expect(existing.response.status).toBe(200);
+      expect(existing.body.result.tools).toBeDefined();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("reclaims idle MCP transports and allows reinitialization", async () => {
+    const fixture = await startFixtureServer({ maxMcpTransports: 1, mcpTransportIdleTtl: "10ms" });
+    try {
+      const first = await postMcp(fixture.url, {
+        jsonrpc: "2.0", id: 1, method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "first", version: "1.0" } },
+      });
+      const staleSession = first.response.headers.get("mcp-session-id") ?? undefined;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const replacement = await postMcp(fixture.url, {
+        jsonrpc: "2.0", id: 2, method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "replacement", version: "1.0" } },
+      });
+      expect(replacement.response.status).toBe(200);
+      expect(replacement.response.headers.get("mcp-session-id")).toBeTruthy();
+      const stale = await postMcp(fixture.url, { jsonrpc: "2.0", id: 3, method: "tools/list" }, staleSession);
+      expect(stale.response.status).toBe(400);
+      expect(stale.body.error.code).toBe(-32001);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("issues opaque tokens through request_tokens without configured secrets", async () => {
     const fixture = await startFixtureServer();
     try {
@@ -419,7 +467,9 @@ describe("MCP surface", () => {
   });
 });
 
-async function startFixtureServer(options: { destinationBaseUrl?: string; maxInboundBody?: string } = {}) {
+async function startFixtureServer(options: {
+  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; mcpTransportIdleTtl?: string;
+} = {}) {
   const config = fixtureConfig(options);
   const server = createGatewayServer(config);
   server.listen(0, "127.0.0.1");
@@ -436,11 +486,17 @@ async function startFixtureServer(options: { destinationBaseUrl?: string; maxInb
   };
 }
 
-function fixtureConfig(options: { destinationBaseUrl?: string; maxInboundBody?: string } = {}) {
+function fixtureConfig(options: {
+  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; mcpTransportIdleTtl?: string;
+} = {}) {
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
     auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
-    limits: { max_inbound_body: options.maxInboundBody ?? "1mb" },
+    limits: {
+      max_inbound_body: options.maxInboundBody ?? "1mb",
+      max_mcp_transports: options.maxMcpTransports ?? 1000,
+      mcp_transport_idle_ttl: options.mcpTransportIdleTtl ?? "30m",
+    },
     services: {
       "demo-service": {
         type: "http",

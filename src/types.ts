@@ -90,6 +90,8 @@ export interface LimitsConfig {
   maxTokenRecords: number;
   maxTokenRecordsPerSubject: number;
   maxAuthorizationCodes: number;
+  maxMcpTransports: number;
+  mcpTransportIdleTtlMs: number;
   maxRequestBodyBytes: number;
   maxResponseBodyBytes: number;
   timeoutMs: number;

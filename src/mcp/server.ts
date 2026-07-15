@@ -12,10 +12,13 @@ import { MCP_INSTRUCTIONS } from "./instructions.js";
 import { callTool, toolDescriptors } from "./tools.js";
 import type { AuthContext, GatewayConfig } from "../types.js";
 import { readBoundedBody } from "../httpBody.js";
+import { registerMaintenanceTask } from "../maintenance.js";
 
 type NodeRequestWithBody = IncomingMessage & { body?: unknown };
 
-const transports = new Map<string, StreamableHTTPServerTransport>();
+interface TransportRecord { transport: StreamableHTTPServerTransport; lastActivityAt: number }
+interface TransportState { records: Map<string, TransportRecord> }
+const transportStates = new WeakMap<GatewayConfig, TransportState>();
 
 export function createMcpServer(config: GatewayConfig): Server {
   const server = new Server(
@@ -63,10 +66,13 @@ export async function handleMcpRequest(
   response: ServerResponse,
   parsedBody: unknown,
 ): Promise<void> {
+  const state = getTransportState(config);
+  sweepTransports(config, state, Date.now());
   const sessionId = readHeader(request, "mcp-session-id");
-  const existingTransport = sessionId === undefined ? undefined : transports.get(sessionId);
-  if (existingTransport !== undefined) {
-    await existingTransport.handleRequest(request, response, parsedBody);
+  const existingRecord = sessionId === undefined ? undefined : state.records.get(sessionId);
+  if (existingRecord !== undefined) {
+    existingRecord.lastActivityAt = Date.now();
+    await existingRecord.transport.handleRequest(request, response, parsedBody);
     return;
   }
 
@@ -79,23 +85,45 @@ export async function handleMcpRequest(
     writeJsonRpcError(response, 400, -32000, "Bad Request: No valid session ID provided");
     return;
   }
+  if (state.records.size >= config.limits.maxMcpTransports) {
+    writeJsonRpcError(response, 429, -32003, "MCP transport capacity is temporarily exhausted. Retry later.");
+    return;
+  }
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
     enableJsonResponse: true,
     onsessioninitialized: (newSessionId) => {
-      transports.set(newSessionId, transport);
+      state.records.set(newSessionId, { transport, lastActivityAt: Date.now() });
     },
   });
   transport.onclose = () => {
     const closedSessionId = transport.sessionId;
-    if (closedSessionId !== undefined) transports.delete(closedSessionId);
+    if (closedSessionId !== undefined) state.records.delete(closedSessionId);
   };
 
   const server = createMcpServer(config);
   // SDK transport typings are not exactOptionalPropertyTypes-clean in this version.
   await server.connect(transport as Parameters<Server["connect"]>[0]);
   await transport.handleRequest(request as NodeRequestWithBody, response, parsedBody);
+}
+
+function getTransportState(config: GatewayConfig): TransportState {
+  let state = transportStates.get(config);
+  if (state === undefined) {
+    state = { records: new Map() };
+    transportStates.set(config, state);
+    registerMaintenanceTask(config, (now) => sweepTransports(config, state!, now));
+  }
+  return state;
+}
+
+function sweepTransports(config: GatewayConfig, state: TransportState, now: number): void {
+  for (const [sessionId, record] of state.records) {
+    if (record.lastActivityAt + config.limits.mcpTransportIdleTtlMs > now) continue;
+    state.records.delete(sessionId);
+    void record.transport.close().catch(() => undefined);
+  }
 }
 
 export function isMcpPost(request: IncomingMessage, mcpPath: string): boolean {
