@@ -8,9 +8,20 @@ import { createGatewayServer } from "../src/server.js";
 
 describe("MCP surface", () => {
   it("keeps the required safety opening in the first 512 instruction characters", () => {
-    const requiredOpening = "This MCP server lets agents call configured HTTP services without exposing raw credentials. Always call list_services first, then request_tokens with a clear reason, then use service_request with service, destination, method, path or allowed URL, headers/body containing opaque tokens, and a request reason. Tokens are not real credentials and only work through this MCP server. Requests may be denied by service policy.";
+    const opening = MCP_INSTRUCTIONS.slice(0, 512);
+    expect(opening).toContain("without exposing raw configured credentials");
+    expect(opening).toContain("enforced by the gateway backend before content reaches you");
+    expect(opening).toContain("does not rely on you recognizing or keeping secrets confidential");
+    expect(opening).toContain("Always call list_services first");
+  });
 
-    expect(MCP_INSTRUCTIONS.slice(0, 512)).toContain(requiredOpening);
+  it("tells agents how backend-issued opaque tokens are constrained", () => {
+    expect(MCP_INSTRUCTIONS).toContain("bound to the authenticated subject, originating service, destination, and credential");
+    expect(MCP_INSTRUCTIONS).toContain("idle and maximum lifetimes");
+    expect(MCP_INSTRUCTIONS).toContain("work only through this gateway");
+    expect(MCP_INSTRUCTIONS).toContain("scanned on the backend before delivery");
+    expect(MCP_INSTRUCTIONS).toContain("detected secrets are replaced with sec_ placeholders");
+    expect(MCP_INSTRUCTIONS).toContain("mcp-session-id is not an authorization boundary");
   });
 
   it("defines exactly five OpenAI-compatible tool descriptors", () => {
@@ -46,6 +57,17 @@ describe("MCP surface", () => {
     expect(toolDescriptors.find((tool) => tool.name === "explain_denial")?.annotations.readOnlyHint).toBe(true);
     expect(toolDescriptors.find((tool) => tool.name === "service_request")?.annotations.destructiveHint).toBe(true);
     expect(toolDescriptors.find((tool) => tool.name === "service_request")?.annotations.openWorldHint).toBe(true);
+
+    const requestTokensDescription = toolDescriptors.find((tool) => tool.name === "request_tokens")?.description ?? "";
+    expect(requestTokensDescription).toContain("configured credentials remain on the gateway backend");
+    expect(requestTokensDescription).toContain("bound to the authenticated subject, service, destination, and credential");
+    expect(requestTokensDescription).toContain("idle and maximum TTLs");
+    expect(requestTokensDescription).toContain("work only through this gateway");
+
+    const serviceRequestDescription = toolDescriptors.find((tool) => tool.name === "service_request")?.description ?? "";
+    expect(serviceRequestDescription).toContain("backend substitutes opaque tokens only after authorization");
+    expect(serviceRequestDescription).toContain("Before the response reaches the agent");
+    expect(serviceRequestDescription).toContain("replaces detected secrets with subject- and service-bound sec_ tokens");
   });
 
   it("initializes and lists tools through the configured MCP endpoint", async () => {

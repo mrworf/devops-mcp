@@ -54,7 +54,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "list_services",
     title: "List configured services",
-    description: "List the HTTP services this authenticated user can access through the gateway. Does not return raw credentials.",
+    description: "List the HTTP services this authenticated user can access through the gateway. Never returns configured credential values.",
     inputSchema: emptyInputSchema,
     outputSchema: listServicesOutputSchema,
     securitySchemes: readSecurity,
@@ -73,7 +73,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "request_tokens",
     title: "Request credential tokens",
-    description: "Request temporary opaque tokens for a configured service credential. Tokens are not raw credentials and only work through this gateway.",
+    description: "Request temporary tok_ placeholders while configured credentials remain on the gateway backend. Tokens are bound to the authenticated subject, service, destination, and credential, expire under idle and maximum TTLs, and work only through this gateway.",
     inputSchema: requestTokensInputSchema,
     outputSchema: requestTokensOutputSchema,
     securitySchemes: tokenSecurity,
@@ -92,7 +92,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "describe_service_policy",
     title: "Describe service policy",
-    description: "Describe the configured destinations, credential usage hints, and ordered allow/deny policy rules for a service this authenticated user can access. Does not return raw credentials.",
+    description: "Describe the configured destinations, credential usage hints, and ordered allow/deny policy rules for a service this authenticated user can access. Never returns configured credential values.",
     inputSchema: describeServicePolicyInputSchema,
     outputSchema: describeServicePolicyOutputSchema,
     securitySchemes: readSecurity,
@@ -111,7 +111,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "service_request",
     title: "Send service HTTP request",
-    description: "Send an HTTP request to a configured service through the gateway. Opaque tokens in headers, query, or body are replaced only after authorization and policy checks; detected response secrets are returned as sec_ tokens. Cookie headers are not supported.",
+    description: "Send an HTTP request through the gateway. The backend substitutes opaque tokens only after authorization, destination, token-binding, and policy checks. Before the response reaches the agent, the backend scans it and replaces detected secrets with subject- and service-bound sec_ tokens. Cookie headers are not supported.",
     inputSchema: serviceRequestInputSchema,
     outputSchema: serviceRequestOutputSchema,
     securitySchemes: requestSecurity,
