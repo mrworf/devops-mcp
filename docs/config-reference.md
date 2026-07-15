@@ -149,6 +149,7 @@ Scanner capacity defaults to `min(4, availableParallelism)` workers, a 32-job gl
 
 ## Proxied HTTP Constraints
 
+- `limits.max_inbound_body` defaults to `1mb` and is enforced while reading authenticated MCP POST bodies, including chunked requests and inaccurate `Content-Length` values. Oversize requests receive `413` before JSON parsing.
 - Caller-supplied HTTP authority, forwarding, and hop-by-hop headers are rejected before credential substitution. This includes `Host`, `:authority`, `Forwarded`, every `X-Forwarded-*` header, `Connection`, `Keep-Alive`, proxy authorization headers, `TE`, `Trailer`, `Transfer-Encoding`, and `Upgrade`. The outbound `Host` header is derived from the validated destination URL.
 - `Cookie`, `Cookie2`, `Set-Cookie`, and `Set-Cookie2` are prohibited. Request occurrences are rejected; response occurrences are removed with sanitized warnings.
 - Caller-supplied `Content-Length` is discarded and recomputed after request substitution and response transformation.

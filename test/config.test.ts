@@ -85,6 +85,19 @@ describe("config validation", () => {
     expect(config.logging.level).toBe("debug");
   });
 
+  it("defaults and validates the inbound request body limit", () => {
+    const defaults = validRaw();
+    delete defaults.limits.max_inbound_body;
+    expect(validateConfig(defaults, validEnv).limits.maxInboundBodyBytes).toBe(1024 * 1024);
+
+    const configured = validRaw();
+    configured.limits.max_inbound_body = "2kb";
+    expect(validateConfig(configured, validEnv).limits.maxInboundBodyBytes).toBe(2 * 1024);
+
+    configured.limits.max_inbound_body = "2gb";
+    expectConfigError(() => validateConfig(configured, validEnv), "limits.max_inbound_body");
+  });
+
   it("accepts service API documentation URLs", () => {
     const raw = validRaw();
     raw.services["portainer-prod"].api_docs_url = "https://api.example.org/openapi.json";

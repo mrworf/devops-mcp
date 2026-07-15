@@ -13,6 +13,7 @@
 - Cookie headers are rejected on proxied requests and removed from proxied responses. Cookie-dependent downstream APIs are unsupported.
 - Request and returned response `Content-Length` values are computed from final transmitted/returned bytes after substitution or tokenization. Caller-supplied transfer encoding is rejected.
 - Scanning uses a bounded worker pool and fails closed on overload, timeout, malformed input, or scanner failure.
+- MCP POST authentication occurs before bounded body parsing; declared and streamed inbound sizes are both enforced.
 - Avoid allowing endpoints that return backups, complete config dumps, token lists, private keys, or other bulk secret material.
 - Audit events do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or response bodies.
 - Debug logging is opt-in through `logging.level: debug` and records only sanitized structural details and tokenization counts.

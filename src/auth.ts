@@ -91,6 +91,14 @@ export async function authenticateRequest(
   };
 }
 
+export function requireScopes(auth: AuthContext, requiredScopes: string[]): void {
+  if (auth.mode === "bearer") return;
+  const missing = requiredScopes.filter((scope) => !auth.scopes.includes(scope));
+  if (missing.length > 0) {
+    throw new GatewayError("unauthenticated", "OAuth token does not include required scopes.");
+  }
+}
+
 export function buildAuthenticateChallenge(config: GatewayConfig, request: IncomingMessage, requiredScopes: string[] = []): string {
   const metadataUrl = protectedResourceMetadataUrl(config, request);
   const scope = requiredScopes.length > 0 ? `, scope="${requiredScopes.join(" ")}"` : "";

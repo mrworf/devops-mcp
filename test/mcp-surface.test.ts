@@ -396,9 +396,30 @@ describe("MCP surface", () => {
       await fixture.close();
     }
   });
+
+  it("rejects oversized MCP bodies after authentication and authenticates before parsing", async () => {
+    const fixture = await startFixtureServer({ maxInboundBody: "32b" });
+    try {
+      const oversized = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", padding: "x".repeat(64) });
+      const rejected = await fetch(fixture.url, {
+        method: "POST",
+        headers: { authorization: "Bearer dev-token", "content-type": "application/json" },
+        body: oversized,
+      });
+      expect(rejected.status).toBe(413);
+      await expect(rejected.json()).resolves.toMatchObject({ error: { code: "request_too_large" } });
+
+      const unauthenticated = await fetch(fixture.url, {
+        method: "POST", headers: { "content-type": "application/json" }, body: oversized,
+      });
+      expect(unauthenticated.status).toBe(401);
+    } finally {
+      await fixture.close();
+    }
+  });
 });
 
-async function startFixtureServer(options: { destinationBaseUrl?: string } = {}) {
+async function startFixtureServer(options: { destinationBaseUrl?: string; maxInboundBody?: string } = {}) {
   const config = fixtureConfig(options);
   const server = createGatewayServer(config);
   server.listen(0, "127.0.0.1");
@@ -415,10 +436,11 @@ async function startFixtureServer(options: { destinationBaseUrl?: string } = {})
   };
 }
 
-function fixtureConfig(options: { destinationBaseUrl?: string } = {}) {
+function fixtureConfig(options: { destinationBaseUrl?: string; maxInboundBody?: string } = {}) {
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
     auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
+    limits: { max_inbound_body: options.maxInboundBody ?? "1mb" },
     services: {
       "demo-service": {
         type: "http",

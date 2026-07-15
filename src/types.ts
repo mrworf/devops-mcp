@@ -67,6 +67,7 @@ export interface TokenConfig {
 }
 
 export interface LimitsConfig {
+  maxInboundBodyBytes: number;
   maxRequestBodyBytes: number;
   maxResponseBodyBytes: number;
   timeoutMs: number;

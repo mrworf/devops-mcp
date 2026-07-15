@@ -11,6 +11,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { MCP_INSTRUCTIONS } from "./instructions.js";
 import { callTool, toolDescriptors } from "./tools.js";
 import type { AuthContext, GatewayConfig } from "../types.js";
+import { readBoundedBody } from "../httpBody.js";
 
 type NodeRequestWithBody = IncomingMessage & { body?: unknown };
 
@@ -105,13 +106,10 @@ export function isMcpGet(request: IncomingMessage, mcpPath: string): boolean {
   return request.method === "GET" && request.url?.split("?")[0] === mcpPath;
 }
 
-export async function readJsonBody(request: IncomingMessage): Promise<JSONRPCMessage | unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  if (chunks.length === 0) return undefined;
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+export async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<JSONRPCMessage | unknown> {
+  const body = await readBoundedBody(request, maxBytes);
+  if (body.byteLength === 0) return undefined;
+  return JSON.parse(body.toString("utf8")) as unknown;
 }
 
 function readHeader(request: IncomingMessage, name: string): string | undefined {

@@ -12,6 +12,7 @@ tokens:
   max_ttl: 1h
 
 limits:
+  max_inbound_body: 1mb
   max_request_body: 1mb
   max_response_body: 5mb
   timeout: 30s

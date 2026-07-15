@@ -82,10 +82,11 @@ const rawConfigSchema = z.object({
     max_ttl: z.string().default("1h"),
   }).default({ idle_ttl: "10m", max_ttl: "1h" }),
   limits: z.object({
+    max_inbound_body: z.string().default("1mb"),
     max_request_body: z.string().default("1mb"),
     max_response_body: z.string().default("5mb"),
     timeout: z.string().default("30s"),
-  }).default({ max_request_body: "1mb", max_response_body: "5mb", timeout: "30s" }),
+  }).default({ max_inbound_body: "1mb", max_request_body: "1mb", max_response_body: "5mb", timeout: "30s" }),
   logging: z.object({
     level: z.enum(["info", "debug"]).default("info"),
   }).default({ level: "info" }),
@@ -280,13 +281,14 @@ function normalizeTokens(raw: RawConfig["tokens"]): TokenConfig {
 }
 
 function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
+  const maxInboundBodyBytes = parseSize(raw.max_inbound_body, "limits.max_inbound_body");
   const maxRequestBodyBytes = parseSize(raw.max_request_body, "limits.max_request_body");
   const maxResponseBodyBytes = parseSize(raw.max_response_body, "limits.max_response_body");
   const timeoutMs = parseDuration(raw.timeout, "limits.timeout");
-  if (maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || timeoutMs <= 0) {
+  if (maxInboundBodyBytes <= 0 || maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || timeoutMs <= 0) {
     throw configError("limits values must be positive");
   }
-  return { maxRequestBodyBytes, maxResponseBodyBytes, timeoutMs };
+  return { maxInboundBodyBytes, maxRequestBodyBytes, maxResponseBodyBytes, timeoutMs };
 }
 
 function normalizeServices(
