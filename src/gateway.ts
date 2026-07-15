@@ -8,6 +8,7 @@ import { denialStore } from "./denials.js";
 import { bodySummary, createLogger, headerNames } from "./logger.js";
 import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
 import { getResponseTokenizer, getResponseTokenizerRuleIds, getSecretScannerPoolStats } from "./secretRuntime.js";
+import { decodeUtf8 } from "./secretScanner.js";
 import { substituteTokens } from "./substitution.js";
 import { getTokenBroker } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
@@ -371,9 +372,14 @@ function readErrorCode(error: unknown): string | undefined {
 }
 
 async function limitedResponseText(response: Response, maxBytes: number): Promise<{ body: string; truncated: boolean }> {
-  const text = await response.text();
-  if (Buffer.byteLength(text) <= maxBytes) return { body: text, truncated: false };
-  return { body: text.slice(0, maxBytes), truncated: true };
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const truncated = bytes.byteLength > maxBytes;
+  const selected = truncated ? bytes.subarray(0, maxBytes) : bytes;
+  try {
+    return { body: decodeUtf8(selected), truncated };
+  } catch {
+    throw new GatewayError("secret_scan_failed", "Downstream response is not valid UTF-8.");
+  }
 }
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {

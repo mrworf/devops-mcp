@@ -291,6 +291,17 @@ describe("HTTP gateway", () => {
       expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(response.body)));
     } finally { await downstream.close(); }
   });
+
+  it("fails closed for invalid UTF-8 response bytes", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/invalid-utf8", reason: "Reject invalid text.",
+      }), "secret_scan_failed");
+    } finally { await downstream.close(); }
+  });
 });
 
 function gatewayConfig(baseUrl: string, options: {
@@ -337,6 +348,7 @@ function gatewayConfig(baseUrl: string, options: {
             { id: "allow-cookies", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/cookies"] },
             { id: "allow-forged", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/forged"], secretlint: { enabled: false } },
             { id: "allow-base64", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/base64"] },
+            { id: "allow-invalid-utf8", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/invalid-utf8"] },
             { id: "deny-blocked", effect: "deny", priority: 200, methods: ["GET"], paths: ["/api/blocked"] },
           ],
         },
@@ -405,6 +417,10 @@ async function startDownstream() {
       const encoded = Buffer.from(`sec_sk-proj-${"q".repeat(48)}`, "utf8").toString("base64");
       response.writeHead(200, { "content-transfer-encoding": "base64", "content-length": String(Buffer.byteLength(encoded)) });
       response.end(encoded);
+      return;
+    }
+    if (request.url?.startsWith("/api/invalid-utf8")) {
+      response.end(Buffer.from([0xff, 0xfe]));
       return;
     }
     response.writeHead(200, {
