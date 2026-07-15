@@ -110,6 +110,7 @@ describe("audit logging", () => {
       expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
         "token_issued",
         "service_request",
+        "invalid_opaque_response_tokens",
         "tool_invocation",
       ]));
       expect(events.filter((event) => event.type === "service_request").map((event) => event.policy_decision)).toEqual(expect.arrayContaining(["allow", "deny"]));
@@ -119,6 +120,9 @@ describe("audit logging", () => {
       expect(serialized).not.toContain("Authorization");
       expect(serialized).not.toContain("Cookie");
       expect(serialized).not.toContain("do not log me");
+      expect(serialized).not.toContain("ghp_");
+      const warning = events.find((event) => event.type === "invalid_opaque_response_tokens");
+      expect(warning).toMatchObject({ warnings: [{ prefix: "tok", reason: "unknown", count: 1 }] });
     } finally {
       await downstream.close();
     }
@@ -186,7 +190,7 @@ async function startDownstream() {
       "content-type": "text/plain",
       "x-leaked-secret": "raw-secret",
     });
-    response.end("ok raw-secret");
+    response.end(`ok raw-secret tok_ghp_${"x".repeat(36)}`);
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

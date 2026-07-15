@@ -34,8 +34,21 @@ export interface ServiceRequestAuditEvent {
   request_duration_ms: number;
   tls_verify: boolean;
   secret_tokenization_count: number;
+  secret_rule_ids?: string[];
+  response_internal_token_ids?: string[];
   error_code?: string;
   error_message?: string;
+}
+
+export interface InvalidOpaqueResponseTokensAuditEvent {
+  type: "invalid_opaque_response_tokens";
+  request_id: string;
+  subject: string;
+  session_id?: string;
+  service: string;
+  destination: string;
+  warnings: Array<{ prefix: "tok" | "sec"; reason: "unknown" | "expired" | "wrong_subject" | "wrong_service"; count: number }>;
+  timestamp: string;
 }
 
 export interface ToolInvocationAuditEvent {
@@ -50,7 +63,7 @@ export interface ToolInvocationAuditEvent {
   timestamp: string;
 }
 
-export type AuditEvent = TokenIssuedAuditEvent | ServiceRequestAuditEvent | ToolInvocationAuditEvent;
+export type AuditEvent = TokenIssuedAuditEvent | ServiceRequestAuditEvent | ToolInvocationAuditEvent | InvalidOpaqueResponseTokensAuditEvent;
 
 export const auditEvents: AuditEvent[] = [];
 

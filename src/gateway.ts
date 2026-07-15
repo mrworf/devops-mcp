@@ -7,7 +7,7 @@ import { audit } from "./audit.js";
 import { denialStore } from "./denials.js";
 import { bodySummary, createLogger, headerNames } from "./logger.js";
 import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
-import { getResponseTokenizer, getResponseTokenizerRuleIds } from "./secretRuntime.js";
+import { getResponseTokenizer, getResponseTokenizerRuleIds, getSecretScannerPoolStats } from "./secretRuntime.js";
 import { substituteTokens } from "./substitution.js";
 import { getTokenBroker } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
@@ -186,7 +186,21 @@ export async function executeServiceRequest(
     request_duration_ms: Date.now() - started,
     tls_verify: target.tls.verify,
     secret_tokenization_count: tokenized.secretTokenizationCount,
+    secret_rule_ids: tokenized.ruleIds,
+    response_internal_token_ids: tokenized.internalRecordIds,
   }, config);
+  if (tokenized.warnings.length > 0) {
+    audit({
+      type: "invalid_opaque_response_tokens",
+      request_id: requestId,
+      subject: auth.subject,
+      ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
+      service: service.id,
+      destination: target.destination.id,
+      warnings: tokenized.warnings,
+      timestamp: new Date().toISOString(),
+    }, config);
+  }
   logger.debug("service_request.completed", {
     request_id: requestId,
     subject: auth.subject,
@@ -200,6 +214,8 @@ export async function executeServiceRequest(
     tls_verify: target.tls.verify,
     secret_tokenized: tokenized.secretTokenized,
     secret_tokenization_count: tokenized.secretTokenizationCount,
+    secret_rule_ids: tokenized.ruleIds,
+    secret_scan_pool: getSecretScannerPoolStats(config),
     truncated: rawBody.truncated,
   });
 

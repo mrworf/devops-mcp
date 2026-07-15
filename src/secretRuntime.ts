@@ -37,3 +37,7 @@ export function getResponseTokenizer(config: GatewayConfig): ResponseTokenizer {
 export function getResponseTokenizerRuleIds(config: GatewayConfig): string[] {
   return initializeSecretRuntime(config).rules.map((rule) => rule.id);
 }
+
+export function getSecretScannerPoolStats(config: GatewayConfig) {
+  return initializeSecretRuntime(config).pool.stats();
+}

@@ -1,7 +1,7 @@
 import { GatewayError } from "./errors.js";
 import type { SecretlintRuleConfig } from "./secretlintConfig.js";
 import type { SecretFinding } from "./secretScanner.js";
-import type { SecretScannerPool } from "./secretScannerPool.js";
+import { SecretScanBusyError, type SecretScannerPool } from "./secretScannerPool.js";
 import type { AuthContext, ServiceConfig } from "./types.js";
 import type { TokenBroker, TokenInspectionReason } from "./tokens.js";
 import { decodeUtf8 } from "./secretScanner.js";
@@ -117,6 +117,7 @@ export class ResponseTokenizer {
       findings = await this.scanner.scan(auth.subject, text, this.rules.filter((rule) => !disabledRuleIds.has(rule.id)), this.timeoutMs);
     } catch (error) {
       if (error instanceof GatewayError) throw error;
+      if (error instanceof SecretScanBusyError) throw new GatewayError("secret_scan_busy", "Response secret scanner is busy.");
       throw new GatewayError("secret_scan_failed", "Response secret scanning failed.");
     }
     const ranges: Range[] = findings.map((finding) => ({ start: finding.start, end: finding.end, ruleIds: new Set([finding.ruleId]) }));

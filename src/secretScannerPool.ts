@@ -78,6 +78,15 @@ export class SecretScannerPool {
     await Promise.all(this.workers.map((entry) => entry.worker.terminate()));
   }
 
+  stats(): { workers: number; active: number; queued: number; activeSubjects: number } {
+    return {
+      workers: this.workers.length,
+      active: this.workers.filter((entry) => entry.job !== undefined).length,
+      queued: this.queue.length,
+      activeSubjects: this.activeBySubject.size,
+    };
+  }
+
   private createWorker(): PoolWorker {
     const entry: PoolWorker = { worker: new Worker(SECRET_SCANNER_WORKER_SOURCE, { eval: true }), job: undefined };
     entry.worker.unref();
