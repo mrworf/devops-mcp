@@ -64,6 +64,9 @@ export interface ConfiguredTokenMatch {
   record: TokenRecord;
 }
 
+export type TokenInspectionReason = "unknown" | "expired" | "wrong_subject" | "wrong_service";
+export type TokenInspection = { valid: true } | { valid: false; reason: TokenInspectionReason };
+
 export class TokenBroker {
   private readonly recordsByHash = new Map<string, TokenRecord>();
   private readonly responseSecretsByHash = new Map<string, ResponseSecretTokenRecord>();
@@ -224,6 +227,34 @@ export class TokenBroker {
     if (!token) return undefined;
     this.refresh(record);
     return { token, record };
+  }
+
+  inspectResponseToken(auth: AuthContext, service: string, tokenValue: string): TokenInspection {
+    const hash = hashToken(tokenValue);
+    const credential = this.recordsByHash.get(hash);
+    if (credential) {
+      if (this.isExpired(credential)) {
+        this.recordsByHash.delete(hash);
+        this.tokenValuesById.delete(credential.id);
+        return { valid: false, reason: "expired" };
+      }
+      if (credential.subject !== auth.subject) return { valid: false, reason: "wrong_subject" };
+      if (credential.service !== service) return { valid: false, reason: "wrong_service" };
+      this.refresh(credential);
+      return { valid: true };
+    }
+    const responseSecret = this.responseSecretsByHash.get(hash);
+    if (responseSecret) {
+      if (this.isExpired(responseSecret)) {
+        this.deleteResponseSecret(responseSecret.id, this.responseSecretIndex(responseSecret.subject, responseSecret.service, responseSecret.secret));
+        return { valid: false, reason: "expired" };
+      }
+      if (responseSecret.subject !== auth.subject) return { valid: false, reason: "wrong_subject" };
+      if (responseSecret.service !== service) return { valid: false, reason: "wrong_service" };
+      this.refresh(responseSecret);
+      return { valid: true };
+    }
+    return { valid: false, reason: "unknown" };
   }
 
   private responseSecretIndex(subject: string, service: string, secret: string): string {
