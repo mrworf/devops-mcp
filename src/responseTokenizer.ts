@@ -4,6 +4,7 @@ import type { SecretFinding } from "./secretScanner.js";
 import type { SecretScannerPool } from "./secretScannerPool.js";
 import type { AuthContext, ServiceConfig } from "./types.js";
 import type { TokenBroker, TokenInspectionReason } from "./tokens.js";
+import { decodeUtf8 } from "./secretScanner.js";
 
 const tokenCandidatePattern = /\b(?:tok|sec)_[^\s"'<>()[\]{},;]+/g;
 
@@ -88,6 +89,25 @@ export class ResponseTokenizer {
     };
   }
 
+  async tokenizeWithTransferEncoding(
+    response: { headers: Record<string, string>; body: string },
+    auth: AuthContext,
+    service: ServiceConfig,
+  ): Promise<TokenizedResponseText> {
+    const declarations = Object.entries(response.headers).filter(([name]) => name.toLowerCase() === "content-transfer-encoding");
+    if (declarations.length === 0) return await this.tokenize(response, auth, service);
+    if (declarations.length !== 1 || declarations[0]?.[1].trim().toLowerCase() !== "base64") {
+      throw new GatewayError("unsupported_transfer_encoding", "Unsupported or conflicting Content-Transfer-Encoding.");
+    }
+    const normalized = response.body.replace(/[\t\n\f\r ]/g, "");
+    if (!isCanonicalBase64Shape(normalized)) throw new GatewayError("secret_scan_failed", "Response body is not valid Base64.");
+    let decoded: string;
+    try { decoded = decodeUtf8(Buffer.from(normalized, "base64")); }
+    catch { throw new GatewayError("secret_scan_failed", "Base64 response is not valid UTF-8."); }
+    const tokenized = await this.tokenize({ headers: response.headers, body: decoded }, auth, service);
+    return { ...tokenized, body: Buffer.from(tokenized.body, "utf8").toString("base64") };
+  }
+
   private async collect(text: string, auth: AuthContext, service: ServiceConfig): Promise<CollectedText> {
     let findings: SecretFinding[];
     try {
@@ -120,6 +140,11 @@ export class ResponseTokenizer {
     const withoutValidCandidates = ranges.filter((range) => !validCandidates.some((valid) => overlaps(range, valid)));
     return { original: text, ranges: mergeRanges(withoutValidCandidates), warnings };
   }
+}
+
+function isCanonicalBase64Shape(value: string): boolean {
+  if (value === "") return true;
+  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
 }
 
 function addExactRanges(ranges: Range[], text: string, secret: string, ruleId: string): void {

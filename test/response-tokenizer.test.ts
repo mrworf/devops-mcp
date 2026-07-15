@@ -57,6 +57,37 @@ describe("plain-text response tokenizer", () => {
         .rejects.toMatchObject({ code: "secret_scan_failed" });
     } finally { await fixture.pool.close(); }
   });
+
+  it("decodes, tokenizes, and canonically re-encodes explicit Base64 responses", async () => {
+    const fixture = setup();
+    try {
+      const attack = `tok_ghp_${"e".repeat(36)}`;
+      const encoded = Buffer.from(`prefix ${attack} suffix`, "utf8").toString("base64").replace(/(.{12})/g, "$1\n");
+      const result = await fixture.tokenizer.tokenizeWithTransferEncoding({
+        headers: { "Content-Transfer-Encoding": "base64" }, body: encoded,
+      }, fixture.auth, fixture.service);
+      const decoded = Buffer.from(result.body, "base64").toString("utf8");
+      expect(decoded).toMatch(/^prefix sec_[A-Za-z0-9_-]+ suffix$/);
+      expect(decoded).not.toContain(attack);
+      expect(decoded).not.toContain("ghp_");
+      expect(result.body).not.toContain("\n");
+    } finally { await fixture.pool.close(); }
+  });
+
+  it("rejects malformed Base64, invalid decoded UTF-8, and conflicting declarations", async () => {
+    const fixture = setup();
+    try {
+      await expect(fixture.tokenizer.tokenizeWithTransferEncoding({ headers: { "content-transfer-encoding": "base64" }, body: "%%%" }, fixture.auth, fixture.service))
+        .rejects.toMatchObject({ code: "secret_scan_failed" });
+      await expect(fixture.tokenizer.tokenizeWithTransferEncoding({ headers: { "content-transfer-encoding": "base64" }, body: "/w==" }, fixture.auth, fixture.service))
+        .rejects.toMatchObject({ code: "secret_scan_failed" });
+      await expect(fixture.tokenizer.tokenizeWithTransferEncoding({ headers: { "content-transfer-encoding": "gzip" }, body: "data" }, fixture.auth, fixture.service))
+        .rejects.toMatchObject({ code: "unsupported_transfer_encoding" });
+      await expect(fixture.tokenizer.tokenizeWithTransferEncoding({
+        headers: { "Content-Transfer-Encoding": "base64", "content-transfer-encoding": "base64" }, body: "",
+      }, fixture.auth, fixture.service)).rejects.toMatchObject({ code: "unsupported_transfer_encoding" });
+    } finally { await fixture.pool.close(); }
+  });
 });
 
 function setup(max = 100) {
