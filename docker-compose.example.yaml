@@ -6,11 +6,14 @@ services:
       - "8080:8080"
     volumes:
       - ./examples/config.yaml:/config/config.yaml:ro
+      # Replace this mount source with a custom extend/replace rules file as needed.
+      - ./config/secretlint.yaml:/config/secretlint.yaml:ro
       - ./secrets:/run/secrets:ro
       - ./oauth:/run/oauth:ro
       - ./audit:/var/lib/agent-credential-gateway/audit
     environment:
       CONFIG_PATH: /config/config.yaml
+      SECRETLINT_CONFIG_PATH: /config/secretlint.yaml
       AGENT_GATEWAY_MCP_TOKEN: change-me-dev-token
       PORTAINER_API_KEY_FILE: /run/secrets/portainer_api_key
     healthcheck:
