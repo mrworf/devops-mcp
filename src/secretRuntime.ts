@@ -8,6 +8,7 @@ import type { GatewayConfig } from "./types.js";
 interface SecretRuntime {
   pool: SecretScannerPool;
   tokenizer: ResponseTokenizer;
+  rules: ReturnType<typeof resolveSecretlintRules>;
 }
 
 const runtimes = new WeakMap<GatewayConfig, SecretRuntime>();
@@ -22,6 +23,7 @@ export function initializeSecretRuntime(config: GatewayConfig): SecretRuntime {
   const pool = new SecretScannerPool();
   const runtime = {
     pool,
+    rules,
     tokenizer: new ResponseTokenizer(getTokenBroker(config), pool, rules, configured.limits.maxUniqueSecrets, configured.limits.timeoutMs),
   };
   runtimes.set(config, runtime);
@@ -30,4 +32,8 @@ export function initializeSecretRuntime(config: GatewayConfig): SecretRuntime {
 
 export function getResponseTokenizer(config: GatewayConfig): ResponseTokenizer {
   return initializeSecretRuntime(config).tokenizer;
+}
+
+export function getResponseTokenizerRuleIds(config: GatewayConfig): string[] {
+  return initializeSecretRuntime(config).rules.map((rule) => rule.id);
 }

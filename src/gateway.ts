@@ -7,7 +7,7 @@ import { audit } from "./audit.js";
 import { denialStore } from "./denials.js";
 import { bodySummary, createLogger, headerNames } from "./logger.js";
 import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
-import { getResponseTokenizer } from "./secretRuntime.js";
+import { getResponseTokenizer, getResponseTokenizerRuleIds } from "./secretRuntime.js";
 import { substituteTokens } from "./substitution.js";
 import { getTokenBroker } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
@@ -154,7 +154,15 @@ export async function executeServiceRequest(
   }
   const responseHeaders = cookieFiltered.headers;
   const rawBody = await limitedResponseText(response, config.limits.maxResponseBodyBytes);
-  const tokenized = await getResponseTokenizer(config).tokenizeWithTransferEncoding({ body: rawBody.body, headers: responseHeaders }, auth, service);
+  const matchedPolicyRule = policy.matchedRule === undefined ? undefined : service.policy.rules.find((rule) => rule.id === policy.matchedRule);
+  const disabledSecretlintRules = matchedPolicyRule?.secretlint === undefined
+    ? new Set<string>()
+    : "enabled" in matchedPolicyRule.secretlint
+      ? new Set<string>(getResponseTokenizerRuleIds(config))
+      : new Set(matchedPolicyRule.secretlint.disabledRuleIds);
+  const tokenized = await getResponseTokenizer(config).tokenizeWithTransferEncoding(
+    { body: rawBody.body, headers: responseHeaders }, auth, service, disabledSecretlintRules,
+  );
   const returnedHeaders = bodyChanged(rawBody.body, tokenized.body, rawBody.truncated)
     ? withContentLength(tokenized.headers, Buffer.byteLength(tokenized.body))
     : tokenized.headers;

@@ -191,6 +191,28 @@ describe("config validation", () => {
   it("fails missing env secrets", () => {
     expectConfigError(() => validateConfig(validRaw(), { TEST_GATEWAY_TOKEN: "dev-token" }), "Missing credential environment variable");
   });
+
+  it("accepts endpoint Secretlint disable controls", () => {
+    const allDisabled = validRaw();
+    allDisabled.services["portainer-prod"].policy.rules[0].secretlint = { enabled: false };
+    expect(validateConfig(allDisabled, validEnv).services["portainer-prod"]?.policy.rules[0]?.secretlint).toEqual({ enabled: false });
+
+    const selected = validRaw();
+    selected.services["portainer-prod"].policy.rules[0].secretlint = { disabled_rules: ["@secretlint/secretlint-rule-github"] };
+    expect(validateConfig(selected, validEnv).services["portainer-prod"]?.policy.rules[0]?.secretlint)
+      .toEqual({ disabledRuleIds: ["@secretlint/secretlint-rule-github"] });
+  });
+
+  it("rejects conflicting or unknown endpoint Secretlint controls", () => {
+    const conflicting = validRaw();
+    conflicting.services["portainer-prod"].policy.rules[0].secretlint = {
+      enabled: false, disabled_rules: ["@secretlint/secretlint-rule-github"],
+    };
+    expectConfigError(() => validateConfig(conflicting, validEnv), "Invalid config");
+    const unknown = validRaw();
+    unknown.services["portainer-prod"].policy.rules[0].secretlint = { disabled_rules: ["unknown"] };
+    expectConfigError(() => validateConfig(unknown, validEnv), "Invalid config");
+  });
 });
 
 function expectConfigError(fn: () => unknown, message: string) {

@@ -144,4 +144,5 @@ export interface PolicyRuleConfig {
   hosts: string[];
   paths: string[];
   reason?: string;
+  secretlint?: { enabled: false } | { disabledRuleIds: string[] };
 }

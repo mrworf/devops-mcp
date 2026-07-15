@@ -43,12 +43,13 @@ export class ResponseTokenizer {
     response: { headers: Record<string, string>; body: string },
     auth: AuthContext,
     service: ServiceConfig,
+    disabledRuleIds: ReadonlySet<string> = new Set(),
   ): Promise<TokenizedResponseText> {
     const headerEntries: Array<readonly [string, CollectedText]> = [];
     for (const [name, value] of Object.entries(response.headers)) {
-      headerEntries.push([name, await this.collect(value, auth, service)] as const);
+      headerEntries.push([name, await this.collect(value, auth, service, disabledRuleIds)] as const);
     }
-    const body = await this.collect(response.body, auth, service);
+    const body = await this.collect(response.body, auth, service, disabledRuleIds);
     const all = [...headerEntries.map(([, collected]) => collected), body];
     const uniqueSecrets = new Set(all.flatMap((collected) => collected.ranges.map((range) => collected.original.slice(range.start, range.end))));
     if (uniqueSecrets.size > this.maxUniqueSecrets) {
@@ -94,9 +95,10 @@ export class ResponseTokenizer {
     response: { headers: Record<string, string>; body: string },
     auth: AuthContext,
     service: ServiceConfig,
+    disabledRuleIds: ReadonlySet<string> = new Set(),
   ): Promise<TokenizedResponseText> {
     const declarations = Object.entries(response.headers).filter(([name]) => name.toLowerCase() === "content-transfer-encoding");
-    if (declarations.length === 0) return await this.tokenize(response, auth, service);
+    if (declarations.length === 0) return await this.tokenize(response, auth, service, disabledRuleIds);
     if (declarations.length !== 1 || declarations[0]?.[1].trim().toLowerCase() !== "base64") {
       throw new GatewayError("unsupported_transfer_encoding", "Unsupported or conflicting Content-Transfer-Encoding.");
     }
@@ -105,14 +107,14 @@ export class ResponseTokenizer {
     let decoded: string;
     try { decoded = decodeUtf8(Buffer.from(normalized, "base64")); }
     catch { throw new GatewayError("secret_scan_failed", "Base64 response is not valid UTF-8."); }
-    const tokenized = await this.tokenize({ headers: response.headers, body: decoded }, auth, service);
+    const tokenized = await this.tokenize({ headers: response.headers, body: decoded }, auth, service, disabledRuleIds);
     return { ...tokenized, body: Buffer.from(tokenized.body, "utf8").toString("base64") };
   }
 
-  private async collect(text: string, auth: AuthContext, service: ServiceConfig): Promise<CollectedText> {
+  private async collect(text: string, auth: AuthContext, service: ServiceConfig, disabledRuleIds: ReadonlySet<string>): Promise<CollectedText> {
     let findings: SecretFinding[];
     try {
-      findings = await this.scanner.scan(auth.subject, text, this.rules, this.timeoutMs);
+      findings = await this.scanner.scan(auth.subject, text, this.rules.filter((rule) => !disabledRuleIds.has(rule.id)), this.timeoutMs);
     } catch (error) {
       if (error instanceof GatewayError) throw error;
       throw new GatewayError("secret_scan_failed", "Response secret scanning failed.");

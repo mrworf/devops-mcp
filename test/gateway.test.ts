@@ -335,7 +335,7 @@ function gatewayConfig(baseUrl: string, options: {
             { id: "allow-redirect", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/redirect"] },
             { id: "allow-slow", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/slow"] },
             { id: "allow-cookies", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/cookies"] },
-            { id: "allow-forged", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/forged"] },
+            { id: "allow-forged", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/forged"], secretlint: { enabled: false } },
             { id: "allow-base64", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/base64"] },
             { id: "deny-blocked", effect: "deny", priority: 200, methods: ["GET"], paths: ["/api/blocked"] },
           ],

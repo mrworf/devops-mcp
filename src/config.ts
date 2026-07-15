@@ -21,6 +21,7 @@ import type {
   TlsConfig,
   TokenConfig,
 } from "./types.js";
+import { SECRET_RULE_IDS } from "./secretlintConfig.js";
 
 const durationPattern = /^(\d+)(ms|s|m|h)$/;
 const sizePattern = /^(\d+)(b|kb|mb)$/i;
@@ -127,6 +128,10 @@ const rawConfigSchema = z.object({
         hosts: z.array(z.string().min(1)).default([]),
         paths: z.array(z.string().min(1)).default([]),
         reason: z.string().optional(),
+        secretlint: z.union([
+          z.object({ enabled: z.literal(false) }).strict(),
+          z.object({ disabled_rules: z.array(z.enum(SECRET_RULE_IDS)).min(1) }).strict(),
+        ]).optional(),
       }).strict()).default([]),
     }).default({ mode: "deny", rules: [] }),
   }).strict()).refine((services) => Object.keys(services).length > 0, "at least one service is required"),
@@ -396,6 +401,11 @@ function normalizePolicy(raw: RawService["policy"]): PolicyConfig {
       methods: rule.methods.map((method) => method.toUpperCase()),
       hosts: rule.hosts,
       paths: rule.paths,
+      ...(rule.secretlint === undefined ? {} : {
+        secretlint: "enabled" in rule.secretlint
+          ? { enabled: false as const }
+          : { disabledRuleIds: rule.secretlint.disabled_rules },
+      }),
     };
     return rule.reason === undefined ? normalized : { ...normalized, reason: rule.reason };
   });
