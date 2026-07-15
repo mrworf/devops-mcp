@@ -51,7 +51,7 @@ export async function authenticateRequest(
 
     const sessionId = readHeader(request, "mcp-session-id");
     return {
-      subject: subjectFromPayload(payload),
+      subject: subjectFromPayload(payload, "sub"),
       scopes,
       mode: "builtin_oauth",
       ...(sessionId === undefined ? {} : { sessionId }),
@@ -84,7 +84,7 @@ export async function authenticateRequest(
 
   const sessionId = readHeader(request, "mcp-session-id");
   return {
-    subject: subjectFromPayload(payload),
+    subject: subjectFromPayload(payload, oauth.principalClaim),
     scopes,
     mode: "oauth",
     ...(sessionId === undefined ? {} : { sessionId }),
@@ -177,9 +177,10 @@ function extractScopes(payload: JWTPayload): string[] {
   return [];
 }
 
-function subjectFromPayload(payload: JWTPayload): string {
-  if (payload.sub) return payload.sub;
-  const clientId = payload.client_id;
-  if (typeof clientId === "string") return clientId;
-  return "unknown";
+function subjectFromPayload(payload: JWTPayload, claim: string): string {
+  const value = payload[claim];
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new GatewayError("unauthenticated", "OAuth access token does not contain a stable principal claim.");
+  }
+  return value;
 }

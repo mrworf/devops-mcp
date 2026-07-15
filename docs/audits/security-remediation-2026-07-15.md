@@ -9,4 +9,4 @@ This companion record tracks remediation of the findings in `security-review-202
 | SEC-003 | Remediated | Downstream response bytes are bounded during network reads; oversize responses are aborted without partial output. |
 | SEC-004 | Remediated | Audit, denial, token, authorization-code, and MCP transport state are bounded per configuration with expiry maintenance. |
 | SEC-005 | Remediated | Built-in OAuth applies bounded source, account, and global failure limits before PBKDF2 with temporary exponential lockouts. |
-| SEC-006 | Pending | |
+| SEC-006 | Remediated | External OAuth requires a configured non-empty string principal claim and has no shared fallback identity. |

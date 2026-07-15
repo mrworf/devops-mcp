@@ -86,6 +86,20 @@ describe("config validation", () => {
     expect(config.logging.level).toBe("debug");
   });
 
+  it("defaults and validates the external OAuth principal claim", () => {
+    const raw = validRaw();
+    raw.auth = { mode: "oauth", oauth: { issuer: "https://auth.example.org", audience: "gateway" } };
+    const defaults = validateConfig(raw, validEnv).auth;
+    expect(defaults.mode).toBe("oauth");
+    if (defaults.mode !== "oauth") throw new Error("Expected OAuth");
+    expect(defaults.oauth.principalClaim).toBe("sub");
+    raw.auth.oauth.principal_claim = "client_id";
+    const configured = validateConfig(raw, validEnv).auth;
+    expect(configured.mode === "oauth" && configured.oauth.principalClaim).toBe("client_id");
+    raw.auth.oauth.principal_claim = " ";
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+  });
+
   it("defaults and validates the in-memory audit capacity", () => {
     const raw = validRaw();
     expect(validateConfig(raw, validEnv).audit.memoryEvents).toBe(1000);

@@ -34,6 +34,7 @@ export interface OAuthAuthConfig {
     resource?: string;
     jwksUri?: string;
     requiredScopes: string[];
+    principalClaim: string;
   };
 }
 

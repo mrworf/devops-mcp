@@ -17,6 +17,7 @@ auth:
     issuer: https://auth.example.com
     audience: agent-credential-gateway
     jwks_uri: https://auth.example.com/.well-known/jwks.json
+    principal_claim: sub
     required_scopes:
       - gateway.read
       - gateway.tokens
@@ -33,6 +34,8 @@ auth:
 ```
 
 Bearer mode is simpler and useful for local deployments, but OAuth is the production path.
+
+`auth.oauth.principal_claim` defaults to `sub`. The selected claim must be a non-empty string and becomes the subject used by service ACLs and opaque-token binding. Client-credentials issuers may select a stable claim such as `client_id`; tokens missing the configured claim are rejected and never share a fallback identity.
 
 Built-in OAuth mode for a private ChatGPT-hosted MCP:
 

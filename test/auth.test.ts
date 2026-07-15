@@ -704,6 +704,43 @@ describe("auth", () => {
     }
   });
 
+  it("uses the configured stable OAuth principal claim and rejects invalid identities", async () => {
+    const jwks = await startJwks();
+    try {
+      const config = oauthConfig(jwks.jwksUri, "client_id");
+      const firstToken = await jwks.sign(
+        { aud: "agent-credential-gateway", scope: "gateway.tokens" },
+        { subject: null, extraClaims: { client_id: "client-a" } },
+      );
+      const secondToken = await jwks.sign(
+        { aud: "agent-credential-gateway", scope: "gateway.request" },
+        { subject: null, extraClaims: { client_id: "client-b" } },
+      );
+      const first = await authenticateRequest(requestWithBearer(firstToken), config, ["gateway.tokens"]);
+      const second = await authenticateRequest(requestWithBearer(secondToken), config, ["gateway.request"]);
+      expect(first.subject).toBe("client-a");
+      expect(second.subject).toBe("client-b");
+
+      config.services["demo-service"]?.access.users.push("client-a", "client-b");
+      const broker = new TokenBroker(config);
+      const issued = broker.issueTokens(first, {
+        service: "demo-service", destination: "primary", credential_ids: ["api_key"], reason: "Principal isolation.",
+      });
+      expect(() => broker.validateTokenUse(second, { service: "demo-service", destination: "primary" }, issued.tokens[0]?.token ?? ""))
+        .toThrow("not bound to this subject");
+
+      for (const extraClaims of [{}, { client_id: "" }, { client_id: "   " }, { client_id: 42 }]) {
+        const invalid = await jwks.sign(
+          { aud: "agent-credential-gateway", scope: "gateway.read" },
+          { subject: null, extraClaims },
+        );
+        await expect(authenticateRequest(requestWithBearer(invalid), config)).rejects.toThrow("stable principal claim");
+      }
+    } finally {
+      await jwks.close();
+    }
+  });
+
   it("rejects invalid OAuth issuer, audience, expiry, nbf, and signature", async () => {
     const jwks = await startJwks();
     const otherJwks = await startJwks();
@@ -749,7 +786,7 @@ function bearerConfig(): GatewayConfig {
   });
 }
 
-function oauthConfig(jwksUri: string): GatewayConfig {
+function oauthConfig(jwksUri: string, principalClaim?: string): GatewayConfig {
   return validateConfig(baseRawConfig({
     mode: "oauth",
     oauth: {
@@ -757,6 +794,7 @@ function oauthConfig(jwksUri: string): GatewayConfig {
       audience: "agent-credential-gateway",
       jwks_uri: jwksUri,
       required_scopes: ["gateway.read", "gateway.tokens", "gateway.request"],
+      ...(principalClaim === undefined ? {} : { principal_claim: principalClaim }),
     },
   }), {
     DEMO_API_KEY: "secret",
@@ -989,16 +1027,19 @@ async function startJwks() {
     jwksUri,
     sign: async (
       claims: { aud: string; scope: string },
-      options: { issuer?: string; expiresIn?: number; notBefore?: number } = {},
+      options: {
+        issuer?: string; expiresIn?: number; notBefore?: number; subject?: string | null;
+        extraClaims?: Record<string, unknown>;
+      } = {},
     ) => {
       const now = Math.floor(Date.now() / 1000);
-      const jwt = new SignJWT({ scope: claims.scope })
+      const jwt = new SignJWT({ scope: claims.scope, ...options.extraClaims })
         .setProtectedHeader({ alg: "RS256", kid: "test-key" })
-        .setSubject("henric@example.com")
         .setIssuer(options.issuer ?? "https://auth.example.com")
         .setAudience(claims.aud)
         .setIssuedAt(now)
         .setExpirationTime(now + (options.expiresIn ?? 3600));
+      if (options.subject !== null) jwt.setSubject(options.subject ?? "henric@example.com");
       if (options.notBefore !== undefined) jwt.setNotBefore(now + options.notBefore);
       return jwt.sign(privateKey);
     },

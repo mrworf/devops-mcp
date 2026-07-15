@@ -53,6 +53,7 @@ const rawConfigSchema = z.object({
         resource: z.string().url().optional(),
         jwks_uri: z.string().url().optional(),
         required_scopes: z.array(z.string().min(1)).default([]),
+        principal_claim: z.string().trim().min(1).default("sub"),
       }).strict(),
     }).strict(),
     z.object({
@@ -251,6 +252,7 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
         ...(raw.oauth.resource === undefined ? {} : { resource: raw.oauth.resource }),
         ...(raw.oauth.jwks_uri === undefined ? {} : { jwksUri: raw.oauth.jwks_uri }),
         requiredScopes: raw.oauth.required_scopes,
+        principalClaim: raw.oauth.principal_claim,
       },
     };
   }
