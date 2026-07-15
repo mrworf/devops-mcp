@@ -147,7 +147,7 @@ export async function executeServiceRequest(
     },
   });
   const started = Date.now();
-  const response = await fetchWithTimeout(downstream, config.limits.timeoutMs);
+  const response = await fetchWithTimeout(downstream, config.limits.timeoutMs, config.limits.maxResponseBodyBytes);
   const cookieFiltered = stripCookieHeaders(Object.fromEntries(response.headers.entries()));
   if (cookieFiltered.removed.length > 0) {
     logger.warn("service_request.cookie_removed", {
@@ -155,7 +155,7 @@ export async function executeServiceRequest(
     });
   }
   const responseHeaders = cookieFiltered.headers;
-  const rawBody = await limitedResponseText(response, config.limits.maxResponseBodyBytes);
+  const rawBody = await limitedResponseText(response);
   const matchedPolicyRule = policy.matchedRule === undefined ? undefined : service.policy.rules.find((rule) => rule.id === policy.matchedRule);
   const disabledSecretlintRules = matchedPolicyRule?.secretlint === undefined
     ? new Set<string>()
@@ -317,12 +317,13 @@ function rejectCallerControlledHeaders(headers: Record<string, string>): void {
   }
 }
 
-async function fetchWithTimeout(downstream: DownstreamRequest, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(downstream: DownstreamRequest, timeoutMs: number, maxResponseBytes: number): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await sendDownstreamRequest(downstream, controller.signal);
+    return await sendDownstreamRequest(downstream, controller.signal, maxResponseBytes);
   } catch (error) {
+    if (error instanceof GatewayError) throw error;
     if (isAbortError(error)) {
       throw new GatewayError("downstream_timeout", "Downstream request timed out.");
     }
@@ -335,7 +336,7 @@ async function fetchWithTimeout(downstream: DownstreamRequest, timeoutMs: number
   }
 }
 
-async function sendDownstreamRequest(downstream: DownstreamRequest, signal: AbortSignal): Promise<Response> {
+async function sendDownstreamRequest(downstream: DownstreamRequest, signal: AbortSignal, maxResponseBytes: number): Promise<Response> {
   const url = new URL(downstream.url);
   const request = url.protocol === "https:" ? httpsRequest : httpRequest;
 
@@ -346,12 +347,36 @@ async function sendDownstreamRequest(downstream: DownstreamRequest, signal: Abor
       signal,
       ...(url.protocol === "https:" ? { rejectUnauthorized: downstream.tlsVerify } : {}),
     }, (res) => {
+      const declaredLength = res.headers["content-length"];
+      if (declaredLength !== undefined && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxResponseBytes) {
+        const error = new GatewayError("response_too_large", "Downstream response is too large.");
+        res.destroy(error);
+        reject(error);
+        return;
+      }
       const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      let settled = false;
       res.on("data", (chunk) => {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        if (settled) return;
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalBytes += bytes.byteLength;
+        if (totalBytes > maxResponseBytes) {
+          settled = true;
+          const error = new GatewayError("response_too_large", "Downstream response is too large.");
+          res.destroy(error);
+          req.destroy();
+          reject(error);
+          return;
+        }
+        chunks.push(bytes);
       });
-      res.on("error", reject);
+      res.on("error", (error) => {
+        if (!settled) reject(error);
+      });
       res.on("end", () => {
+        if (settled) return;
+        settled = true;
         resolve(new Response(Buffer.concat(chunks), {
           status: res.statusCode ?? 0,
           headers: responseHeaders(res.headers),
@@ -405,12 +430,10 @@ function readErrorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-async function limitedResponseText(response: Response, maxBytes: number): Promise<{ body: string; truncated: boolean }> {
+async function limitedResponseText(response: Response): Promise<{ body: string; truncated: false }> {
   const bytes = Buffer.from(await response.arrayBuffer());
-  const truncated = bytes.byteLength > maxBytes;
-  const selected = truncated ? bytes.subarray(0, maxBytes) : bytes;
   try {
-    return { body: decodeUtf8(selected), truncated };
+    return { body: decodeUtf8(bytes), truncated: false };
   } catch {
     throw new GatewayError("secret_scan_failed", "Downstream response is not valid UTF-8.");
   }

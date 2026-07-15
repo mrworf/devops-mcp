@@ -160,4 +160,5 @@ Scanner capacity defaults to `min(4, availableParallelism)` workers, a 32-job gl
 - `Cookie`, `Cookie2`, `Set-Cookie`, and `Set-Cookie2` are prohibited. Request occurrences are rejected; response occurrences are removed with sanitized warnings.
 - Caller-supplied `Content-Length` is discarded and recomputed after request substitution and response transformation.
 - `Content-Transfer-Encoding: base64` declares a whole Base64 response body. Other transfer encodings fail closed.
+- `limits.max_response_body` is enforced during the downstream network read. Declared or streamed oversize responses are aborted and return `response_too_large`; partial bodies are never scanned or returned.
 - Ordinary and decoded Base64 response bodies must be valid UTF-8.

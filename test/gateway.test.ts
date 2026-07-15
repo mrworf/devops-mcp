@@ -257,7 +257,7 @@ describe("HTTP gateway", () => {
     }
   });
 
-  it("rejects oversized requests and truncates oversized responses", async () => {
+  it("rejects oversized requests and fails closed on oversized responses", async () => {
     const downstream = await startDownstream();
     try {
       const smallRequestConfig = gatewayConfig(downstream.baseUrl, { maxRequestBody: "5b" });
@@ -273,17 +273,38 @@ describe("HTTP gateway", () => {
 
       const smallResponseConfig = gatewayConfig(downstream.baseUrl, { maxResponseBody: "10b" });
       installBroker(smallResponseConfig);
-      const response = await executeServiceRequest(smallResponseConfig, actor(), {
+      await expectGatewayError(() => executeServiceRequest(smallResponseConfig, actor(), {
         service: "demo-service",
         destination: "primary",
         method: "GET",
         path: "/api/large",
         reason: "Check response truncation.",
-      });
+      }), "response_too_large");
 
-      expect(response.truncated).toBe(true);
-      expect(response.body.length).toBeLessThanOrEqual(10);
-      expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(response.body)));
+      const exact = await executeServiceRequest(smallResponseConfig, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/exact",
+        reason: "Accept exact response limit.",
+      });
+      expect(exact.body).toBe("0123456789");
+      expect(exact.truncated).toBe(false);
+    } finally {
+      await downstream.close();
+    }
+  });
+
+  it("aborts chunked and declared oversized downstream responses", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl, { maxResponseBody: "10b" });
+      installBroker(config);
+      for (const path of ["/api/chunked-large", "/api/declared-large", "/api/slow-large"]) {
+        await expectGatewayError(() => executeServiceRequest(config, actor(), {
+          service: "demo-service", destination: "primary", method: "GET", path,
+          reason: "Reject streamed oversized response.",
+        }), "response_too_large");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(downstream.closedResponses).toBeGreaterThan(0);
     } finally {
       await downstream.close();
     }
@@ -409,6 +430,10 @@ function gatewayConfig(baseUrl: string, options: {
           rules: [
             { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET", "POST"], paths: ["/api/echo"] },
             { id: "allow-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/large"] },
+            { id: "allow-exact", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/exact"] },
+            { id: "allow-chunked-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/chunked-large"] },
+            { id: "allow-declared-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/declared-large"] },
+            { id: "allow-slow-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/slow-large"] },
             { id: "allow-redirect", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/redirect"] },
             { id: "allow-slow", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/slow"] },
             { id: "allow-cookies", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/cookies"] },
@@ -448,7 +473,11 @@ async function expectGatewayError(fn: () => Promise<unknown>, code: GatewayError
 
 async function startDownstream() {
   const requests: Array<{ path: string; url: string; headers: Record<string, string | string[] | undefined>; body: string }> = [];
+  let closedResponses = 0;
   const server = createServer(async (request, response) => {
+    response.on("close", () => {
+      if (!response.writableEnded) closedResponses += 1;
+    });
     const body = await readBody(request);
     requests.push({
       path: new URL(request.url ?? "/", "http://127.0.0.1").pathname,
@@ -461,13 +490,38 @@ async function startDownstream() {
       response.end();
       return;
     }
-    if (request.url?.startsWith("/api/slow")) {
+    if (request.url === "/api/slow") {
       await new Promise((resolve) => setTimeout(resolve, 100));
       response.end("slow");
       return;
     }
     if (request.url?.startsWith("/api/large")) {
       response.end("x".repeat(100));
+      return;
+    }
+    if (request.url?.startsWith("/api/exact")) {
+      response.end("0123456789");
+      return;
+    }
+    if (request.url?.startsWith("/api/chunked-large")) {
+      response.write("123456");
+      response.end("78901");
+      return;
+    }
+    if (request.url?.startsWith("/api/declared-large")) {
+      response.writeHead(200, { "content-length": "100" });
+      response.end("x");
+      return;
+    }
+    if (request.url?.startsWith("/api/slow-large")) {
+      response.write("123456");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      response.write("78901");
+      await Promise.race([
+        once(response, "close"),
+        new Promise((resolve) => setTimeout(resolve, 100)),
+      ]);
+      if (!response.destroyed) response.end();
       return;
     }
     if (request.url?.startsWith("/api/cookies")) {
@@ -502,6 +556,7 @@ async function startDownstream() {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
+    get closedResponses() { return closedResponses; },
     close: () => new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     }),
