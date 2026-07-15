@@ -182,6 +182,13 @@ describe("config validation", () => {
     expectConfigError(() => validateConfig(raw, validEnv), "must not exceed");
   });
 
+  it("defaults and validates authorization-code capacity", () => {
+    const raw = validRaw();
+    expect(validateConfig(raw, validEnv).limits.maxAuthorizationCodes).toBe(1000);
+    raw.limits.max_authorization_codes = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+  });
+
   it("accepts service API documentation URLs", () => {
     const raw = validRaw();
     raw.services["portainer-prod"].api_docs_url = "https://api.example.org/openapi.json";

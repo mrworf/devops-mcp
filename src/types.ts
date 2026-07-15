@@ -89,6 +89,7 @@ export interface LimitsConfig {
   stateSweepIntervalMs: number;
   maxTokenRecords: number;
   maxTokenRecordsPerSubject: number;
+  maxAuthorizationCodes: number;
   maxRequestBodyBytes: number;
   maxResponseBodyBytes: number;
   timeoutMs: number;

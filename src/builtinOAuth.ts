@@ -7,6 +7,7 @@ import type { BuiltinOAuthAuthConfig, GatewayConfig } from "./types.js";
 import { readBoundedBody, RequestBodyError } from "./httpBody.js";
 import { InflightLimiter } from "./inflightLimiter.js";
 import { LoginAttemptLimiter } from "./loginAttemptLimiter.js";
+import { registerMaintenanceTask } from "./maintenance.js";
 
 const AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 const OPENID_CONFIGURATION_PATH = "/.well-known/openid-configuration";
@@ -24,7 +25,8 @@ interface AuthorizationCode {
   expiresAt: number;
 }
 
-const authorizationCodes = new Map<string, AuthorizationCode>();
+interface BuiltinOAuthState { authorizationCodes: Map<string, AuthorizationCode> }
+const oauthStates = new WeakMap<GatewayConfig, BuiltinOAuthState>();
 const privateKeyCache = new Map<string, ReturnType<typeof importPKCS8>>();
 const publicKeyCache = new Map<string, ReturnType<typeof importSPKI>>();
 const bodyLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
@@ -210,8 +212,16 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
 
   attemptLimiter.recordSuccess(source, account);
 
+  const oauthState = getOAuthState(config);
+  sweepAuthorizationCodes(oauthState, Date.now());
+  if (oauthState.authorizationCodes.size >= config.limits.maxAuthorizationCodes) {
+    response.setHeader("retry-after", "1");
+    writeOAuthError(response, 429, "temporarily_unavailable");
+    return;
+  }
+
   const code = randomBytes(32).toString("base64url");
-  authorizationCodes.set(code, {
+  oauthState.authorizationCodes.set(code, {
     clientId: validation.clientId,
     redirectUri: validation.redirectUri,
     resource: validation.resource,
@@ -285,6 +295,7 @@ async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, 
     return;
   }
   const code = body.get("code") ?? "";
+  const authorizationCodes = getOAuthState(config).authorizationCodes;
   const record = authorizationCodes.get(code);
   if (record === undefined || record.expiresAt <= Date.now()) {
     authorizationCodes.delete(code);
@@ -329,6 +340,20 @@ async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, 
     expires_in: Math.floor(auth.accessTokenTtlMs / 1000),
     scope: record.scopes.join(" "),
   });
+}
+
+function getOAuthState(config: GatewayConfig): BuiltinOAuthState {
+  let state = oauthStates.get(config);
+  if (state === undefined) {
+    state = { authorizationCodes: new Map() };
+    oauthStates.set(config, state);
+    registerMaintenanceTask(config, (now) => sweepAuthorizationCodes(state!, now));
+  }
+  return state;
+}
+
+function sweepAuthorizationCodes(state: BuiltinOAuthState, now: number): void {
+  for (const [code, record] of state.authorizationCodes) if (record.expiresAt <= now) state.authorizationCodes.delete(code);
 }
 
 async function validateAuthorizationRequest(

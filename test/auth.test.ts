@@ -554,6 +554,53 @@ describe("auth", () => {
     }
   });
 
+  it("bounds authorization codes without disturbing live codes", async () => {
+    const config = await builtinOAuthConfig({ maxAuthorizationCodes: 1 });
+    const fixture = await startServer(config);
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    try {
+      const firstVerifier = "first-capacity-verifier";
+      const firstCode = await authorizeCode(fixture.baseUrl, redirectUri, firstVerifier);
+      const rejected = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST", body: authorizationBody({ redirect_uri: redirectUri, code_challenge: pkceChallenge("second-capacity-verifier") }),
+      });
+      expect(rejected.status).toBe(429);
+      expect(JSON.parse(rejected.body)).toEqual({ error: "temporarily_unavailable" });
+
+      const exchange = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST", body: tokenBody(firstCode, redirectUri, firstVerifier),
+      });
+      expect(exchange.status).toBe(200);
+      const replacement = await authorizeCode(fixture.baseUrl, redirectUri, "replacement-verifier");
+      expect(replacement).toBeTruthy();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("isolates authorization codes between gateway configurations", async () => {
+    const signingKeyPath = await createSigningKeyFile();
+    const firstConfig = await builtinOAuthConfig({ signingKeyPath });
+    const secondConfig = await builtinOAuthConfig({ signingKeyPath });
+    const first = await startServer(firstConfig);
+    const second = await startServer(secondConfig);
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    const verifier = "isolated-code-verifier";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    try {
+      const code = await authorizeCode(first.baseUrl, redirectUri, verifier);
+      const crossConfig = await localRequest(`${second.baseUrl}/oauth/token`, {
+        method: "POST", body: tokenBody(code, redirectUri, verifier),
+      });
+      expect(crossConfig.status).toBe(400);
+      expect(JSON.parse(crossConfig.body)).toEqual({ error: "invalid_grant" });
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
   it("rejects expired built-in OAuth authorization codes", async () => {
     const config = await builtinOAuthConfig({ authorizationCodeTtl: "1ms" });
     const fixture = await startServer(config);
@@ -732,6 +779,7 @@ async function builtinOAuthConfig(options: {
     window: string; per_source: number; per_account: number; global: number;
     initial_lockout: string; max_lockout: string; max_entries: number;
   };
+  maxAuthorizationCodes?: number;
 } = {}): Promise<GatewayConfig> {
   const keyPath = options.signingKeyPath ?? await createSigningKeyFile();
   return validateConfig({
@@ -761,6 +809,7 @@ async function builtinOAuthConfig(options: {
       max_unauthenticated_inflight_per_source: options.maxUnauthenticatedInflightPerSource ?? 4,
       max_password_verifications: options.maxPasswordVerifications ?? 2,
       max_password_verifications_per_source: options.maxPasswordVerificationsPerSource ?? 1,
+      max_authorization_codes: options.maxAuthorizationCodes ?? 1000,
     },
   }, {
     ADMIN_USERNAME: "admin@example.com",
