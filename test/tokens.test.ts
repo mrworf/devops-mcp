@@ -183,6 +183,19 @@ describe("token broker", () => {
     now += 101;
     expect(broker.findConfiguredTokenForSecret(auth("henric@example.com"), "portainer-prod", "portainer-secret")).toBeUndefined();
   });
+
+  it("sweeps expired configured and response-secret records from every index", () => {
+    let now = 1_000;
+    const broker = new TokenBroker(tokenConfig(), () => now);
+    broker.issueTokens(auth("henric@example.com"), {
+      service: "portainer-prod", destination: "primary", credential_ids: ["api_key"], reason: "Token.",
+    });
+    broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
+    expect(broker.stats()).toEqual({ configured: 1, responseSecrets: 1, tokenValues: 2 });
+    now += 101;
+    broker.sweepExpired(now);
+    expect(broker.stats()).toEqual({ configured: 0, responseSecrets: 0, tokenValues: 0 });
+  });
 });
 
 function tokenConfig(): GatewayConfig {

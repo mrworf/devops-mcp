@@ -4,6 +4,7 @@ import { getCredential, getService } from "./registry.js";
 import type { TokenIssuedAuditEvent } from "./audit.js";
 import { tokenIssuedAuditEvent } from "./audit.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
+import { registerMaintenanceTask } from "./maintenance.js";
 
 export interface TokenRequestInput {
   service: string;
@@ -81,6 +82,7 @@ export class TokenBroker {
   ) {}
 
   issueTokens(auth: AuthContext, input: TokenRequestInput): TokenIssueResult {
+    this.sweepExpired();
     if (!input.reason.trim()) {
       throw new GatewayError("token_invalid", "Token request reason is required.");
     }
@@ -158,6 +160,7 @@ export class TokenBroker {
   }
 
   issueOrReuseResponseSecret(auth: AuthContext, service: string, secret: string): ResponseSecretIssueResult {
+    this.sweepExpired();
     if (!secret) throw new GatewayError("token_invalid", "Response secret must not be empty.");
     const index = this.responseSecretIndex(auth.subject, service, secret);
     const existingId = this.responseSecretIdsByIndex.get(index);
@@ -255,6 +258,25 @@ export class TokenBroker {
     return { valid: false, reason: "unknown" };
   }
 
+  sweepExpired(now = this.now()): void {
+    for (const [hash, record] of this.recordsByHash) {
+      if (record.idleExpiresAt <= now || record.maxExpiresAt <= now) this.deleteConfiguredToken(hash, record.id);
+    }
+    for (const record of [...this.responseSecretsById.values()]) {
+      if (record.idleExpiresAt <= now || record.maxExpiresAt <= now) {
+        this.deleteResponseSecret(record.id, this.responseSecretIndex(record.subject, record.service, record.secret));
+      }
+    }
+  }
+
+  stats(): { configured: number; responseSecrets: number; tokenValues: number } {
+    return {
+      configured: this.recordsByHash.size,
+      responseSecrets: this.responseSecretsById.size,
+      tokenValues: this.tokenValuesById.size,
+    };
+  }
+
   private responseSecretIndex(subject: string, service: string, secret: string): string {
     return createHmac("sha256", this.secretIndexKey).update(subject).update("\0").update(service).update("\0").update(secret).digest("base64url");
   }
@@ -277,6 +299,11 @@ export class TokenBroker {
     this.responseSecretIdsByIndex.delete(index);
     this.tokenValuesById.delete(id);
   }
+
+  private deleteConfiguredToken(hash: string, id: string): void {
+    this.recordsByHash.delete(hash);
+    this.tokenValuesById.delete(id);
+  }
 }
 
 export const defaultTokenBrokers = new WeakMap<GatewayConfig, TokenBroker>();
@@ -286,6 +313,7 @@ export function getTokenBroker(config: GatewayConfig): TokenBroker {
   if (existing !== undefined) return existing;
   const broker = new TokenBroker(config);
   defaultTokenBrokers.set(config, broker);
+  registerMaintenanceTask(config, (now) => broker.sweepExpired(now));
   return broker;
 }
 

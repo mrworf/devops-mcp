@@ -84,6 +84,8 @@ audit:
 
 `audit.memory_events` defaults to 1000 and bounds only the in-memory view; file-backed JSONL retains every successfully written event. Mount the audit directory on persistent writable storage in Docker. Audit events are sanitized and do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or downstream response bodies. Opaque downstream credential tokens are still in-memory only and expire on restart.
 
+Expired configured-credential and response-secret token records are removed before issuance and by the periodic state maintenance loop; all token hashes, indexes, and in-memory values are removed together.
+
 ## Services
 Each service defines LLM-facing metadata, destinations, credentials, access users, TLS behavior, and policy. `description` should briefly explain what the service is for. `api_docs_url` may point to human or machine-readable API documentation, such as an OpenAPI JSON file; the gateway exposes the URL but does not fetch or proxy it.
 
