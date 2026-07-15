@@ -12,6 +12,7 @@ interface Range {
   start: number;
   end: number;
   ruleIds: Set<string>;
+  configuredSecret?: string;
 }
 
 interface CollectedText {
@@ -63,7 +64,7 @@ export class ResponseTokenizer {
       let value = collected.original;
       for (const range of [...collected.ranges].sort((left, right) => right.start - left.start)) {
         const raw = collected.original.slice(range.start, range.end);
-        const configured = this.broker.findConfiguredTokenForSecret(auth, service.id, raw);
+        const configured = this.broker.findConfiguredTokenForSecret(auth, service.id, range.configuredSecret ?? raw);
         const issued = configured ?? this.broker.issueOrReuseResponseSecret(auth, service.id, raw);
         internalRecordIds.add(issued.record.id);
         for (const ruleId of range.ruleIds) ruleIds.add(ruleId);
@@ -121,7 +122,11 @@ export class ResponseTokenizer {
       throw new GatewayError("secret_scan_failed", "Response secret scanning failed.");
     }
     const ranges: Range[] = findings.map((finding) => ({ start: finding.start, end: finding.end, ruleIds: new Set([finding.ruleId]) }));
-    for (const credential of service.credentials) addExactRanges(ranges, text, credential.secret, "gateway:configured-credential");
+    for (const credential of service.credentials) {
+      addExactRanges(ranges, text, credential.secret, "gateway:configured-credential", credential.secret);
+      const escaped = JSON.stringify(credential.secret).slice(1, -1);
+      if (escaped !== credential.secret) addExactRanges(ranges, text, escaped, "gateway:configured-credential", credential.secret);
+    }
 
     const validCandidates: Array<{ start: number; end: number }> = [];
     const warnings = new Map<string, { prefix: "tok" | "sec"; reason: TokenInspectionReason; count: number }>();
@@ -151,13 +156,13 @@ function isCanonicalBase64Shape(value: string): boolean {
   return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
 }
 
-function addExactRanges(ranges: Range[], text: string, secret: string, ruleId: string): void {
+function addExactRanges(ranges: Range[], text: string, secret: string, ruleId: string, configuredSecret?: string): void {
   if (!secret) return;
   let from = 0;
   while (from <= text.length - secret.length) {
     const start = text.indexOf(secret, from);
     if (start < 0) break;
-    ranges.push({ start, end: start + secret.length, ruleIds: new Set([ruleId]) });
+    ranges.push({ start, end: start + secret.length, ruleIds: new Set([ruleId]), ...(configuredSecret === undefined ? {} : { configuredSecret }) });
     from = start + Math.max(1, secret.length);
   }
 }
@@ -172,10 +177,13 @@ function mergeRanges(ranges: Range[]): Range[] {
   for (const range of sorted) {
     const previous = merged.at(-1);
     if (!previous || range.start >= previous.end) {
-      merged.push({ start: range.start, end: range.end, ruleIds: new Set(range.ruleIds) });
+      merged.push({ start: range.start, end: range.end, ruleIds: new Set(range.ruleIds), ...(range.configuredSecret === undefined ? {} : { configuredSecret: range.configuredSecret }) });
       continue;
     }
+    const sameBounds = previous.start === range.start && previous.end === range.end;
     previous.end = Math.max(previous.end, range.end);
+    if (!sameBounds) delete previous.configuredSecret;
+    else if (previous.configuredSecret === undefined && range.configuredSecret !== undefined) previous.configuredSecret = range.configuredSecret;
     for (const id of range.ruleIds) previous.ruleIds.add(id);
   }
   return merged;

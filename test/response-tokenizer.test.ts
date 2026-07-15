@@ -38,6 +38,21 @@ describe("plain-text response tokenizer", () => {
     } finally { await fixture.pool.close(); }
   });
 
+  it("matches JSON-escaped configured credentials without parsing or reserializing JSON", async () => {
+    const fixture = setup();
+    try {
+      const configured = "line\n\"quoted\"";
+      const tok = fixture.broker.issueTokens(fixture.auth, {
+        service: "service-a", destination: "primary", credential_ids: ["escaped"], reason: "Test escaped credential.",
+      }).tokens[0]?.token ?? "";
+      const escaped = JSON.stringify(configured).slice(1, -1);
+      const body = `{ "value" : "${escaped}", "number": 1.00 }`;
+      const result = await fixture.tokenizer.tokenize({ headers: {}, body }, fixture.auth, fixture.service);
+      expect(result.body).toBe(`{ "value" : "${tok}", "number": 1.00 }`);
+      expect(result.body).not.toContain(escaped);
+    } finally { await fixture.pool.close(); }
+  });
+
   it("leaves valid same-scope opaque tokens unchanged", async () => {
     const fixture = setup();
     try {
@@ -93,8 +108,11 @@ describe("plain-text response tokenizer", () => {
 function setup(max = 100) {
   const config = validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" }, auth: { mode: "bearer", bearer: { token_env: "AUTH" } },
-    services: { "service-a": { name: "A", destinations: [{ name: "primary", base_url: "https://a.example.org" }], credentials: [{ id: "key", usage: { kind: "header" }, source: { kind: "env", name: "KEY" } }], access: { users: ["alice"] } } },
-  }, { AUTH: "auth", KEY: "configured-secret" });
+    services: { "service-a": { name: "A", destinations: [{ name: "primary", base_url: "https://a.example.org" }], credentials: [
+      { id: "key", usage: { kind: "header" }, source: { kind: "env", name: "KEY" } },
+      { id: "escaped", usage: { kind: "body" }, source: { kind: "env", name: "ESCAPED" } },
+    ], access: { users: ["alice"] } } },
+  }, { AUTH: "auth", KEY: "configured-secret", ESCAPED: "line\n\"quoted\"" });
   const broker = new TokenBroker(config);
   const pool = new SecretScannerPool({ workers: 1, queueMax: 4, subjectActiveMax: 1, subjectQueueMax: 4, queueTimeoutMs: 1_000 });
   const auth: AuthContext = { subject: "alice", scopes: [], mode: "bearer" };
