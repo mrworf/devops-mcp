@@ -5,7 +5,7 @@ import type { SecretFinding } from "./secretScanner.js";
 import { SecretScanBusyError, type SecretScannerPool } from "./secretScannerPool.js";
 import type { AuthContext, ServiceConfig } from "./types.js";
 import type { TokenBroker, TokenInspectionReason } from "./tokens.js";
-import { findSensitiveJsonProperties } from "./sensitiveJson.js";
+import { findSensitiveJsonValues, isJsonLikeText } from "./sensitiveJson.js";
 import type { SensitiveNameMatcher } from "./sensitiveNames.js";
 
 const tokenCandidatePattern = /\b(?:tok|sec)_[^\s"'<>()[\]{},;]+/g;
@@ -58,8 +58,8 @@ export class ResponseTokenizer {
         : [];
       headerEntries.push([name, await this.collect(value, auth, service, disabledRuleIds, sensitive)] as const);
     }
-    const bodyRanges = isJsonResponse(response.headers, response.body)
-      ? findSensitiveJsonProperties(response.body, this.sensitiveNames).map((finding) => ({
+    const bodyRanges = isJsonLikeText(response.headers, response.body)
+      ? findSensitiveJsonValues(response.body, this.sensitiveNames).map((finding) => ({
         start: finding.start, end: finding.end, secretValue: finding.secretValue, ruleIds: new Set(finding.ruleIds),
       }))
       : [];
@@ -178,15 +178,6 @@ function addExactRanges(ranges: Range[], text: string, secret: string, ruleId: s
   }
 }
 
-function isJsonResponse(headers: Record<string, string>, body: string): boolean {
-  const contentTypes = Object.entries(headers)
-    .filter(([name]) => name.toLowerCase() === "content-type")
-    .map(([, value]) => value.split(";", 1)[0]?.trim().toLowerCase() ?? "");
-  if (contentTypes.some((value) => value === "application/json" || value.endsWith("+json"))) return true;
-  const first = body.trimStart()[0];
-  return first === "{" || first === "[";
-}
-
 function overlaps(left: { start: number; end: number }, right: { start: number; end: number }): boolean {
   return left.start < right.end && right.start < left.end;
 }
@@ -204,12 +195,13 @@ function mergeRanges(ranges: Range[]): Range[] {
       });
       continue;
     }
+    const previousEnd = previous.end;
     const sameBounds = previous.start === range.start && previous.end === range.end;
     previous.end = Math.max(previous.end, range.end);
-    if (!sameBounds) {
+    if (range.end > previousEnd) {
       delete previous.configuredSecret;
       delete previous.secretValue;
-    } else {
+    } else if (sameBounds) {
       if (previous.configuredSecret === undefined && range.configuredSecret !== undefined) previous.configuredSecret = range.configuredSecret;
       if (previous.secretValue === undefined && range.secretValue !== undefined) previous.secretValue = range.secretValue;
     }

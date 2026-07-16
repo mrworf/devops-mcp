@@ -8,6 +8,7 @@ services:
       - ./examples/config.yaml:/config/config.yaml:ro
       # Replace this mount source with a custom extend/replace rules file as needed.
       - ./config/secretlint.yaml:/config/secretlint.yaml:ro
+      # Sensitive-name rules use the same immutable-default/custom-read-only pattern.
       - ./config/sensitive-names.yaml:/config/sensitive-names.yaml:ro
       - ./secrets:/run/secrets:ro
       - ./oauth:/run/oauth:ro

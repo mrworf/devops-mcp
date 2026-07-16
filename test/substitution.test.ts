@@ -71,9 +71,34 @@ describe("response secret substitution", () => {
       }
     }
   });
+
+  it("redeems raw JSON tokens with JSON escaping while preserving every other source byte", () => {
+    const config = makeConfig();
+    const broker = new TokenBroker(config);
+    const secret = "quote=\" slash=\\ newline=\n snow=雪";
+    const token = broker.issueOrReuseResponseSecret(auth("alice"), "service-a", secret).token;
+    const body = `{ /* odd */ "password" : "prefix ${token} suffix" "duplicate":1, "duplicate":2 }`;
+    const escaped = JSON.stringify(secret).slice(1, -1);
+    const result = substituteRequestBodyTokens(body, { "Content-Type": "application/json" }, broker, auth("alice"), target, config.services["service-a"]!);
+
+    expect(result.value).toBe(body.replace(token, escaped));
+    expect(result.responseSecretRecords).toHaveLength(1);
+  });
+
+  it("rejects opaque tokens outside complete JSON value strings", () => {
+    const config = makeConfig();
+    const broker = new TokenBroker(config);
+    const token = broker.issueOrReuseResponseSecret(auth("alice"), "service-a", "returned-secret").token;
+    for (const body of [`{"${token}":"value"}`, `{"value":${token}}`, `{"value":"${token}`]) {
+      expect(() => substituteRequestBodyTokens(body, { "Content-Type": "application/json" }, broker, auth("alice"), target, config.services["service-a"]!))
+        .toThrowError(expect.objectContaining({ code: "token_invalid" }));
+    }
+  });
 });
 
 function auth(subject: string): AuthContext { return { subject, scopes: [], mode: "bearer" }; }
+
+const target = { service: "service-a", destination: "primary" };
 
 function makeConfig() {
   return validateConfig({

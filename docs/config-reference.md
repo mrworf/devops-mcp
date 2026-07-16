@@ -134,7 +134,7 @@ policy:
           - "@secretlint/secretlint-rule-github"
 ```
 
-Use `secretlint: { enabled: false }` to disable all Secretlint rules for a matched endpoint. These settings never disable exact configured-credential protection, forged opaque-prefix protection, cookie handling, Base64 validation, or framing normalization.
+Use `secretlint: { enabled: false }` to disable all Secretlint rules for a matched endpoint. These settings never disable sensitive-name protection, exact configured-credential protection, forged opaque-prefix protection, cookie handling, Base64 validation, or framing normalization.
 
 ## Secretlint Rules
 
@@ -159,6 +159,25 @@ rules:
 
 Scanner capacity defaults to `min(4, availableParallelism)` workers, a 32-job global queue, and one active plus four queued scans per subject. Override these with `SECRETLINT_WORKERS`, `SECRETLINT_QUEUE_MAX`, `SECRETLINT_SUBJECT_ACTIVE_MAX`, `SECRETLINT_SUBJECT_QUEUE_MAX`, and `SECRETLINT_QUEUE_TIMEOUT_MS`.
 
+## Sensitive Name Rules
+
+`SENSITIVE_NAMES_CONFIG_PATH` defaults to `/config/sensitive-names.yaml`. Name detection is separate from Secretlint and uses this strict schema:
+
+```yaml
+version: 1
+mode: extend
+allow_patterns: []
+patterns:
+  - id: passwords
+    regex: "(?:^|_)(?:password|passwd|passphrase)(?:_|$)"
+```
+
+All patterns are compiled case-insensitively. Candidate names first gain camel-case boundaries and have non-alphanumeric separators converted to `_`. `extend` starts with the bundled catalog, replaces a bundled pattern with the same ID, and appends new IDs and allow patterns. `replace` uses only the supplied patterns and allows, including an empty catalog. If any allow pattern matches a name, it suppresses all sensitive-name findings for that name. Duplicate IDs, unknown fields, invalid or empty regexes, and values outside the catalog bounds stop startup.
+
+The bundled catalog conservatively covers passwords, secrets, credentials, authorization, qualified private/signing/API/access keys, qualified access/refresh/session/ID tokens, connection strings, database URLs, and DSNs. Bare `key`, `token`, `signing`, `hash`, `_B64`, `_BASE64`, and `_PEM` are not sensitive on their own. For example, `public_key`, `key_id`, `signing_algorithm`, and `token_type` remain visible unless an operator adds a pattern.
+
+For JSON and JSON-like response source text, matching applies to complete, non-empty double-quoted values in direct properties, objects with one string `name` or `key` property and one string `value` property, and complete `NAME=value` JSON strings. The scanner tolerates comments, duplicate keys, trailing or missing commas, and truncated outer containers. It replaces only the original value-content ranges; order, whitespace, duplicate keys, comments, and all bytes outside those ranges are retained. Numbers, booleans, objects, empty strings, single-quoted strings, and unquoted keys are not selected by sensitive names. A recognized sensitive string without a safe closing range fails closed with `secret_scan_failed`.
+
 ## Proxied HTTP Constraints
 
 - `limits.max_inbound_body` defaults to `1mb` and is enforced while reading authenticated MCP POST bodies and both built-in OAuth form endpoints, including chunked requests and inaccurate `Content-Length` values. Oversize requests receive `413` before JSON or form parsing and cannot consume an authorization code.
@@ -169,6 +188,6 @@ Scanner capacity defaults to `min(4, availableParallelism)` workers, a 32-job gl
 - Caller-supplied HTTP authority, forwarding, and hop-by-hop headers are rejected before credential substitution. This includes `Host`, `:authority`, `Forwarded`, every `X-Forwarded-*` header, `Connection`, `Keep-Alive`, proxy authorization headers, `TE`, `Trailer`, `Transfer-Encoding`, and `Upgrade`. The outbound `Host` header is derived from the validated destination URL.
 - `Cookie`, `Cookie2`, `Set-Cookie`, and `Set-Cookie2` are prohibited. Request occurrences are rejected; response occurrences are removed with sanitized warnings.
 - Caller-supplied `Content-Length` is discarded and recomputed after request substitution and response transformation.
-- `Content-Transfer-Encoding: base64` declares a whole Base64 response or string request body. Declared request bodies are decoded for opaque-token substitution and canonically re-encoded before delivery; undeclared Base64-looking content remains opaque. Other or conflicting transfer encodings fail closed.
+- `Content-Transfer-Encoding: base64` declares a whole Base64 response or string request body. Declared bodies are decoded before sensitive-name scanning or opaque-token substitution and canonically re-encoded afterward; field-level Base64/PEM values are not decoded. Undeclared Base64-looking content remains opaque. Other or conflicting transfer encodings fail closed.
 - `limits.max_response_body` is enforced during the downstream network read. Declared or streamed oversize responses are aborted and return `response_too_large`; partial bodies are never scanned or returned.
 - Ordinary and decoded Base64 response bodies, and decoded Base64 request bodies, must be valid UTF-8.

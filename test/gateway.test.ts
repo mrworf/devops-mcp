@@ -107,6 +107,86 @@ describe("HTTP gateway", () => {
     } finally { await downstream.close(); }
   });
 
+  it("round trips tolerant sensitive-name environment shapes without changing surrounding JSON source", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const auth = actor();
+      const first = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/sensitive-json",
+        reason: "Obtain tolerant sensitive-name JSON.",
+      });
+      const tokens = first.body.match(/sec_[A-Za-z0-9_-]+/g) ?? [];
+      expect(tokens).toHaveLength(6);
+      expect(first.body).toContain('"public_key":"visible"');
+      expect(first.body).toContain('"token_type":"Bearer"');
+      expect(first.body).not.toContain("pem-value-雪");
+      expect(first.headers["content-length"]).toBe(String(Buffer.byteLength(first.body)));
+
+      await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: { "Content-Type": "application/json", "Content-Length": "1" }, body: first.body,
+        reason: "Restore tolerant sensitive-name JSON.",
+      });
+      expect(downstream.requests[1]?.body).toBe(SENSITIVE_JSON_RESPONSE_BODY);
+      expect(downstream.requests[1]?.headers["content-length"]).toBe(String(Buffer.byteLength(SENSITIVE_JSON_RESPONSE_BODY)));
+
+      const token = tokens[0]!;
+      const altered = `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`;
+      await expectGatewayError(() => executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: { "Content-Type": "application/json" }, body: first.body.replace(token, altered),
+        reason: "Reject altered sensitive-name JSON token.",
+      }), "token_invalid");
+      expect(downstream.requests).toHaveLength(2);
+    } finally { await downstream.close(); }
+  });
+
+  it("round trips tolerant sensitive-name JSON through declared Base64", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const auth = actor();
+      const first = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/sensitive-base64",
+        reason: "Obtain encoded sensitive-name JSON.",
+      });
+      const decoded = Buffer.from(first.body, "base64").toString("utf8");
+      expect(decoded.match(/sec_[A-Za-z0-9_-]+/g)).toHaveLength(6);
+      expect(decoded).toContain('"public_key":"visible"');
+      expect(first.headers["content-transfer-encoding"]).toBe("base64");
+      expect(first.headers["content-length"]).toBe(String(Buffer.byteLength(first.body)));
+
+      await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: {
+          "Content-Type": "application/json", "Content-Transfer-Encoding": "base64", "Content-Length": "1",
+        },
+        body: first.body,
+        reason: "Restore encoded sensitive-name JSON.",
+      });
+      const delivered = downstream.requests[1]!;
+      expect(Buffer.from(delivered.body, "base64").toString("utf8")).toBe(SENSITIVE_JSON_RESPONSE_BODY);
+      expect(delivered.headers["content-transfer-encoding"]).toBe("base64");
+      expect(delivered.headers["content-length"]).toBe(String(Buffer.byteLength(delivered.body)));
+    } finally { await downstream.close(); }
+  });
+
+  it("fails closed on an incomplete sensitive JSON value", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/sensitive-incomplete",
+        reason: "Reject an unsafe sensitive value range.",
+      }), "secret_scan_failed");
+      expect(downstream.requests).toHaveLength(1);
+    } finally { await downstream.close(); }
+  });
+
   it("rejects an altered response-generated sec token before downstream I/O", async () => {
     const downstream = await startDownstream();
     try {
@@ -574,6 +654,9 @@ function gatewayConfig(baseUrl: string, options: {
           rules: [
             { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET", "POST"], paths: ["/api/echo"] },
             { id: "allow-json", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/json"] },
+            { id: "allow-sensitive-json", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/sensitive-json"], secretlint: { enabled: false } },
+            { id: "allow-sensitive-base64", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/sensitive-base64"], secretlint: { enabled: false } },
+            { id: "allow-sensitive-incomplete", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/sensitive-incomplete"], secretlint: { enabled: false } },
             { id: "allow-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/large"] },
             { id: "allow-exact", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/exact"] },
             { id: "allow-chunked-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/chunked-large"] },
@@ -679,6 +762,24 @@ async function startDownstream() {
       response.end(JSON_RESPONSE_BODY);
       return;
     }
+    if (request.url?.startsWith("/api/sensitive-json")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(SENSITIVE_JSON_RESPONSE_BODY);
+      return;
+    }
+    if (request.url?.startsWith("/api/sensitive-base64")) {
+      const encoded = Buffer.from(SENSITIVE_JSON_RESPONSE_BODY, "utf8").toString("base64");
+      response.writeHead(200, {
+        "content-type": "application/json", "content-transfer-encoding": "base64", "content-length": String(Buffer.byteLength(encoded)),
+      });
+      response.end(encoded);
+      return;
+    }
+    if (request.url?.startsWith("/api/sensitive-incomplete")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"AGENT_GATEWAY_ADMIN_PASSWORD_HASH_B64":"unterminated');
+      return;
+    }
     if (request.url?.startsWith("/api/forged")) {
       response.end(`tok_ghp_${"z".repeat(36)}`);
       return;
@@ -715,6 +816,14 @@ async function startDownstream() {
 
 const JSON_RESPONSE_BODY = '{  "duplicate":1, "duplicate" : 2, "number":1.00, "unicode":"雪", "secret" : "demo-secret" }\n';
 const BASE64_RESPONSE_BODY = 'prefix\n{ "unicode": "雪", "punctuation": "!@#$%^&*()", "secret": "demo-secret" }\nsuffix';
+const SENSITIVE_JSON_RESPONSE_BODY = `{ /* preserve */
+ "AGENT_GATEWAY_OAUTH_SIGNING_KEY_PEM_B64" : "pem-value-雪"
+ "adminPasswordHashB64":"hash-value", "duplicate_password":"first", "duplicate_password" : "second",
+ "public_key":"visible", "token_type":"Bearer", "PAYLOAD_B64":"visible",
+ "environment":[
+   {"value":"signing-value", "name":"AGENT_GATEWAY_OAUTH_SIGNING_KEY_PEM_B64"},
+   "AGENT_GATEWAY_ADMIN_PASSWORD_HASH_B64=array-hash"
+ ]`;
 
 async function startHttpsDownstream() {
   const requests: Array<{ path: string; url: string; headers: Record<string, string | string[] | undefined>; body: string }> = [];
