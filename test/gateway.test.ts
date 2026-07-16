@@ -53,6 +53,82 @@ describe("HTTP gateway", () => {
     }
   });
 
+  it("round trips response-generated sec tokens through headers, query, and nested bodies", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const auth = actor();
+      const first = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        reason: "Obtain a response secret token.",
+      });
+      const token = first.headers["x-leaked-secret"] ?? "";
+      expect(token).toMatch(/^sec_[A-Za-z0-9_-]+$/);
+      expect(first.body).toBe(`ok ${token} `);
+      expect(first.body).not.toContain("demo-secret");
+
+      await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: { "X-Returned-Secret": token }, query: { returned_secret: token },
+        body: { returned_secret: token, nested: [`prefix ${token} suffix`] },
+        reason: "Reuse the response secret token.",
+      });
+
+      expect(downstream.requests).toHaveLength(2);
+      expect(downstream.requests[1]?.headers["x-returned-secret"]).toBe("demo-secret");
+      expect(downstream.requests[1]?.url).toContain("returned_secret=demo-secret");
+      expect(downstream.requests[1]?.body).toBe('{"returned_secret":"demo-secret","nested":["prefix demo-secret suffix"]}');
+    } finally { await downstream.close(); }
+  });
+
+  it("round trips response-generated sec tokens through JSON without changing source text", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const auth = actor();
+      const first = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/json",
+        reason: "Obtain tokenized JSON.",
+      });
+      const token = first.body.match(/sec_[A-Za-z0-9_-]+/)?.[0] ?? "";
+      expect(token).toMatch(/^sec_[A-Za-z0-9_-]+$/);
+      expect(first.body.split(token).join("demo-secret")).toBe(JSON_RESPONSE_BODY);
+
+      await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: { "Content-Type": "application/json" }, body: first.body,
+        reason: "Round trip tokenized JSON.",
+      });
+
+      expect(downstream.requests).toHaveLength(2);
+      expect(downstream.requests[1]?.body).toBe(JSON_RESPONSE_BODY);
+    } finally { await downstream.close(); }
+  });
+
+  it("rejects an altered response-generated sec token before downstream I/O", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const auth = actor();
+      const first = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        reason: "Obtain a response secret token.",
+      });
+      const token = first.headers["x-leaked-secret"] ?? "";
+      const replacement = token.endsWith("A") ? "B" : "A";
+      const altered = `${token.slice(0, -1)}${replacement}`;
+
+      await expectGatewayError(() => executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        body: altered, reason: "Reject an altered response token.",
+      }), "token_invalid");
+      expect(downstream.requests).toHaveLength(1);
+    } finally { await downstream.close(); }
+  });
+
   it("rejects caller-controlled authority headers before substitution or HTTP I/O", async () => {
     const downstream = await startDownstream();
     try {
@@ -429,6 +505,7 @@ function gatewayConfig(baseUrl: string, options: {
           mode: "deny",
           rules: [
             { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET", "POST"], paths: ["/api/echo"] },
+            { id: "allow-json", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/json"] },
             { id: "allow-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/large"] },
             { id: "allow-exact", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/exact"] },
             { id: "allow-chunked-large", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/chunked-large"] },
@@ -529,6 +606,11 @@ async function startDownstream() {
       response.end("cookie response");
       return;
     }
+    if (request.url?.startsWith("/api/json")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON_RESPONSE_BODY);
+      return;
+    }
     if (request.url?.startsWith("/api/forged")) {
       response.end(`tok_ghp_${"z".repeat(36)}`);
       return;
@@ -562,6 +644,8 @@ async function startDownstream() {
     }),
   };
 }
+
+const JSON_RESPONSE_BODY = '{  "duplicate":1, "duplicate" : 2, "number":1.00, "unicode":"雪", "secret" : "demo-secret" }\n';
 
 async function startHttpsDownstream() {
   const requests: Array<{ path: string; url: string; headers: Record<string, string | string[] | undefined>; body: string }> = [];
