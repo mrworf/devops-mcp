@@ -28,7 +28,7 @@ The gateway uses two kinds of opaque placeholders:
 
 Both token types work only when submitted back through this gateway and expire under configured idle and maximum TTLs. Authenticated-subject binding remains in force across supported MCP transport reinitialization; `mcp-session-id` is transport state, not an authorization boundary.
 
-The proxied HTTP surface is deliberately cookie-free: caller-supplied cookie headers are rejected and downstream cookie headers are discarded. APIs that require browser-style cookie sessions are not supported. Response JSON is scanned as source text without parsing or reserialization. A whole response body is decoded and scanned as Base64 only when it declares `Content-Transfer-Encoding: base64`.
+The proxied HTTP surface is deliberately cookie-free: caller-supplied cookie headers are rejected and downstream cookie headers are discarded. APIs that require browser-style cookie sessions are not supported. Response JSON is scanned as source text without parsing or reserialization. A whole response body is decoded and scanned as Base64 only when it declares `Content-Transfer-Encoding: base64`. A string request body with the same declaration is decoded, has opaque tokens substituted, and is canonically re-encoded before delivery; undeclared Base64-looking content remains opaque.
 
 For every downstream request, the gateway validates the authenticated client, requested service, destination, URL, method, token binding, and configured policy before replacing opaque tokens with real credentials. If a request is denied, the client can ask for an explanation instead of guessing around policy boundaries.
 

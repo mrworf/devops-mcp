@@ -9,7 +9,7 @@ import { bodySummary, createLogger, headerNames } from "./logger.js";
 import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
 import { getResponseTokenizer, getResponseTokenizerRuleIds, getSecretScannerPoolStats } from "./secretRuntime.js";
 import { decodeUtf8 } from "./secretScanner.js";
-import { substituteTokens } from "./substitution.js";
+import { substituteRequestBodyTokens, substituteTokens } from "./substitution.js";
 import { getTokenBroker } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
 
@@ -119,7 +119,7 @@ export async function executeServiceRequest(
   }
   const headerSubstitution = substituteTokens(headers, broker, auth, tokenTarget, service);
   const querySubstitution = substituteTokens(input.query ?? {}, broker, auth, tokenTarget, service);
-  const bodySubstitution = substituteTokens(input.body, broker, auth, tokenTarget, service);
+  const bodySubstitution = substituteRequestBodyTokens(input.body, headerSubstitution.value, broker, auth, tokenTarget, service);
   const substitutedHeaders = headerSubstitution.value;
   const substitutedQuery = querySubstitution.value;
   const substitutedBody = bodySubstitution.value;

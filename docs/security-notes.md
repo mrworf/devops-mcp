@@ -10,7 +10,7 @@
 - Secretlint scans response header values and UTF-8 body source text. JSON is never parsed or reserialized, so all bytes outside replacement ranges remain unchanged.
 - Exact configured credentials are always tokenized, even when endpoint Secretlint rules are disabled.
 - `tok_` and `sec_` are reserved prefixes. A candidate is exempted only when it is live and belongs to the current subject/service; forged, expired, or wrong-scope candidates are wrapped in a new `sec_…` and audited without their values.
-- A whole response body is Base64-decoded only when declared by `Content-Transfer-Encoding: base64`; decoded data must be UTF-8 and is re-encoded canonically after scanning.
+- A whole response body is Base64-decoded only when declared by `Content-Transfer-Encoding: base64`; decoded data must be UTF-8 and is re-encoded canonically after scanning. A string request body with the same declaration is decoded for opaque-token substitution and canonically re-encoded before delivery. Undeclared Base64-looking content is not decoded.
 - Cookie headers are rejected on proxied requests and removed from proxied responses. Cookie-dependent downstream APIs are unsupported.
 - Request and returned response `Content-Length` values are computed from final transmitted/returned bytes after substitution or tokenization. Caller-supplied transfer encoding is rejected.
 - Scanning uses a bounded worker pool and fails closed on overload, timeout, malformed input, or scanner failure.

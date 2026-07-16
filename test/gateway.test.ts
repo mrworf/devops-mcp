@@ -450,8 +450,76 @@ describe("HTTP gateway", () => {
         service: "demo-service", destination: "primary", method: "GET", path: "/api/base64", reason: "Test Base64 framing.",
       });
       const decoded = Buffer.from(response.body, "base64").toString("utf8");
-      expect(decoded).toMatch(/^sec_/);
+      const token = decoded.match(/sec_[A-Za-z0-9_-]+/)?.[0] ?? "";
+      expect(token).toMatch(/^sec_/);
+      expect(decoded.split(token).join("demo-secret")).toBe(BASE64_RESPONSE_BODY);
       expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(response.body)));
+    } finally { await downstream.close(); }
+  });
+
+  it("round trips declared Base64 response tokens without corrupting decoded content", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const auth = actor();
+      const first = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/base64",
+        reason: "Obtain tokenized Base64 content.",
+      });
+      const decoded = Buffer.from(first.body, "base64").toString("utf8");
+      const token = decoded.match(/sec_[A-Za-z0-9_-]+/)?.[0] ?? "";
+      expect(token).toMatch(/^sec_[A-Za-z0-9_-]+$/);
+      expect(decoded.split(token).join("demo-secret")).toBe(BASE64_RESPONSE_BODY);
+
+      await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: { "Content-Transfer-Encoding": "base64", "Content-Length": "1" }, body: first.body,
+        reason: "Round trip declared Base64 content.",
+      });
+      const declaredRequest = downstream.requests[1];
+      expect(Buffer.from(declaredRequest?.body ?? "", "base64").toString("utf8")).toBe(BASE64_RESPONSE_BODY);
+      expect(declaredRequest?.headers["content-transfer-encoding"]).toBe("base64");
+      expect(declaredRequest?.headers["content-length"]).toBe(String(Buffer.byteLength(declaredRequest?.body ?? "")));
+
+      await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        body: first.body, reason: "Keep undeclared Base64 opaque.",
+      });
+      expect(downstream.requests[2]?.body).toBe(first.body);
+    } finally { await downstream.close(); }
+  });
+
+  it("rejects invalid declared Base64 request bodies before downstream I/O", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      installBroker(config);
+      const auth = actor();
+      const first = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/base64",
+        reason: "Obtain a Base64 response token.",
+      });
+      const decoded = Buffer.from(first.body, "base64").toString("utf8");
+      const token = decoded.match(/sec_[A-Za-z0-9_-]+/)?.[0] ?? "";
+      const replacement = token.endsWith("A") ? "B" : "A";
+      const altered = decoded.replace(token, `${token.slice(0, -1)}${replacement}`);
+      const invalidInputs: Array<{ headers: Record<string, string>; body: unknown; code: GatewayError["code"] }> = [
+        { headers: { "Content-Transfer-Encoding": "base64" }, body: { encoded: first.body }, code: "unsupported_transfer_encoding" },
+        { headers: { "Content-Transfer-Encoding": "base64" }, body: "%%%", code: "unsupported_transfer_encoding" },
+        { headers: { "Content-Transfer-Encoding": "base64" }, body: "/w==", code: "unsupported_transfer_encoding" },
+        { headers: { "Content-Transfer-Encoding": "gzip" }, body: first.body, code: "unsupported_transfer_encoding" },
+        { headers: { "Content-Transfer-Encoding": "base64", "content-transfer-encoding": "base64" }, body: first.body, code: "unsupported_transfer_encoding" },
+        { headers: { "Content-Transfer-Encoding": "base64" }, body: Buffer.from(altered, "utf8").toString("base64"), code: "token_invalid" },
+      ];
+
+      for (const input of invalidInputs) {
+        await expectGatewayError(() => executeServiceRequest(config, auth, {
+          service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+          headers: input.headers, body: input.body, reason: "Reject invalid declared Base64.",
+        }), input.code);
+      }
+      expect(downstream.requests).toHaveLength(1);
     } finally { await downstream.close(); }
   });
 
@@ -616,7 +684,7 @@ async function startDownstream() {
       return;
     }
     if (request.url?.startsWith("/api/base64")) {
-      const encoded = Buffer.from(`sec_sk-proj-${"q".repeat(48)}`, "utf8").toString("base64");
+      const encoded = Buffer.from(BASE64_RESPONSE_BODY, "utf8").toString("base64");
       response.writeHead(200, { "content-transfer-encoding": "base64", "content-length": String(Buffer.byteLength(encoded)) });
       response.end(encoded);
       return;
@@ -646,6 +714,7 @@ async function startDownstream() {
 }
 
 const JSON_RESPONSE_BODY = '{  "duplicate":1, "duplicate" : 2, "number":1.00, "unicode":"雪", "secret" : "demo-secret" }\n';
+const BASE64_RESPONSE_BODY = 'prefix\n{ "unicode": "雪", "punctuation": "!@#$%^&*()", "secret": "demo-secret" }\nsuffix';
 
 async function startHttpsDownstream() {
   const requests: Array<{ path: string; url: string; headers: Record<string, string | string[] | undefined>; body: string }> = [];

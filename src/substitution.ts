@@ -1,4 +1,5 @@
 import { getCredential } from "./registry.js";
+import { decodeDeclaredBase64Body, encodeBase64Body } from "./base64Body.js";
 import type { ResponseSecretTokenRecord, TokenBroker, TokenRecord, TokenUseTarget } from "./tokens.js";
 import type { AuthContext, ServiceConfig } from "./types.js";
 
@@ -30,6 +31,20 @@ export function substituteTokens<T>(
     return getCredential(service, record.credentialId).secret;
   });
   return { value: replaced as T, records, responseSecretRecords };
+}
+
+export function substituteRequestBodyTokens(
+  body: unknown,
+  headers: Record<string, string>,
+  broker: TokenBroker,
+  auth: AuthContext,
+  target: TokenUseTarget,
+  service: ServiceConfig,
+): SubstitutionResult<unknown> {
+  const decoded = decodeDeclaredBase64Body(headers, body, "request");
+  if (decoded === undefined) return substituteTokens(body, broker, auth, target, service);
+  const substituted = substituteTokens(decoded, broker, auth, target, service);
+  return { ...substituted, value: encodeBase64Body(substituted.value) };
 }
 
 function substituteValue(value: unknown, replaceToken: (token: string) => string): unknown {

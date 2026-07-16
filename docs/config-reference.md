@@ -169,6 +169,6 @@ Scanner capacity defaults to `min(4, availableParallelism)` workers, a 32-job gl
 - Caller-supplied HTTP authority, forwarding, and hop-by-hop headers are rejected before credential substitution. This includes `Host`, `:authority`, `Forwarded`, every `X-Forwarded-*` header, `Connection`, `Keep-Alive`, proxy authorization headers, `TE`, `Trailer`, `Transfer-Encoding`, and `Upgrade`. The outbound `Host` header is derived from the validated destination URL.
 - `Cookie`, `Cookie2`, `Set-Cookie`, and `Set-Cookie2` are prohibited. Request occurrences are rejected; response occurrences are removed with sanitized warnings.
 - Caller-supplied `Content-Length` is discarded and recomputed after request substitution and response transformation.
-- `Content-Transfer-Encoding: base64` declares a whole Base64 response body. Other transfer encodings fail closed.
+- `Content-Transfer-Encoding: base64` declares a whole Base64 response or string request body. Declared request bodies are decoded for opaque-token substitution and canonically re-encoded before delivery; undeclared Base64-looking content remains opaque. Other or conflicting transfer encodings fail closed.
 - `limits.max_response_body` is enforced during the downstream network read. Declared or streamed oversize responses are aborted and return `response_too_large`; partial bodies are never scanned or returned.
-- Ordinary and decoded Base64 response bodies must be valid UTF-8.
+- Ordinary and decoded Base64 response bodies, and decoded Base64 request bodies, must be valid UTF-8.
