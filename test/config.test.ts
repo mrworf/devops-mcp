@@ -132,6 +132,13 @@ describe("config validation", () => {
       refreshTokenMaxTtlMs: 90 * 86_400_000,
     });
 
+    raw.auth.builtin_oauth.refresh_token_store_file = "/tmp/oauth-refresh-state.json";
+    const persisted = validateConfig(raw, env).auth;
+    expect(persisted.mode === "builtin_oauth" && persisted.builtinOAuth.refreshTokenStoreFile).toBe("/tmp/oauth-refresh-state.json");
+    raw.auth.builtin_oauth.refresh_token_store_file = "";
+    expectConfigError(() => validateConfig(raw, env), "Invalid config");
+    delete raw.auth.builtin_oauth.refresh_token_store_file;
+
     raw.auth.builtin_oauth.refresh_token_idle_ttl = "48h";
     raw.auth.builtin_oauth.refresh_token_max_ttl = "1d";
     expectConfigError(() => validateConfig(raw, env), "must not exceed");

@@ -68,6 +68,7 @@ const rawConfigSchema = z.object({
         authorization_code_ttl: z.string().default("5m"),
         refresh_token_idle_ttl: z.string().default("30d"),
         refresh_token_max_ttl: z.string().default("90d"),
+        refresh_token_store_file: z.string().min(1).optional(),
         allowed_clients: z.array(z.string().min(1)).min(1),
         required_scopes: z.array(z.string().min(1)).default(["gateway.read", "gateway.tokens", "gateway.request"]),
         login_rate_limit: z.object({
@@ -304,6 +305,7 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
         authorizationCodeTtlMs,
         refreshTokenIdleTtlMs,
         refreshTokenMaxTtlMs,
+        ...(raw.builtin_oauth.refresh_token_store_file === undefined ? {} : { refreshTokenStoreFile: raw.builtin_oauth.refresh_token_store_file }),
         allowedClients: raw.builtin_oauth.allowed_clients,
         requiredScopes: raw.builtin_oauth.required_scopes,
         loginRateLimit: normalizeLoginRateLimit(raw.builtin_oauth.login_rate_limit),

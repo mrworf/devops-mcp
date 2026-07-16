@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { authenticateRequest, buildAuthenticateChallenge, requireScopes } from "./auth.js";
-import { handleBuiltinOAuthRequest, isBuiltinOAuthRequest } from "./builtinOAuth.js";
+import { handleBuiltinOAuthRequest, initializeBuiltinOAuthState, isBuiltinOAuthRequest } from "./builtinOAuth.js";
 import { loadConfig } from "./config.js";
 import { handleMcpRequest, isMcpGet, isMcpPost, readJsonBody } from "./mcp/server.js";
 import { handleOAuthMetadataRequest, isOAuthMetadataRequest } from "./oauthMetadata.js";
@@ -15,6 +15,7 @@ type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
 export function createGatewayServer(config: GatewayConfig) {
   const logger = createLogger(config.logging);
+  initializeBuiltinOAuthState(config);
   const stopMaintenance = startMaintenance(config);
   const server = createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {

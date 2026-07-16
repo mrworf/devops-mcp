@@ -1,4 +1,6 @@
 import { createHash, pbkdf2, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { exportJWK, importPKCS8, importSPKI, SignJWT } from "jose";
@@ -45,6 +47,12 @@ interface BuiltinOAuthState {
   authorizationCodes: Map<string, AuthorizationCode>;
   refreshGrants: Map<string, RefreshGrant>;
   refreshTokens: Map<string, RefreshTokenRecord>;
+}
+
+interface PersistedRefreshState {
+  version: 1;
+  refreshGrants: RefreshGrant[];
+  refreshTokens: Array<RefreshTokenRecord & { hash: string }>;
 }
 const oauthStates = new WeakMap<GatewayConfig, BuiltinOAuthState>();
 const privateKeyCache = new Map<string, ReturnType<typeof importPKCS8>>();
@@ -361,19 +369,25 @@ async function exchangeAuthorizationCode(
   }
 
   const now = Date.now();
-  sweepRefreshGrants(oauthState, now);
+  if (sweepRefreshGrants(oauthState, now)) persistRefreshStateSafely(config, oauthState);
   if (oauthState.refreshTokens.size >= config.limits.maxRefreshTokenRecords) {
     logTokenOutcome(logger, "error", 503, "temporarily_unavailable", resourceStatus(requestedResource, record.resource), record.scopes.length);
     writeOAuthError(response, 503, "temporarily_unavailable");
     return;
   }
   const accessToken = await signAccessToken(auth, record.subject, record.resource, record.scopes, now);
-  const refreshToken = issueRefreshGrant(oauthState, auth, record, now);
+  const issuedRefresh = issueRefreshGrant(oauthState, auth, record, now);
+  if (!persistRefreshStateForRequest(config, oauthState, logger)) {
+    revokeRefreshGrant(oauthState, issuedRefresh.grantId);
+    logTokenOutcome(logger, "error", 503, "temporarily_unavailable", resourceStatus(requestedResource, record.resource), record.scopes.length);
+    writeOAuthError(response, 503, "temporarily_unavailable");
+    return;
+  }
 
   logTokenOutcome(logger, "success", 200, undefined, resourceStatus(requestedResource, record.resource), record.scopes.length);
   writeJson(response, 200, {
     access_token: accessToken,
-    refresh_token: refreshToken,
+    refresh_token: issuedRefresh.token,
     token_type: "Bearer",
     expires_in: Math.floor(auth.accessTokenTtlMs / 1000),
     scope: record.scopes.join(" "),
@@ -390,7 +404,7 @@ async function exchangeRefreshToken(
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
   const oauthState = getOAuthState(config);
   const now = Date.now();
-  sweepRefreshGrants(oauthState, now);
+  if (sweepRefreshGrants(oauthState, now)) persistRefreshStateSafely(config, oauthState);
 
   const tokenHash = hashRefreshToken(body.get("refresh_token") ?? "");
   const tokenRecord = oauthState.refreshTokens.get(tokenHash);
@@ -402,6 +416,7 @@ async function exchangeRefreshToken(
   }
   if (tokenRecord.status !== "active") {
     revokeRefreshGrant(oauthState, grant.id);
+    persistRefreshStateSafely(config, oauthState);
     logger.warn("oauth.refresh_token_reuse_detected", { client_status: "bound", resource_status: "bound" });
     logTokenOutcome(logger, "error", 400, "invalid_grant", "unavailable", grant.scopes.length);
     writeOAuthError(response, 400, "invalid_grant");
@@ -447,7 +462,16 @@ async function exchangeRefreshToken(
   }
   tokenRecord.status = "used";
   oauthState.refreshTokens.set(rotatedHash, { grantId: grant.id, status: "active" });
+  const previousIdleExpiresAt = grant.idleExpiresAt;
   grant.idleExpiresAt = Math.min(now + auth.refreshTokenIdleTtlMs, grant.expiresAt);
+  if (!persistRefreshStateForRequest(config, oauthState, logger)) {
+    oauthState.refreshTokens.delete(rotatedHash);
+    tokenRecord.status = "active";
+    grant.idleExpiresAt = previousIdleExpiresAt;
+    logTokenOutcome(logger, "error", 503, "temporarily_unavailable", resourceStatus(requestedResource, grant.resource), scopes.length);
+    writeOAuthError(response, 503, "temporarily_unavailable");
+    return;
+  }
 
   logTokenOutcome(logger, "success", 200, undefined, resourceStatus(requestedResource, grant.resource), scopes.length);
   writeJson(response, 200, {
@@ -460,16 +484,29 @@ async function exchangeRefreshToken(
 }
 
 function getOAuthState(config: GatewayConfig): BuiltinOAuthState {
-  let state = oauthStates.get(config);
-  if (state === undefined) {
-    state = { authorizationCodes: new Map(), refreshGrants: new Map(), refreshTokens: new Map() };
-    oauthStates.set(config, state);
-    registerMaintenanceTask(config, (now) => {
-      sweepAuthorizationCodes(state!, now);
-      sweepRefreshGrants(state!, now);
-    });
-  }
+  initializeBuiltinOAuthState(config);
+  const state = oauthStates.get(config);
+  if (state === undefined) throw new Error("Expected initialized built-in OAuth state");
   return state;
+}
+
+export function initializeBuiltinOAuthState(config: GatewayConfig): void {
+  if (config.auth.mode !== "builtin_oauth" || oauthStates.has(config)) return;
+  const state = config.auth.builtinOAuth.refreshTokenStoreFile === undefined
+    ? emptyOAuthState()
+    : loadRefreshState(config);
+  oauthStates.set(config, state);
+  if (config.auth.builtinOAuth.refreshTokenStoreFile === undefined) {
+    createLogger(config.logging).warn("oauth.refresh_state_ephemeral", { restart_continuity: false });
+  }
+  registerMaintenanceTask(config, (now) => {
+    sweepAuthorizationCodes(state, now);
+    if (sweepRefreshGrants(state, now)) persistRefreshStateSafely(config, state);
+  });
+}
+
+function emptyOAuthState(): BuiltinOAuthState {
+  return { authorizationCodes: new Map(), refreshGrants: new Map(), refreshTokens: new Map() };
 }
 
 function sweepAuthorizationCodes(state: BuiltinOAuthState, now: number): void {
@@ -481,7 +518,7 @@ function issueRefreshGrant(
   auth: BuiltinOAuthAuthConfig["builtinOAuth"],
   authorizationCode: AuthorizationCode,
   now: number,
-): string {
+): { token: string; grantId: string } {
   const token = randomBytes(32).toString("base64url");
   const grantId = randomBytes(16).toString("base64url");
   const expiresAt = now + auth.refreshTokenMaxTtlMs;
@@ -496,13 +533,18 @@ function issueRefreshGrant(
     expiresAt,
   });
   state.refreshTokens.set(hashRefreshToken(token), { grantId, status: "active" });
-  return token;
+  return { token, grantId };
 }
 
-function sweepRefreshGrants(state: BuiltinOAuthState, now: number): void {
+function sweepRefreshGrants(state: BuiltinOAuthState, now: number): boolean {
+  let changed = false;
   for (const grant of state.refreshGrants.values()) {
-    if (grant.idleExpiresAt <= now || grant.expiresAt <= now) revokeRefreshGrant(state, grant.id);
+    if (grant.idleExpiresAt <= now || grant.expiresAt <= now) {
+      revokeRefreshGrant(state, grant.id);
+      changed = true;
+    }
   }
+  return changed;
 }
 
 function revokeRefreshGrant(state: BuiltinOAuthState, grantId: string): void {
@@ -514,6 +556,131 @@ function revokeRefreshGrant(state: BuiltinOAuthState, grantId: string): void {
 
 function hashRefreshToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
+}
+
+function loadRefreshState(config: GatewayConfig): BuiltinOAuthState {
+  if (config.auth.mode !== "builtin_oauth" || config.auth.builtinOAuth.refreshTokenStoreFile === undefined) return emptyOAuthState();
+  const path = config.auth.builtinOAuth.refreshTokenStoreFile;
+  let source: string;
+  try {
+    source = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      const state = emptyOAuthState();
+      persistRefreshState(config, state);
+      return state;
+    }
+    throw new Error(`Failed to read built-in OAuth refresh state: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error("Invalid built-in OAuth refresh state: expected valid JSON");
+  }
+  const persisted = validatePersistedRefreshState(parsed, config.limits.maxRefreshTokenRecords);
+  const state = emptyOAuthState();
+  for (const grant of persisted.refreshGrants) state.refreshGrants.set(grant.id, { ...grant, scopes: [...grant.scopes] });
+  for (const record of persisted.refreshTokens) state.refreshTokens.set(record.hash, { grantId: record.grantId, status: record.status });
+  if (sweepRefreshGrants(state, Date.now())) persistRefreshState(config, state);
+  chmodSync(path, 0o600);
+  return state;
+}
+
+function validatePersistedRefreshState(value: unknown, maxRecords: number): PersistedRefreshState {
+  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.refreshGrants) || !Array.isArray(value.refreshTokens)) {
+    throw new Error("Invalid built-in OAuth refresh state: unsupported structure or version");
+  }
+  if (value.refreshTokens.length > maxRecords) throw new Error("Invalid built-in OAuth refresh state: token record capacity exceeded");
+  const grants: RefreshGrant[] = [];
+  const grantIds = new Set<string>();
+  for (const item of value.refreshGrants) {
+    if (!isRefreshGrant(item) || grantIds.has(item.id)) throw new Error("Invalid built-in OAuth refresh state: invalid or duplicate grant");
+    grantIds.add(item.id);
+    grants.push(item);
+  }
+  const tokens: PersistedRefreshState["refreshTokens"] = [];
+  const hashes = new Set<string>();
+  const activeCounts = new Map<string, number>();
+  for (const item of value.refreshTokens) {
+    if (!isPersistedRefreshToken(item) || hashes.has(item.hash) || !grantIds.has(item.grantId)) {
+      throw new Error("Invalid built-in OAuth refresh state: invalid token record");
+    }
+    hashes.add(item.hash);
+    tokens.push(item);
+    if (item.status === "active") activeCounts.set(item.grantId, (activeCounts.get(item.grantId) ?? 0) + 1);
+  }
+  if ([...grantIds].some((id) => activeCounts.get(id) !== 1)) {
+    throw new Error("Invalid built-in OAuth refresh state: each grant must have one active token");
+  }
+  return { version: 1, refreshGrants: grants, refreshTokens: tokens };
+}
+
+function isRefreshGrant(value: unknown): value is RefreshGrant {
+  if (!isRecord(value)) return false;
+  return nonEmptyString(value.id) && nonEmptyString(value.clientId) && nonEmptyString(value.resource)
+    && Array.isArray(value.scopes) && value.scopes.every(nonEmptyString) && nonEmptyString(value.subject)
+    && finiteTimestamp(value.createdAt) && finiteTimestamp(value.idleExpiresAt) && finiteTimestamp(value.expiresAt)
+    && value.createdAt <= value.idleExpiresAt && value.idleExpiresAt <= value.expiresAt;
+}
+
+function isPersistedRefreshToken(value: unknown): value is PersistedRefreshState["refreshTokens"][number] {
+  return isRecord(value) && typeof value.hash === "string" && /^[A-Za-z0-9_-]{43}$/.test(value.hash)
+    && nonEmptyString(value.grantId) && (value.status === "active" || value.status === "used");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function finiteTimestamp(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function persistRefreshState(config: GatewayConfig, state: BuiltinOAuthState): void {
+  if (config.auth.mode !== "builtin_oauth" || config.auth.builtinOAuth.refreshTokenStoreFile === undefined) return;
+  const path = config.auth.builtinOAuth.refreshTokenStoreFile;
+  const persisted: PersistedRefreshState = {
+    version: 1,
+    refreshGrants: [...state.refreshGrants.values()].map((grant) => ({ ...grant, scopes: [...grant.scopes] })),
+    refreshTokens: [...state.refreshTokens.entries()].map(([hash, record]) => ({ hash, ...record, status: record.status === "rotating" ? "active" : record.status })),
+  };
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${path}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(persisted)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    renameSync(temporaryPath, path);
+  } catch (error) {
+    try { unlinkSync(temporaryPath); } catch { /* no temporary file to remove */ }
+    throw error;
+  }
+}
+
+function persistRefreshStateSafely(config: GatewayConfig, state: BuiltinOAuthState): void {
+  try {
+    persistRefreshState(config, state);
+  } catch (error) {
+    createLogger(config.logging).error("oauth.refresh_state_write_failed", { error });
+  }
+}
+
+function persistRefreshStateForRequest(
+  config: GatewayConfig,
+  state: BuiltinOAuthState,
+  logger: ReturnType<typeof createLogger>,
+): boolean {
+  try {
+    persistRefreshState(config, state);
+    return true;
+  } catch (error) {
+    logger.error("oauth.refresh_state_write_failed", { error });
+    return false;
+  }
 }
 
 async function signAccessToken(

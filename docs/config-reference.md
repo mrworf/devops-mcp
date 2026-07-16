@@ -54,6 +54,7 @@ auth:
     authorization_code_ttl: 5m
     refresh_token_idle_ttl: 30d
     refresh_token_max_ttl: 90d
+    refresh_token_store_file: /var/lib/agent-credential-gateway/oauth/refresh-state.json
     allowed_clients:
       - https://chatgpt.com
     required_scopes:
@@ -70,7 +71,9 @@ Password verification uses asynchronous PBKDF2 so expensive login checks do not 
 
 Built-in login failures are limited over a 15-minute window to 10 per direct source, 10 per account, and 100 globally. Lockouts start at 15 minutes and double on repetition up to one hour. Override these values under `auth.builtin_oauth.login_rate_limit`; forwarding headers are ignored and failures never log submitted usernames or passwords.
 Built-in authorization codes are isolated per gateway configuration and capped by `limits.max_authorization_codes` (default `1000`). Expired codes are reaped before allocation and during state maintenance; capacity rejects new authorization with `429` without disturbing live codes.
-Built-in refresh-token hashes and grant metadata are held in memory and capped by `limits.max_refresh_token_records` (default `10000`). Expired grants are reaped during token operations and state maintenance. Refresh grants do not survive a gateway restart in this mode.
+Built-in refresh-token hashes and grant metadata are capped by `limits.max_refresh_token_records` (default `10000`). Expired grants are reaped during token operations and state maintenance. Set `refresh_token_store_file` to a stable writable path to preserve refresh grants, rotations, and replay detection across restarts. The versioned state file contains hashes and grant metadata, never raw tokens, and is replaced atomically with mode `0600`. A malformed or unreadable configured file prevents startup, and a failed token-operation write returns `temporarily_unavailable` without returning new credentials. The file supports one gateway process at a time.
+
+If `refresh_token_store_file` is omitted, refresh state remains in memory and the server emits `oauth.refresh_state_ephemeral` at startup. Access tokens signed by a stable key remain valid across restarts, but clients must reauthorize when they next need to refresh.
 
 ## Logging
 `logging.level` defaults to `info`. Set it to `debug` while setting up the MCP server to emit sanitized structural diagnostics and response-tokenization counts.

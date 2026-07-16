@@ -64,12 +64,13 @@ For the built-in private OAuth mode:
 1. Set `server.resource` and `auth.builtin_oauth.issuer` to the public HTTPS origin, for example `https://mcp.example.org`.
 2. Configure one admin username and a PBKDF2 password hash through environment variables or mounted secret files.
 3. Mount a stable RSA private signing key at `auth.builtin_oauth.signing_key_file`.
-4. Add ChatGPT's CIMD origin or exact client metadata URL to `auth.builtin_oauth.allowed_clients`.
-5. In ChatGPT developer mode, create the app with the public `/mcp` URL.
+4. Configure `auth.builtin_oauth.refresh_token_store_file` on stable writable storage when OAuth sessions must survive restarts.
+5. Add ChatGPT's CIMD origin or exact client metadata URL to `auth.builtin_oauth.allowed_clients`.
+6. In ChatGPT developer mode, create the app with the public `/mcp` URL.
 
 The signing key must survive container restarts. If it is generated inside the container or stored on ephemeral media, ChatGPT's existing OAuth access token cannot be verified after restart and the app may require reconnecting.
 
-The built-in server issues rotating refresh tokens so ChatGPT and Codex can renew expired access tokens without another login. Refresh grants are held in memory and are lost when the gateway restarts; clients then start a new authorization-code flow.
+The built-in server issues rotating refresh tokens so ChatGPT and Codex can renew expired access tokens without another login. A configured refresh-token state file preserves hash-only rotation and replay-detection state across restarts. Without one, the gateway logs an ephemeral-state warning and clients start a new authorization-code flow after restart.
 
 Use these values in the ChatGPT developer-mode app form:
 

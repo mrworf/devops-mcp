@@ -51,6 +51,7 @@ export interface BuiltinOAuthAuthConfig {
     authorizationCodeTtlMs: number;
     refreshTokenIdleTtlMs: number;
     refreshTokenMaxTtlMs: number;
+    refreshTokenStoreFile?: string;
     allowedClients: string[];
     requiredScopes: string[];
     loginRateLimit: LoginRateLimitConfig;

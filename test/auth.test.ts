@@ -1,7 +1,7 @@
 import { createServer, request as httpRequest } from "node:http";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportJWK, exportPKCS8, generateKeyPair, SignJWT } from "jose";
@@ -305,6 +305,105 @@ describe("auth", () => {
     }
   });
 
+  it("persists refresh rotation and replay history without storing raw tokens", async () => {
+    const signingKeyPath = await createSigningKeyFile();
+    const statePath = join(mkdtempSync(join(tmpdir(), "gateway-refresh-state-")), "refresh-state.json");
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+
+    const firstConfig = await builtinOAuthConfig({ signingKeyPath, refreshTokenStoreFile: statePath });
+    const firstServer = await startServer(firstConfig);
+    const verifier = "persistent-refresh-verifier";
+    const code = await authorizeCode(firstServer.baseUrl, redirectUri, verifier);
+    const issued = await localRequest(`${firstServer.baseUrl}/oauth/token`, { method: "POST", body: tokenBody(code, redirectUri, verifier) });
+    const issuedBody = JSON.parse(issued.body) as { access_token: string; refresh_token: string };
+    await firstServer.close();
+
+    const secondConfig = await builtinOAuthConfig({ signingKeyPath, refreshTokenStoreFile: statePath });
+    const secondServer = await startServer(secondConfig);
+    const refreshed = await localRequest(`${secondServer.baseUrl}/oauth/token`, { method: "POST", body: refreshBody(issuedBody.refresh_token) });
+    expect(refreshed.status).toBe(200);
+    const refreshedBody = JSON.parse(refreshed.body) as { refresh_token: string };
+    await secondServer.close();
+
+    const stored = readFileSync(statePath, "utf8");
+    expect(stored).not.toContain(issuedBody.access_token);
+    expect(stored).not.toContain(issuedBody.refresh_token);
+    expect(stored).not.toContain(refreshedBody.refresh_token);
+    expect(statSync(statePath).mode & 0o777).toBe(0o600);
+
+    const thirdConfig = await builtinOAuthConfig({ signingKeyPath, refreshTokenStoreFile: statePath });
+    const thirdServer = await startServer(thirdConfig);
+    try {
+      const replay = await localRequest(`${thirdServer.baseUrl}/oauth/token`, { method: "POST", body: refreshBody(issuedBody.refresh_token) });
+      expect(replay.status).toBe(400);
+      expect(JSON.parse(replay.body)).toEqual({ error: "invalid_grant" });
+      const revoked = await localRequest(`${thirdServer.baseUrl}/oauth/token`, { method: "POST", body: refreshBody(refreshedBody.refresh_token) });
+      expect(revoked.status).toBe(400);
+      expect(JSON.parse(revoked.body)).toEqual({ error: "invalid_grant" });
+    } finally {
+      await thirdServer.close();
+    }
+  });
+
+  it("loses memory-only refresh grants across a fresh gateway configuration", async () => {
+    const signingKeyPath = await createSigningKeyFile();
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    const first = await startServer(await builtinOAuthConfig({ signingKeyPath }));
+    const verifier = "ephemeral-refresh-verifier";
+    const code = await authorizeCode(first.baseUrl, redirectUri, verifier);
+    const issued = await localRequest(`${first.baseUrl}/oauth/token`, { method: "POST", body: tokenBody(code, redirectUri, verifier) });
+    const refreshToken = (JSON.parse(issued.body) as { refresh_token: string }).refresh_token;
+    await first.close();
+
+    const second = await startServer(await builtinOAuthConfig({ signingKeyPath }));
+    try {
+      const refresh = await localRequest(`${second.baseUrl}/oauth/token`, { method: "POST", body: refreshBody(refreshToken) });
+      expect(refresh.status).toBe(400);
+      expect(JSON.parse(refresh.body)).toEqual({ error: "invalid_grant" });
+    } finally {
+      await second.close();
+    }
+  });
+
+  it("rejects malformed refresh state during server creation", async () => {
+    const statePath = join(mkdtempSync(join(tmpdir(), "gateway-refresh-invalid-")), "refresh-state.json");
+    writeFileSync(statePath, "{}\n");
+    const config = await builtinOAuthConfig({ refreshTokenStoreFile: statePath });
+    expect(() => createGatewayServer(config)).toThrow("Invalid built-in OAuth refresh state");
+  });
+
+  it("returns no tokens and restores memory state when refresh persistence fails", async () => {
+    const statePath = join(mkdtempSync(join(tmpdir(), "gateway-refresh-failure-")), "refresh-state.json");
+    const config = await builtinOAuthConfig({ refreshTokenStoreFile: statePath });
+    const fixture = await startServer(config);
+    const redirectUri = "https://chatgpt.com/oauth/callback";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    try {
+      const verifier = "failed-refresh-write-verifier";
+      const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier);
+      const issued = await localRequest(`${fixture.baseUrl}/oauth/token`, { method: "POST", body: tokenBody(code, redirectUri, verifier) });
+      const refreshToken = (JSON.parse(issued.body) as { refresh_token: string }).refresh_token;
+      const priorState = readFileSync(statePath, "utf8");
+      unlinkSync(statePath);
+      mkdirSync(statePath);
+
+      const failed = await localRequest(`${fixture.baseUrl}/oauth/token`, { method: "POST", body: refreshBody(refreshToken) });
+      expect(failed.status).toBe(503);
+      expect(JSON.parse(failed.body)).toEqual({ error: "temporarily_unavailable" });
+      expect(failed.body).not.toContain("access_token");
+      expect(failed.body).not.toContain("refresh_token");
+
+      rmdirSync(statePath);
+      writeFileSync(statePath, priorState, { mode: 0o600 });
+      const retry = await localRequest(`${fixture.baseUrl}/oauth/token`, { method: "POST", body: refreshBody(refreshToken) });
+      expect(retry.status).toBe(200);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("does not keep opaque gateway tokens across fresh token broker instances", () => {
     const config = opaqueTokenRestartConfig();
     const broker = new TokenBroker(config);
@@ -384,6 +483,7 @@ describe("auth", () => {
       expect(token.status).toBe(200);
 
       const logs = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+      expect(logs).toContain("oauth.refresh_state_ephemeral");
       expect(logs).toContain("oauth.authorize.completed");
       expect(logs).toContain("oauth.token.completed");
       expect(logs).toContain("\"resource_status\":\"match\"");
@@ -393,6 +493,7 @@ describe("auth", () => {
       expect(logs).not.toContain(code);
       expect(logs).not.toContain(verifier);
       expect(logs).not.toContain(JSON.parse(token.body).access_token);
+      expect(logs).not.toContain(JSON.parse(token.body).refresh_token);
     } finally {
       logSpy.mockRestore();
       await fixture.close();
@@ -932,6 +1033,7 @@ async function builtinOAuthConfig(options: {
   authorizationCodeTtl?: string;
   refreshTokenIdleTtl?: string;
   refreshTokenMaxTtl?: string;
+  refreshTokenStoreFile?: string;
   allowedClients?: string[];
   loggingLevel?: "info" | "debug";
   signingKeyPath?: string;
@@ -962,6 +1064,7 @@ async function builtinOAuthConfig(options: {
         authorization_code_ttl: options.authorizationCodeTtl ?? "5m",
         refresh_token_idle_ttl: options.refreshTokenIdleTtl ?? "30d",
         refresh_token_max_ttl: options.refreshTokenMaxTtl ?? "90d",
+        ...(options.refreshTokenStoreFile === undefined ? {} : { refresh_token_store_file: options.refreshTokenStoreFile }),
         allowed_clients: options.allowedClients ?? ["https://chatgpt.com"],
         required_scopes: ["gateway.read", "gateway.tokens", "gateway.request"],
         ...(options.loginRateLimit === undefined ? {} : { login_rate_limit: options.loginRateLimit }),

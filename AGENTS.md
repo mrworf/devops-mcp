@@ -13,4 +13,5 @@
 - Do not use MCP transport `mcp-session-id` as a hard authorization boundary; supported clients may reinitialize or vary transport sessions between tool calls.
 - When changing downstream HTTP transport, verify `tls.verify: false` with an actual self-signed HTTPS test so metadata and socket behavior cannot drift apart.
 - Docker examples should keep opaque gateway tokens ephemeral, but mount stable OAuth signing keys and writable audit storage when restart continuity or audit trails matter.
+- Persist built-in OAuth refresh state as atomic hash-only snapshots; never store raw refresh tokens, and treat the configured state file as single-process writable state.
 - Sensitive-name JSON handling must use tolerant scanner offsets and source-range replacement; never deserialize and reserialize response or raw request JSON because comments, duplicate keys, malformed separators, and original formatting must survive outside replaced values.

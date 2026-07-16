@@ -13,6 +13,7 @@ services:
       - ./secrets:/run/secrets:ro
       - ./oauth:/run/oauth:ro
       - ./audit:/var/lib/agent-credential-gateway/audit
+      - ./oauth-state:/var/lib/agent-credential-gateway/oauth
     environment:
       CONFIG_PATH: /config/config.yaml
       SECRETLINT_CONFIG_PATH: /config/secretlint.yaml
