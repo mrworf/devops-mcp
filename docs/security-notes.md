@@ -17,5 +17,5 @@
 - Downstream responses are aborted at the configured byte limit and fail closed without returning partial content.
 - MCP POST authentication occurs before bounded body parsing; declared and streamed inbound sizes are both enforced.
 - Avoid allowing endpoints that return backups, complete config dumps, token lists, private keys, or other bulk secret material.
-- Audit events do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or response bodies.
+- Audit events do not include raw credentials, opaque reference values, Authorization headers, cookies, request bodies, or response bodies.
 - Debug logging is opt-in through `logging.level: debug` and records only sanitized structural details and tokenization counts.

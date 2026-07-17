@@ -9,7 +9,7 @@ export interface Logger {
   error(event: string, fields?: Record<string, unknown>): void;
 }
 
-const sensitiveKeyPattern = /(^|[_-])(authorization|cookie|set-cookie|secret|password|api[-_]?key|access[-_]?token|refresh[-_]?token|bearer[-_]?token|opaque[-_]?token|raw[-_]?token|token[-_]?value|credential[-_]?value|body)(s|[_-]|$)/i;
+const sensitiveKeyPattern = /(^|[_-])(authorization|cookie|set-cookie|secret|password|api[-_]?key|access[-_]?token|refresh[-_]?token|bearer[-_]?token|opaque[-_]?(?:token|reference)|raw[-_]?(?:token|reference)|(?:token|reference)[-_]?value|credential[-_]?value|body)(s|[_-]|$)/i;
 const sensitiveHeaderNames = new Set(["authorization", "cookie", "set-cookie", "proxy-authorization"]);
 
 export function createLogger(config: LoggingConfig, sink: LogSink = console.log): Logger {
@@ -53,7 +53,7 @@ export function sanitizeLogFields(value: unknown, key = ""): unknown {
 
 function isSensitiveKey(key: string): boolean {
   const normalized = key.toLowerCase().replaceAll("-", "_");
-  return normalized === "token" || normalized === "tokens" || sensitiveKeyPattern.test(key);
+  return normalized === "token" || normalized === "tokens" || normalized === "reference" || normalized === "references" || sensitiveKeyPattern.test(key);
 }
 
 function write(

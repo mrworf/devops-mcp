@@ -12,7 +12,7 @@ import { TokenBroker, defaultTokenBrokers } from "../src/tokens.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
 
 describe("audit logging", () => {
-  it("omits raw credentials, opaque tokens, auth headers, cookies, and bodies from token and service request events", async () => {
+  it("omits protected values, opaque references, auth headers, cookies, and bodies from reference and service request events", async () => {
     const config = validateConfig({
       server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
       auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
@@ -41,7 +41,7 @@ describe("audit logging", () => {
     const issued = broker.issueTokens(auth, {
       service: "demo-service",
       destination: "primary",
-      credential_ids: ["api_key"],
+      access_ids: ["api_key"],
       reason: "Need token.",
     });
 
@@ -65,7 +65,7 @@ describe("audit logging", () => {
     expect(serialized).not.toContain("Authorization");
     expect(serialized).not.toContain("Cookie");
     expect(serialized).not.toContain("do not log me");
-    expect(auditEvents.map((event) => event.type)).toContain("token_issued");
+    expect(auditEvents.map((event) => event.type)).toContain("reference_issued");
     expect(auditEvents.map((event) => event.type)).toContain("service_request");
   });
 
@@ -81,7 +81,7 @@ describe("audit logging", () => {
       const issued = broker.issueTokens(auth, {
         service: "demo-service",
         destination: "primary",
-        credential_ids: ["api_key"],
+        access_ids: ["api_key"],
         reason: "Need token.",
       });
 
@@ -109,9 +109,9 @@ describe("audit logging", () => {
       const events = readJsonl(auditFile);
       const serialized = JSON.stringify(events);
       expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
-        "token_issued",
+        "reference_issued",
         "service_request",
-        "invalid_opaque_response_tokens",
+        "invalid_opaque_response_references",
         "tool_invocation",
       ]));
       expect(events.filter((event) => event.type === "service_request").map((event) => event.policy_decision)).toEqual(expect.arrayContaining(["allow", "deny"]));
@@ -122,8 +122,34 @@ describe("audit logging", () => {
       expect(serialized).not.toContain("Cookie");
       expect(serialized).not.toContain("do not log me");
       expect(serialized).not.toContain("ghp_");
-      const warning = events.find((event) => event.type === "invalid_opaque_response_tokens");
+      const warning = events.find((event) => event.type === "invalid_opaque_response_references");
       expect(warning).toMatchObject({ warnings: [{ prefix: "gref", reason: "unknown", count: 1 }] });
+      const referenceEvent = events.find((event) => event.type === "reference_issued");
+      expect(referenceEvent).toMatchObject({
+        access_ids: ["api_key"],
+        internal_reference_ids: [expect.stringMatching(/^grefrec_/)],
+      });
+      const allowedRequest = events.find((event) => event.type === "service_request" && event.policy_decision === "allow");
+      expect(allowedRequest).toMatchObject({
+        access_ids: ["api_key"],
+        internal_reference_ids: [expect.stringMatching(/^grefrec_/)],
+      });
+      const deniedRequest = events.find((event) => event.type === "service_request" && event.policy_decision === "deny");
+      expect(deniedRequest).toMatchObject({
+        access_ids: [],
+        internal_reference_ids: [],
+      });
+      for (const removed of [
+        "credential_ids",
+        "internal_token_ids",
+        "response_internal_token_ids",
+        "token_issued",
+        "unknown_credential",
+        "token_invalid",
+        "token_expired",
+      ]) {
+        expect(serialized).not.toContain(`"${removed}"`);
+      }
     } finally {
       await downstream.close();
     }
@@ -139,10 +165,10 @@ describe("audit logging", () => {
     expect(() => broker.issueTokens(actor(), {
       service: "demo-service",
       destination: "primary",
-      credential_ids: ["api_key"],
+      access_ids: ["api_key"],
       reason: "Audit file failure should not block issuance.",
     })).not.toThrow();
-    expect(getAuditEvents(config).map((event) => event.type)).toContain("token_issued");
+    expect(getAuditEvents(config).map((event) => event.type)).toContain("reference_issued");
   });
 
   it("bounds memory history while preserving every file-backed event", () => {

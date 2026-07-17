@@ -21,7 +21,7 @@ describe("response secret substitution", () => {
     const config = makeConfig();
     const broker = new TokenBroker(config);
     const credential = broker.issueTokens(auth("alice"), {
-      service: "service-a", destination: "primary", credential_ids: ["key"], reason: "Test.",
+      service: "service-a", destination: "primary", access_ids: ["key"], reason: "Test.",
     }).tokens[0]?.token ?? "";
     const wrapper = broker.issueOrReuseResponseSecret(auth("alice"), "service-a", credential).token;
     const service = config.services["service-a"]!;
@@ -34,7 +34,7 @@ describe("response secret substitution", () => {
     const broker = new TokenBroker(config);
     const token = broker.issueOrReuseResponseSecret(auth("alice"), "service-a", "returned-秘密").token;
     const configured = broker.issueTokens(auth("alice"), {
-      service: "service-a", destination: "primary", credential_ids: ["key"], reason: "Test Base64 substitution.",
+      service: "service-a", destination: "primary", access_ids: ["key"], reason: "Test Base64 substitution.",
     }).tokens[0]?.token ?? "";
     const encoded = Buffer.from(`prefix ${token} configured=${configured} suffix`, "utf8").toString("base64").replace(/(.{8})/g, "$1\n");
     const result = substituteRequestBodyTokens(encoded, { "Content-Transfer-Encoding": " Base64 " }, broker, auth("alice"), {
@@ -61,7 +61,7 @@ describe("response secret substitution", () => {
       ["/w==", { "Content-Transfer-Encoding": "base64" }, "unsupported_transfer_encoding"],
       [encodedToken, { "Content-Transfer-Encoding": "gzip" }, "unsupported_transfer_encoding"],
       [encodedToken, { "Content-Transfer-Encoding": "base64", "content-transfer-encoding": "base64" }, "unsupported_transfer_encoding"],
-      [encodedToken, { "Content-Transfer-Encoding": "base64" }, "token_invalid"],
+      [encodedToken, { "Content-Transfer-Encoding": "base64" }, "reference_invalid"],
     ] as const) {
       try {
         substituteRequestBodyTokens(body, headers, broker, auth("alice"), target, service);
@@ -85,13 +85,13 @@ describe("response secret substitution", () => {
     expect(result.responseSecretRecords).toHaveLength(1);
   });
 
-  it("rejects opaque tokens outside complete JSON value strings", () => {
+  it("rejects opaque references outside complete JSON value strings", () => {
     const config = makeConfig();
     const broker = new TokenBroker(config);
     const token = broker.issueOrReuseResponseSecret(auth("alice"), "service-a", "returned-secret").token;
     for (const body of [`{"${token}":"value"}`, `{"value":${token}}`, `{"value":"${token}`]) {
       expect(() => substituteRequestBodyTokens(body, { "Content-Type": "application/json" }, broker, auth("alice"), target, config.services["service-a"]!))
-        .toThrowError(expect.objectContaining({ code: "token_invalid" }));
+        .toThrowError(expect.objectContaining({ code: "reference_invalid" }));
     }
   });
 });

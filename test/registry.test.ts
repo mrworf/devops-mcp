@@ -35,7 +35,7 @@ describe("service registry", () => {
     const service = getService(config, "portainer-prod", auth("henric@example.com"));
 
     expect(getCredential(service, "api_key").secret).toBe("portainer-secret");
-    expectGatewayError(() => getCredential(service, "missing"), "unknown_credential");
+    expectGatewayError(() => getCredential(service, "missing"), "unknown_access");
   });
 });
 

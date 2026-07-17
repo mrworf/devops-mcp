@@ -95,7 +95,7 @@ export function getService(config: GatewayConfig, serviceId: string, auth?: Auth
 
 export function getCredential(service: ServiceConfig, credentialId: string): CredentialConfig {
   const credential = service.credentials.find((candidate) => candidate.id === credentialId);
-  if (!credential) throw new GatewayError("unknown_credential", `Unknown credential: ${credentialId}`);
+  if (!credential) throw new GatewayError("unknown_access", `Unknown access id: ${credentialId}`);
   return credential;
 }
 

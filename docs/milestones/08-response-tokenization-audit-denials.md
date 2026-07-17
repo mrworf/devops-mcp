@@ -5,7 +5,7 @@ This milestone completes response safety, audit logging, structured errors, and 
 
 ## Implemented behavior
 - Scan response headers and UTF-8 body source text with the strict Secretlint catalog.
-- Replace exact configured credentials and detected response secrets with reversible opaque tokens.
+- Replace exact configured credentials and detected response secrets with reversible opaque references.
 - Preserve response source text outside exact replacement ranges; JSON is never parsed or reserialized.
 - Treat `gref_` and `sec_` as reserved prefixes and wrap invalid candidates to prevent prefix-based exfiltration.
 - Decode and scan whole Base64 bodies declared with `Content-Transfer-Encoding: base64`.

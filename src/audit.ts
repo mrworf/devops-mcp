@@ -3,14 +3,14 @@ import { dirname } from "node:path";
 import { createLogger } from "./logger.js";
 import type { GatewayConfig } from "./types.js";
 
-export interface TokenIssuedAuditEvent {
-  type: "token_issued";
+export interface ReferenceIssuedAuditEvent {
+  type: "reference_issued";
   subject: string;
   session_id?: string;
   service: string;
   destination: string;
-  credential_ids: string[];
-  internal_token_ids: string[];
+  access_ids: string[];
+  internal_reference_ids: string[];
   reason: string;
   timestamp: string;
 }
@@ -22,8 +22,8 @@ export interface ServiceRequestAuditEvent {
   session_id?: string;
   service: string;
   destination: string;
-  credential_ids: string[];
-  internal_token_ids: string[];
+  access_ids: string[];
+  internal_reference_ids: string[];
   method: string;
   target_host: string;
   target_path: string;
@@ -35,13 +35,13 @@ export interface ServiceRequestAuditEvent {
   tls_verify: boolean;
   secret_tokenization_count: number;
   secret_rule_ids?: string[];
-  response_internal_token_ids?: string[];
+  response_internal_reference_ids?: string[];
   error_code?: string;
   error_message?: string;
 }
 
-export interface InvalidOpaqueResponseTokensAuditEvent {
-  type: "invalid_opaque_response_tokens";
+export interface InvalidOpaqueResponseReferencesAuditEvent {
+  type: "invalid_opaque_response_references";
   request_id: string;
   subject: string;
   session_id?: string;
@@ -63,7 +63,7 @@ export interface ToolInvocationAuditEvent {
   timestamp: string;
 }
 
-export type AuditEvent = TokenIssuedAuditEvent | ServiceRequestAuditEvent | ToolInvocationAuditEvent | InvalidOpaqueResponseTokensAuditEvent;
+export type AuditEvent = ReferenceIssuedAuditEvent | ServiceRequestAuditEvent | ToolInvocationAuditEvent | InvalidOpaqueResponseReferencesAuditEvent;
 
 const auditEventStores = new WeakMap<GatewayConfig, AuditEvent[]>();
 const fallbackAuditEvents: AuditEvent[] = [];
@@ -104,7 +104,7 @@ function auditStore(config?: GatewayConfig): AuditEvent[] {
   return events;
 }
 
-export function tokenIssuedAuditEvent(input: TokenIssuedAuditEvent, config?: GatewayConfig): TokenIssuedAuditEvent {
+export function referenceIssuedAuditEvent(input: ReferenceIssuedAuditEvent, config?: GatewayConfig): ReferenceIssuedAuditEvent {
   audit(input, config);
   return input;
 }

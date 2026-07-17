@@ -234,32 +234,32 @@ function auditTool(
 }
 
 function parseServiceReferenceRequest(args: Record<string, unknown> | undefined): TokenRequestInput {
-  if (args === undefined) throw new GatewayError("token_invalid", "get_gateway_service_references arguments are required.");
+  if (args === undefined) throw new GatewayError("reference_invalid", "get_gateway_service_references arguments are required.");
   const service = readString(args, "service");
   const destination = readOptionalString(args, "destination");
   const reason = readString(args, "reason");
   const accessIds = args["access_ids"];
   if (!Array.isArray(accessIds) || !accessIds.every((value) => typeof value === "string")) {
-    throw new GatewayError("unknown_credential", "access_ids must be an array of strings.");
+    throw new GatewayError("unknown_access", "access_ids must be an array of strings.");
   }
   return {
     service,
     ...(destination === undefined ? {} : { destination }),
-    credential_ids: accessIds,
+    access_ids: accessIds,
     reason,
   };
 }
 
 function readString(args: Record<string, unknown>, name: string): string {
   const value = args[name];
-  if (typeof value !== "string") throw new GatewayError("token_invalid", `${name} must be a string.`);
+  if (typeof value !== "string") throw new GatewayError("reference_invalid", `${name} must be a string.`);
   return value;
 }
 
 function readOptionalString(args: Record<string, unknown>, name: string): string | undefined {
   const value = args[name];
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new GatewayError("token_invalid", `${name} must be a string.`);
+  if (typeof value !== "string") throw new GatewayError("reference_invalid", `${name} must be a string.`);
   return value;
 }
 

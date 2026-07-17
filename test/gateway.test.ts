@@ -18,7 +18,7 @@ describe("HTTP gateway", () => {
       const issued = broker.issueTokens(auth, {
         service: "demo-service",
         destination: "primary",
-        credential_ids: ["api_key"],
+        access_ids: ["api_key"],
         reason: "Call downstream test service.",
       });
       const token = issued.tokens[0]?.token ?? "";
@@ -61,7 +61,7 @@ describe("HTTP gateway", () => {
       const auth = actor();
       const first = await executeServiceRequest(config, auth, {
         service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
-        reason: "Obtain a response secret token.",
+        reason: "Obtain a response secret reference.",
       });
       const token = first.headers["x-leaked-secret"] ?? "";
       expect(token).toMatch(/^sec_[A-Za-z0-9_-]+$/);
@@ -72,7 +72,7 @@ describe("HTTP gateway", () => {
         service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
         headers: { "X-Returned-Secret": token }, query: { returned_secret: token },
         body: { returned_secret: token, nested: [`prefix ${token} suffix`] },
-        reason: "Reuse the response secret token.",
+        reason: "Reuse the response secret reference.",
       });
 
       expect(downstream.requests).toHaveLength(2);
@@ -138,7 +138,7 @@ describe("HTTP gateway", () => {
         service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
         headers: { "Content-Type": "application/json" }, body: first.body.replace(token, altered),
         reason: "Reject altered sensitive-name JSON token.",
-      }), "token_invalid");
+      }), "reference_invalid");
       expect(downstream.requests).toHaveLength(2);
     } finally { await downstream.close(); }
   });
@@ -195,7 +195,7 @@ describe("HTTP gateway", () => {
       const auth = actor();
       const first = await executeServiceRequest(config, auth, {
         service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
-        reason: "Obtain a response secret token.",
+        reason: "Obtain a response secret reference.",
       });
       const token = first.headers["x-leaked-secret"] ?? "";
       const replacement = token.endsWith("A") ? "B" : "A";
@@ -204,7 +204,7 @@ describe("HTTP gateway", () => {
       await expectGatewayError(() => executeServiceRequest(config, auth, {
         service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
         body: altered, reason: "Reject an altered response token.",
-      }), "token_invalid");
+      }), "reference_invalid");
       expect(downstream.requests).toHaveLength(1);
     } finally { await downstream.close(); }
   });
@@ -215,7 +215,7 @@ describe("HTTP gateway", () => {
       const config = gatewayConfig(downstream.baseUrl);
       const broker = installBroker(config);
       const token = broker.issueTokens(actor(), {
-        service: "demo-service", destination: "primary", credential_ids: ["api_key"], reason: "Test authority rejection.",
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Test authority rejection.",
       }).tokens[0]?.token ?? "";
 
       for (const name of ["Host", ":AUTHORITY", "Forwarded", "X-Forwarded-Host", "x-FORWARDED-proto"]) {
@@ -236,7 +236,7 @@ describe("HTTP gateway", () => {
       const config = gatewayConfig(downstream.baseUrl, { tlsVerify: false });
       const broker = installBroker(config);
       const token = broker.issueTokens(actor(), {
-        service: "demo-service", destination: "primary", credential_ids: ["api_key"], reason: "Test HTTPS authority rejection.",
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Test HTTPS authority rejection.",
       }).tokens[0]?.token ?? "";
 
       await expectGatewayError(() => executeServiceRequest(config, actor(), {
@@ -255,7 +255,7 @@ describe("HTTP gateway", () => {
       const config = gatewayConfig(downstream.baseUrl);
       const broker = installBroker(config);
       const token = broker.issueTokens(actor(), {
-        service: "demo-service", destination: "primary", credential_ids: ["api_key"], reason: "Test hop-by-hop rejection.",
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Test hop-by-hop rejection.",
       }).tokens[0]?.token ?? "";
 
       for (const name of [
@@ -322,7 +322,7 @@ describe("HTTP gateway", () => {
       const issued = broker.issueTokens(actor(), {
         service: "demo-service",
         destination: "primary",
-        credential_ids: ["api_key"],
+        access_ids: ["api_key"],
         reason: "Call downstream test service.",
       });
 
@@ -348,7 +348,7 @@ describe("HTTP gateway", () => {
       const issued = broker.issueTokens(actor(), {
         service: "demo-service",
         destination: "primary",
-        credential_ids: ["api_key"],
+        access_ids: ["api_key"],
         reason: "Call downstream test service.",
       });
 
@@ -359,7 +359,7 @@ describe("HTTP gateway", () => {
         path: "/api/echo",
         headers: { "X-API-Key": "gref_unknown" },
         reason: "Unknown token.",
-      }), "token_invalid");
+      }), "reference_invalid");
       await expectGatewayError(() => executeServiceRequest(config, actor(), {
         service: "demo-service",
         destination: "secondary",
@@ -367,7 +367,7 @@ describe("HTTP gateway", () => {
         path: "/api/echo",
         headers: { "X-API-Key": issued.tokens[0]?.token ?? "" },
         reason: "Wrong destination.",
-      }), "token_invalid");
+      }), "reference_invalid");
       expect(downstream.requests).toHaveLength(0);
     } finally {
       await downstream.close();
@@ -590,7 +590,7 @@ describe("HTTP gateway", () => {
         { headers: { "Content-Transfer-Encoding": "base64" }, body: "/w==", code: "unsupported_transfer_encoding" },
         { headers: { "Content-Transfer-Encoding": "gzip" }, body: first.body, code: "unsupported_transfer_encoding" },
         { headers: { "Content-Transfer-Encoding": "base64", "content-transfer-encoding": "base64" }, body: first.body, code: "unsupported_transfer_encoding" },
-        { headers: { "Content-Transfer-Encoding": "base64" }, body: Buffer.from(altered, "utf8").toString("base64"), code: "token_invalid" },
+        { headers: { "Content-Transfer-Encoding": "base64" }, body: Buffer.from(altered, "utf8").toString("base64"), code: "reference_invalid" },
       ];
 
       for (const input of invalidInputs) {

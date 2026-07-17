@@ -27,14 +27,16 @@ describe("safe debug logging", () => {
       cookie: "session=secret",
       token: "gref_plain",
       tokens: ["gref_array"],
+      reference: "gref_reference",
+      references: ["gref_references"],
       raw_token: "gref_secret",
       api_key: "real-api-key",
       credential_value: "real-credential",
       body: "contains a secret",
       safe: {
         target_host: "service.internal",
-        credential_ids: ["api_key"],
-        internal_token_ids: ["itok_123"],
+        access_ids: ["api_key"],
+        internal_reference_ids: ["grefrec_123"],
       },
     });
 
@@ -44,14 +46,16 @@ describe("safe debug logging", () => {
     expect(serialized).not.toContain("gref_plain");
     expect(serialized).not.toContain("gref_array");
     expect(serialized).not.toContain("gref_secret");
+    expect(serialized).not.toContain("gref_reference");
+    expect(serialized).not.toContain("gref_references");
     expect(serialized).not.toContain("real-api-key");
     expect(serialized).not.toContain("real-credential");
     expect(serialized).not.toContain("contains a secret");
     expect(serialized).toContain("[REDACTED]");
     expect(JSON.parse(serialized).safe).toEqual({
       target_host: "service.internal",
-      credential_ids: ["api_key"],
-      internal_token_ids: ["itok_123"],
+      access_ids: ["api_key"],
+      internal_reference_ids: ["grefrec_123"],
     });
   });
 

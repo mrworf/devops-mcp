@@ -26,7 +26,7 @@ Any new dependency must be justified in the milestone implementation notes and m
 - `auth`: OAuth/OIDC JWT validation, bearer dev mode, subject/session/scope extraction.
 - `config`: YAML parsing, validation, normalization, env/file secret resolution.
 - `registry`: service, destination, credential lookup, access checks, TLS flag resolution.
-- `tokens`: opaque token issuance, lookup, expiry, binding, in-memory store.
+- `tokens`: opaque reference issuance, lookup, expiry, binding, in-memory store.
 - `policy`: allow/deny evaluation, priority handling, denial explanation context.
 - `gateway`: service request validation, token substitution, downstream HTTP execution.
 - `response tokenization`: raw-text Secretlint scanning and reversible subject/service-bound opaque placeholders.
@@ -34,12 +34,12 @@ Any new dependency must be justified in the milestone implementation notes and m
 
 ## Security Invariants
 - Never return raw configured credentials through MCP content, structured content, or `_meta`.
-- Never log raw credentials, opaque token values, Authorization headers, cookies, request bodies, or downstream response bodies by default.
+- Never log raw credentials, opaque reference values, Authorization headers, cookies, request bodies, or downstream response bodies by default.
 - Authenticate before service listing, token issuance, policy evaluation, or downstream calls.
 - Validate destination, scheme, host, and port before credential substitution.
 - Evaluate policy before credential substitution.
 - Default policy mode is deny.
-- Reject unknown, expired, cross-user, cross-session, cross-service, and cross-destination opaque tokens.
+- Reject unknown, expired, cross-user, cross-session, cross-service, and cross-destination opaque references.
 - Disable redirects by default; never forward credentials across host boundaries.
 - Record `tls.verify: false` in response metadata and audit events.
 
@@ -57,7 +57,7 @@ MVP config is YAML:
 Downstream credentials are pre-configured into the Docker container with environment variables or mounted files. Do not add a vault or secret manager integration in MVP.
 
 ## Error Codes
-Use structured errors with these codes: `unauthenticated`, `unauthorized_service`, `unknown_service`, `unknown_destination`, `unknown_credential`, `token_expired`, `token_invalid`, `destination_not_allowed`, `host_not_allowed`, `scheme_not_allowed`, `port_not_allowed`, `policy_denied`, `tls_error`, `downstream_timeout`, `downstream_error`, `response_too_large`, `config_error`.
+Use structured errors with these codes: `unauthenticated`, `unauthorized_service`, `unknown_service`, `unknown_destination`, `unknown_access`, `reference_expired`, `reference_invalid`, `destination_not_allowed`, `host_not_allowed`, `scheme_not_allowed`, `port_not_allowed`, `policy_denied`, `tls_error`, `downstream_timeout`, `downstream_error`, `response_too_large`, `config_error`.
 
 ## OpenAI/Codex Compatibility
 - Serve Streamable HTTP MCP at `server.mcp_path`, default `/mcp`.

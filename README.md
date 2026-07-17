@@ -14,7 +14,7 @@ The service acts as an MCP-controlled credential gateway. Agents get short-lived
 - Server-side credential substitution after auth, destination validation, and policy checks.
 - Default-deny request policy with explainable denials.
 - Secretlint response scanning plus configurable sensitive-name detection that replaces detected values with reversible, service-scoped `sec_…` tokens.
-- Structured audit logging designed to avoid raw credentials, opaque token values, authorization headers, cookies, and downstream response bodies.
+- Structured audit logging designed to avoid raw credentials, opaque reference values, authorization headers, cookies, and downstream response bodies.
 - Docker deployment with a non-root runtime user and healthcheck.
 
 ## Safety Model
@@ -24,13 +24,13 @@ Agents are never entrusted with raw API keys, passwords, bearer tokens, cookies,
 The gateway uses two kinds of opaque placeholders:
 
 - `gref_…` references represent configured service access. They are bound to the authenticated subject, originating service, destination, and access entry.
-- `sec_…` tokens represent secrets detected while scanning downstream responses. Detection and replacement happen on the backend before the response reaches the agent, and these tokens are bound to the authenticated subject and originating service.
+- `sec_…` references represent secrets detected while scanning downstream responses. Detection and replacement happen on the backend before the response reaches the agent, and these references are bound to the authenticated subject and originating service.
 
 Both reference types work only when submitted back through this gateway and expire under configured idle and maximum TTLs. Authenticated-subject binding remains in force across supported MCP transport reinitialization; `mcp-session-id` is transport state, not an authorization boundary.
 
-The proxied HTTP surface is deliberately cookie-free: caller-supplied cookie headers are rejected and downstream cookie headers are discarded. APIs that require browser-style cookie sessions are not supported. Response JSON is scanned as source text without deserialization or reserialization. A tolerant lexical scanner uses configurable, case-insensitive name patterns to protect complete string values in direct fields and common environment shapes, including recoverable JSON with comments, duplicate keys, missing commas, or a truncated outer container. A whole response body is decoded and scanned as Base64 only when it declares `Content-Transfer-Encoding: base64`. A string request body with the same declaration is decoded, has opaque tokens substituted with JSON-safe source edits when applicable, and is canonically re-encoded before delivery; undeclared Base64-looking content remains opaque.
+The proxied HTTP surface is deliberately cookie-free: caller-supplied cookie headers are rejected and downstream cookie headers are discarded. APIs that require browser-style cookie sessions are not supported. Response JSON is scanned as source text without deserialization or reserialization. A tolerant lexical scanner uses configurable, case-insensitive name patterns to protect complete string values in direct fields and common environment shapes, including recoverable JSON with comments, duplicate keys, missing commas, or a truncated outer container. A whole response body is decoded and scanned as Base64 only when it declares `Content-Transfer-Encoding: base64`. A string request body with the same declaration is decoded, has opaque references substituted with JSON-safe source edits when applicable, and is canonically re-encoded before delivery; undeclared Base64-looking content remains opaque.
 
-For every downstream request, the gateway validates the authenticated client, requested service, destination, URL, method, token binding, and configured policy before replacing opaque tokens with real credentials. If a request is denied, the client can ask for an explanation instead of guessing around policy boundaries.
+For every downstream request, the gateway validates the authenticated client, requested service, destination, URL, method, reference binding, and configured policy before replacing opaque references with real credentials. If a request is denied, the client can ask for an explanation instead of guessing around policy boundaries.
 
 ## Documentation
 

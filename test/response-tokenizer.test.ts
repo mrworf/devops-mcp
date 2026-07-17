@@ -26,7 +26,7 @@ describe("plain-text response tokenizer", () => {
     const fixture = setup();
     try {
       const tok = fixture.broker.issueTokens(fixture.auth, {
-        service: "service-a", destination: "primary", credential_ids: ["key"], reason: "Test.",
+        service: "service-a", destination: "primary", access_ids: ["key"], reason: "Test.",
       }).tokens[0]?.token ?? "";
       const github = `ghp_${"b".repeat(36)}`;
       const attack = `gref_${github}`;
@@ -44,7 +44,7 @@ describe("plain-text response tokenizer", () => {
     try {
       const configured = "line\n\"quoted\"";
       const tok = fixture.broker.issueTokens(fixture.auth, {
-        service: "service-a", destination: "primary", credential_ids: ["escaped"], reason: "Test escaped credential.",
+        service: "service-a", destination: "primary", access_ids: ["escaped"], reason: "Test escaped credential.",
       }).tokens[0]?.token ?? "";
       const escaped = JSON.stringify(configured).slice(1, -1);
       const body = `{ "value" : "${escaped}", "number": 1.00 }`;
@@ -72,7 +72,7 @@ describe("plain-text response tokenizer", () => {
     } finally { await fixture.pool.close(); }
   });
 
-  it("leaves valid same-scope opaque tokens unchanged", async () => {
+  it("leaves valid same-scope opaque references unchanged", async () => {
     const fixture = setup();
     try {
       const valid = fixture.broker.issueOrReuseResponseSecret(fixture.auth, "service-a", "value").token;

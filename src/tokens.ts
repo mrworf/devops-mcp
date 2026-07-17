@@ -1,15 +1,15 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { GatewayError } from "./errors.js";
 import { getCredential, getService } from "./registry.js";
-import type { TokenIssuedAuditEvent } from "./audit.js";
-import { tokenIssuedAuditEvent } from "./audit.js";
+import type { ReferenceIssuedAuditEvent } from "./audit.js";
+import { referenceIssuedAuditEvent } from "./audit.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
 import { registerMaintenanceTask } from "./maintenance.js";
 
 export interface TokenRequestInput {
   service: string;
   destination?: string;
-  credential_ids: string[];
+  access_ids: string[];
   reason: string;
 }
 
@@ -20,7 +20,7 @@ export interface TokenIssueResult {
     usage_hint: string;
     expires_at: string;
   }>;
-  audit: TokenIssuedAuditEvent;
+  audit: ReferenceIssuedAuditEvent;
 }
 
 export interface TokenUseTarget {
@@ -84,24 +84,24 @@ export class TokenBroker {
   issueTokens(auth: AuthContext, input: TokenRequestInput): TokenIssueResult {
     this.sweepExpired();
     if (!input.reason.trim()) {
-      throw new GatewayError("token_invalid", "Token request reason is required.");
+      throw new GatewayError("reference_invalid", "Reference request reason is required.");
     }
-    if (input.credential_ids.length === 0) {
-      throw new GatewayError("unknown_credential", "At least one credential id is required.");
+    if (input.access_ids.length === 0) {
+      throw new GatewayError("unknown_access", "At least one access id is required.");
     }
 
     const service = getService(this.config, input.service, auth);
     const destination = resolveTokenDestination(service.destinations.map((item) => item.id), input.destination);
-    const credentials = input.credential_ids.map((credentialId) => getCredential(service, credentialId));
+    const credentials = input.access_ids.map((credentialId) => getCredential(service, credentialId));
     this.ensureCapacity(auth.subject, credentials.length);
     const now = this.now();
     const issued: TokenIssueResult["tokens"] = [];
-    const internalTokenIds: string[] = [];
+    const internalReferenceIds: string[] = [];
 
     for (const credential of credentials) {
       const credentialId = credential.id;
       const token = generateTokenValue();
-      const id = `tokrec_${randomUUID()}`;
+      const id = `grefrec_${randomUUID()}`;
       const record: TokenRecord = {
         id,
         tokenHash: hashToken(token),
@@ -117,7 +117,7 @@ export class TokenBroker {
       };
       this.recordsByHash.set(record.tokenHash, record);
       this.tokenValuesById.set(record.id, token);
-      internalTokenIds.push(id);
+      internalReferenceIds.push(id);
       issued.push({
         credential_id: credentialId,
         token,
@@ -126,14 +126,14 @@ export class TokenBroker {
       });
     }
 
-    const audit = tokenIssuedAuditEvent({
-      type: "token_issued",
+    const audit = referenceIssuedAuditEvent({
+      type: "reference_issued",
       subject: auth.subject,
       ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
       service: service.id,
       destination,
-      credential_ids: [...input.credential_ids],
-      internal_token_ids: internalTokenIds,
+      access_ids: [...input.access_ids],
+      internal_reference_ids: internalReferenceIds,
       reason: input.reason,
       timestamp: new Date(now).toISOString(),
     }, this.config);
@@ -143,17 +143,17 @@ export class TokenBroker {
   validateTokenUse(auth: AuthContext, target: TokenUseTarget, tokenValue: string): TokenRecord {
     const hash = hashToken(tokenValue);
     const record = this.recordsByHash.get(hash);
-    if (!record) throw new GatewayError("token_invalid", "Unknown opaque token.");
+    if (!record) throw new GatewayError("reference_invalid", "Unknown gateway reference.");
 
     const now = this.now();
     if (record.idleExpiresAt <= now || record.maxExpiresAt <= now) {
       this.recordsByHash.delete(hash);
-      throw new GatewayError("token_expired", "Opaque token has expired.");
+      throw new GatewayError("reference_expired", "Gateway reference has expired.");
     }
-    if (record.subject !== auth.subject) throw new GatewayError("token_invalid", "Opaque token is not bound to this subject.");
-    if (record.service !== target.service) throw new GatewayError("token_invalid", "Opaque token is not bound to this service.");
+    if (record.subject !== auth.subject) throw new GatewayError("reference_invalid", "Gateway reference is not bound to this subject.");
+    if (record.service !== target.service) throw new GatewayError("reference_invalid", "Gateway reference is not bound to this service.");
     if (target.destination !== undefined && record.destination !== target.destination) {
-      throw new GatewayError("token_invalid", "Opaque token is not bound to this destination.");
+      throw new GatewayError("reference_invalid", "Gateway reference is not bound to this destination.");
     }
 
     record.lastUsedAt = now;
@@ -163,7 +163,7 @@ export class TokenBroker {
 
   issueOrReuseResponseSecret(auth: AuthContext, service: string, secret: string): ResponseSecretIssueResult {
     this.sweepExpired();
-    if (!secret) throw new GatewayError("token_invalid", "Response secret must not be empty.");
+    if (!secret) throw new GatewayError("reference_invalid", "Response secret must not be empty.");
     const index = this.responseSecretIndex(auth.subject, service, secret);
     const existingId = this.responseSecretIdsByIndex.get(index);
     if (existingId !== undefined) {
@@ -199,13 +199,13 @@ export class TokenBroker {
 
   validateResponseSecretUse(auth: AuthContext, service: string, tokenValue: string): ResponseSecretTokenRecord {
     const record = this.responseSecretsByHash.get(hashToken(tokenValue));
-    if (!record) throw new GatewayError("token_invalid", "Unknown response secret token.");
+    if (!record) throw new GatewayError("reference_invalid", "Unknown response secret reference.");
     if (this.isExpired(record)) {
       this.deleteResponseSecret(record.id, this.responseSecretIndex(record.subject, record.service, record.secret));
-      throw new GatewayError("token_expired", "Response secret token has expired.");
+      throw new GatewayError("reference_expired", "Response secret reference has expired.");
     }
-    if (record.subject !== auth.subject) throw new GatewayError("token_invalid", "Response secret token is not bound to this subject.");
-    if (record.service !== service) throw new GatewayError("token_invalid", "Response secret token is not bound to this service.");
+    if (record.subject !== auth.subject) throw new GatewayError("reference_invalid", "Response secret reference is not bound to this subject.");
+    if (record.service !== service) throw new GatewayError("reference_invalid", "Response secret reference is not bound to this service.");
     this.refresh(record);
     return record;
   }
@@ -329,7 +329,7 @@ export class TokenBroker {
     for (const record of this.recordsByHash.values()) if (record.subject === subject) subjectTotal += 1;
     for (const record of this.responseSecretsById.values()) if (record.subject === subject) subjectTotal += 1;
     if (total + additional > this.config.limits.maxTokenRecords || subjectTotal + additional > this.config.limits.maxTokenRecordsPerSubject) {
-      throw new GatewayError("capacity_exceeded", "Opaque token capacity is exhausted.");
+      throw new GatewayError("capacity_exceeded", "Opaque reference capacity is exhausted.");
     }
   }
 }

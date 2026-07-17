@@ -35,7 +35,7 @@ auth:
 
 Bearer mode is simpler and useful for local deployments, but OAuth is the production path.
 
-`auth.oauth.principal_claim` defaults to `sub`. The selected claim must be a non-empty string and becomes the subject used by service ACLs and opaque-token binding. Client-credentials issuers may select a stable claim such as `client_id`; tokens missing the configured claim are rejected and never share a fallback identity.
+`auth.oauth.principal_claim` defaults to `sub`. The selected claim must be a non-empty string and becomes the subject used by service ACLs and opaque-reference binding. Client-credentials issuers may select a stable claim such as `client_id`; tokens missing the configured claim are rejected and never share a fallback identity.
 
 Built-in OAuth mode for a private ChatGPT-hosted MCP:
 
@@ -78,7 +78,7 @@ If `refresh_token_store_file` is omitted, refresh state remains in memory and th
 ## Logging
 `logging.level` defaults to `info`. Set it to `debug` while setting up the MCP server to emit sanitized structural diagnostics and response-tokenization counts.
 
-Debug logs are sanitized before writing. They do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or response bodies.
+Debug logs are sanitized before writing. They do not include raw credentials, opaque reference values, Authorization headers, cookies, request bodies, or response bodies.
 
 ```yaml
 logging:
@@ -94,10 +94,10 @@ audit:
   file: /var/lib/agent-credential-gateway/audit/audit.jsonl
 ```
 
-`audit.memory_events` defaults to 1000 and bounds only the in-memory view; file-backed JSONL retains every successfully written event. Mount the audit directory on persistent writable storage in Docker. Audit events are sanitized and do not include raw credentials, opaque token values, Authorization headers, cookies, request bodies, or downstream response bodies. Opaque downstream credential tokens are still in-memory only and expire on restart.
+`audit.memory_events` defaults to 1000 and bounds only the in-memory view; file-backed JSONL retains every successfully written event. Mount the audit directory on persistent writable storage in Docker. Audit events are sanitized and do not include raw credentials, opaque reference values, Authorization headers, cookies, request bodies, or downstream response bodies. Opaque downstream access references are still in-memory only and expire on restart.
 
-Expired configured-credential and response-secret token records are removed before issuance and by the periodic state maintenance loop; all token hashes, indexes, and in-memory values are removed together.
-`limits.max_token_records` defaults to 10000 and `limits.max_token_records_per_subject` to 1000. Both configured-credential and response-secret capabilities count toward these limits. Live tokens are never silently evicted; issuance fails atomically with `capacity_exceeded`.
+Expired configured-access and response-secret reference records are removed before issuance and by the periodic state maintenance loop; all reference hashes, indexes, and in-memory values are removed together.
+`limits.max_token_records` defaults to 10000 and `limits.max_token_records_per_subject` to 1000. Both configured-access and response-secret capabilities count toward these limits. Live references are never silently evicted; issuance fails atomically with `capacity_exceeded`.
 
 ## Services
 Each service defines LLM-facing metadata, destinations, credentials, access users, TLS behavior, and policy. `description` should briefly explain what the service is for. `api_docs_url` may point to human or machine-readable API documentation, such as an OpenAPI JSON file; the gateway exposes the URL but does not fetch or proxy it.

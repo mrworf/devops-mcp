@@ -4,7 +4,7 @@
 
 Build an OpenAI-compatible MCP server that lets Codex, ChatGPT desktop, and other supported OpenAI MCP clients interact with configured homelab/admin HTTP APIs without exposing raw credentials to the model or client session.
 
-The server acts as a service-scoped HTTP API gateway. Agents request temporary opaque credential tokens, use those tokens in headers, query parameters, or request bodies, and the MCP server replaces those tokens with real credentials only after authentication, authorization, destination validation, token binding, and policy checks.
+The server acts as a service-scoped HTTP API gateway. Agents request temporary opaque service references, use those references in headers, query parameters, or request bodies, and the MCP server replaces those references with real credentials only after authentication, authorization, destination validation, reference binding, and policy checks.
 
 The MVP targets homelab and small self-hosted environments. It is not intended as an enterprise credential platform.
 
@@ -79,8 +79,8 @@ Dedicated MCP servers for every service provide stronger controls but are time-c
 * Provide audit logs for token issuance and downstream API requests.
 * Support self-signed TLS by allowing per-service certificate verification disablement.
 * Support explicit allow/deny policy with default deny.
-* Replace configured credentials and Secretlint findings in downstream responses with scoped opaque tokens.
-* Require reason fields for both token requests and service requests.
+* Replace configured credentials and Secretlint findings in downstream responses with scoped opaque references.
+* Require reason fields for both reference requests and service requests.
 * Provide explainable policy denials.
 
 ## 7. Non-goals for MVP
@@ -159,7 +159,7 @@ Examples:
 * cookie value
 * custom header value
 
-## 8.4 Opaque token
+## 8.4 Gateway service reference
 
 A temporary placeholder returned to the agent instead of a real credential.
 
@@ -169,11 +169,11 @@ Example:
 gref_portainer_api_key_abc123
 ```
 
-The token is not valid outside the MCP server.
+The reference is not valid outside the MCP server.
 
 ## 8.5 Capability
 
-Temporary authorization for an authenticated user/session to use an opaque credential token for a specific service, destination, and credential.
+Temporary authorization for an authenticated user to use an opaque service reference for a specific service, destination, and access method.
 
 ## 8.6 Policy
 
@@ -261,7 +261,7 @@ Every tool descriptor must include:
 * appropriate annotations
 * short invocation status text where supported
 
-The server must not rely on tool annotations for security. Annotations are client hints only. The server must enforce authentication, authorization, token binding, destination validation, TLS policy, and request policy.
+The server must not rely on tool annotations for security. Annotations are client hints only. The server must enforce authentication, authorization, reference binding, destination validation, TLS policy, and request policy.
 
 ## 9.5 Tool result format
 
@@ -594,7 +594,7 @@ Rationale: creating a reference does not call the downstream service, but it gra
 
 ### Purpose
 
-Send an HTTP request to a configured service destination after validating authentication, authorization, destination, token binding, TLS policy, and request policy.
+Send an HTTP request to a configured service destination after validating authentication, authorization, destination, reference binding, TLS policy, and request policy.
 
 ### Input
 
@@ -664,7 +664,7 @@ Recommended descriptor properties:
 {
   title: "Send service HTTP request",
   description:
-    "Send an HTTP request to a configured service through the gateway. Opaque tokens in headers, query, or body are replaced with real credentials only after authorization and policy checks.",
+    "Send an HTTP request to a configured service through the gateway. Gateway service references in headers, query, or body are replaced with configured access only after authorization and policy checks.",
   securitySchemes: [
     { type: "oauth2", scopes: ["gateway.request"] }
   ],
@@ -696,7 +696,7 @@ The gateway itself must still enforce service policy. Client approval is not a s
 
 ### Purpose
 
-Explain why a prior token request or service request was denied.
+Explain why a prior reference request or service request was denied.
 
 ### Input
 
@@ -754,7 +754,7 @@ auto
 
 ## 12. Token requirements
 
-## 12.1 Token binding
+## 12.1 Reference binding
 
 Tokens must be bound to:
 
@@ -787,13 +787,13 @@ tokens:
 
 Using a token may refresh the idle TTL.
 
-Using a token must not extend it beyond the hard max lifetime.
+Using a reference must not extend it beyond the hard max lifetime.
 
-Expired tokens must be rejected.
+Expired references must be rejected.
 
-## 12.3 Token values
+## 12.3 Reference values
 
-Token values should be opaque and non-guessable.
+Reference values should be opaque and non-guessable.
 
 Readable service hints are allowed only if they do not leak sensitive information.
 
@@ -809,13 +809,13 @@ Also acceptable:
 gref_7t93KQeJ2jTqSg9c
 ```
 
-The token value itself must not be logged in audit logs. Audit logs should reference internal token IDs.
+The reference value itself must not be logged in audit logs. Audit logs should contain only internal reference IDs.
 
-## 12.4 Unknown tokens
+## 12.4 Unknown references
 
-Requests containing unknown opaque tokens must be rejected.
+Requests containing unknown opaque references must be rejected.
 
-Requests containing valid tokens that do not belong to the authenticated user/session/service/destination must be rejected.
+Requests containing valid references that do not belong to the authenticated user/service/destination must be rejected.
 
 ## 13. Service request execution
 
@@ -829,8 +829,8 @@ For every `service_request`, the MCP server must:
 6. validate host
 7. validate port
 8. evaluate request policy
-9. validate opaque token usage
-10. replace opaque tokens with real credential values
+9. validate opaque reference usage
+10. replace opaque references with real credential values
 11. perform the downstream HTTP request
 12. validate cookie/encoding constraints and tokenize response headers and body source text
 13. return structured response to the agent
@@ -1106,20 +1106,20 @@ Query matching is optional for MVP.
 
 ## 19.1 Supported locations
 
-The agent may place opaque tokens in:
+The agent may place opaque references in:
 
 * headers
 * request body
 * query string
 
-The server must replace recognized opaque tokens with the corresponding raw credential value before sending the downstream request.
+The server must replace recognized opaque references with the corresponding raw credential value before sending the downstream request.
 
 ## 19.2 Substitution restrictions
 
 The server must reject:
 
 * unknown tokens
-* expired tokens
+* expired references
 * tokens belonging to another user
 * tokens belonging to another session
 * tokens belonging to another service
@@ -1166,10 +1166,10 @@ The server must audit:
 * MCP client/session ID if available
 * service
 * destination
-* token request reason
+* reference request reason
 * request reason
-* credential IDs used
-* internal token ID, not raw token value
+* access IDs used
+* internal reference ID, not raw reference value
 * method
 * target host
 * target path
@@ -1185,7 +1185,7 @@ The server must audit:
 Audit logs must not include:
 
 * raw credentials
-* raw opaque token values
+* raw opaque reference values
 * full Authorization headers
 * full request body by default
 * full response body by default
@@ -1215,9 +1215,9 @@ unauthenticated
 unauthorized_service
 unknown_service
 unknown_destination
-unknown_credential
-token_expired
-token_invalid
+unknown_access
+reference_expired
+reference_invalid
 destination_not_allowed
 host_not_allowed
 scheme_not_allowed
@@ -1493,7 +1493,7 @@ The server must never return raw configured credential values through MCP tools.
 
 The server must not log raw credentials.
 
-The server must replace raw configured credentials and detected response secrets with scoped opaque tokens.
+The server must replace raw configured credentials and detected response secrets with scoped opaque references.
 
 ## 30.2 Destination binding
 
@@ -1503,7 +1503,7 @@ A Portainer token must not materialize for OPNsense, OpenAI, arbitrary internet 
 
 ## 30.3 User/session binding
 
-Opaque tokens must not be reusable across authenticated users or unrelated sessions.
+Gateway service references must not be reusable across authenticated users.
 
 ## 30.4 Policy enforcement
 
@@ -1600,19 +1600,19 @@ MVP is complete when:
 14. `list_services`, `describe_service_policy`, and `explain_denial` are marked read-only.
 15. `service_request` is marked as potentially destructive and open-world.
 16. An authenticated agent can list available services.
-17. An authenticated agent can request an opaque credential token with a reason.
-18. The token response contains no raw credential.
+17. An authenticated agent can request an opaque service reference with a reason.
+18. The reference response contains no raw credential.
 19. The agent can make an allowed HTTP request through the MCP server.
-20. The server substitutes the opaque token with the real credential only for a matching service destination.
+20. The server substitutes the opaque reference with the real credential only for a matching service destination.
 21. The server denies a request to an unconfigured host.
 22. The server denies a request blocked by policy.
-23. The server denies expired tokens.
-24. The server denies tokens bound to another user/session/service/destination.
+23. The server denies expired references.
+24. The server denies references bound to another user/service/destination.
 25. The server supports `tls.verify: false`.
 26. The server records disabled TLS verification in response metadata and audit logs.
 27. The server tokenizes configured credentials and Secretlint findings in response headers and body source text.
-28. Audit logs are written for token requests and service requests.
-29. Audit logs do not contain raw credentials or raw opaque token values.
+28. Audit logs are written for reference requests and service requests.
+29. Audit logs do not contain raw credentials or raw opaque reference values.
 30. Denied requests include request IDs and explainable denial reasons.
 31. `explain_denial` returns useful denial context.
 32. Configuration errors fail startup with clear messages.
@@ -1660,18 +1660,18 @@ MVP is complete when:
 
 ### Phase 5: Token broker
 
-* token request tool
-* token generation
-* token TTL
-* token binding
-* token expiration
+* reference request tool
+* reference generation
+* reference TTL
+* reference binding
+* reference expiration
 * reason logging
 
 ### Phase 6: HTTP request tool
 
 * service-scoped request execution
-* header/body/query token substitution
-* deny unknown/invalid/expired tokens
+* header/body/query reference substitution
+* deny unknown/invalid/expired references
 * no cross-service token use
 * no cross-destination token use unless configured
 

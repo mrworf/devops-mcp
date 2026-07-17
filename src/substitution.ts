@@ -84,7 +84,7 @@ function substituteJsonTextTokens(
     const end = start + match[0].length;
     if (!safeCandidates.some((candidate) => candidate.start === start && candidate.end === end)
       || !ranges.some((range) => range.start === start && range.end === end)) {
-      throw new GatewayError("token_invalid", "Opaque tokens in JSON must be complete string values.");
+      throw new GatewayError("reference_invalid", "Opaque references in JSON must be complete string values.");
     }
   }
   let value = text;

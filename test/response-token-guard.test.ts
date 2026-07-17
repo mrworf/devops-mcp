@@ -32,7 +32,7 @@ describe("response opaque-token prefix guard", () => {
     expect(result.warnings).toEqual([{ prefix: "sec", reason: "wrong_subject", count: 1 }]);
   });
 
-  it("wraps a fake prefix placed before another real opaque token", () => {
+  it("wraps a fake prefix placed before another real opaque reference", () => {
     const broker = new TokenBroker(config());
     const actual = broker.issueOrReuseResponseSecret(auth("bob"), "service-a", "other-secret").token;
     const attack = `gref_${actual}`;

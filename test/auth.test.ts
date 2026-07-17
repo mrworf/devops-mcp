@@ -410,7 +410,7 @@ describe("auth", () => {
     const issued = broker.issueTokens({ subject: "henric@example.com", scopes: ["gateway.references"], mode: "bearer" }, {
       service: "demo-service",
       destination: "primary",
-      credential_ids: ["api_key"],
+      access_ids: ["api_key"],
       reason: "Issue token before restart.",
     });
 
@@ -418,7 +418,7 @@ describe("auth", () => {
     expect(() => restartedBroker.validateTokenUse({ subject: "henric@example.com", scopes: ["gateway.request"], mode: "bearer" }, {
       service: "demo-service",
       destination: "primary",
-    }, issued.tokens[0]?.token ?? "")).toThrow("Unknown opaque token");
+    }, issued.tokens[0]?.token ?? "")).toThrow("Unknown gateway reference");
   });
 
   it("accepts matching or omitted built-in OAuth token resources and rejects mismatches", async () => {
@@ -969,7 +969,7 @@ describe("auth", () => {
       config.services["demo-service"]?.access.users.push("client-a", "client-b");
       const broker = new TokenBroker(config);
       const issued = broker.issueTokens(first, {
-        service: "demo-service", destination: "primary", credential_ids: ["api_key"], reason: "Principal isolation.",
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Principal isolation.",
       });
       expect(() => broker.validateTokenUse(second, { service: "demo-service", destination: "primary" }, issued.tokens[0]?.token ?? ""))
         .toThrow("not bound to this subject");

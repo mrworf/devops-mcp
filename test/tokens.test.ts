@@ -4,15 +4,15 @@ import { GatewayError } from "../src/errors.js";
 import { TokenBroker } from "../src/tokens.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
 
-describe("token broker", () => {
-  it("issues opaque tokens for authorized credentials and omits raw values from audit", () => {
+describe("reference broker", () => {
+  it("issues opaque references for authorized access and omits protected values from audit", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
 
     const result = broker.issueTokens(auth("henric@example.com", "session-a"), {
       service: "portainer-prod",
       destination: "primary",
-      credential_ids: ["api_key", "password"],
+      access_ids: ["api_key", "password"],
       reason: "Inspect configured stacks.",
     });
 
@@ -23,7 +23,7 @@ describe("token broker", () => {
     const auditJson = JSON.stringify(result.audit);
     expect(auditJson).not.toContain(result.tokens[0]?.token ?? "");
     expect(auditJson).not.toContain("portainer-secret");
-    expect(result.audit.internal_token_ids).toHaveLength(2);
+    expect(result.audit.internal_reference_ids).toHaveLength(2);
 
     const originalMax = broker.validateTokenUse(auth("henric@example.com", "session-a"), {
       service: "portainer-prod",
@@ -40,31 +40,31 @@ describe("token broker", () => {
     expect(used.idleExpiresAt).toBeLessThanOrEqual(originalMax);
   });
 
-  it("rejects missing reasons and unknown credentials", () => {
+  it("rejects missing reasons and unknown access ids", () => {
     const broker = new TokenBroker(tokenConfig());
 
     expectGatewayError(() => broker.issueTokens(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
-      credential_ids: ["api_key"],
+      access_ids: ["api_key"],
       reason: " ",
-    }), "token_invalid");
+    }), "reference_invalid");
     expectGatewayError(() => broker.issueTokens(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
-      credential_ids: ["missing"],
-      reason: "Need a token.",
-    }), "unknown_credential");
+      access_ids: ["missing"],
+      reason: "Need a reference.",
+    }), "unknown_access");
   });
 
-  it("rejects expired tokens", () => {
+  it("rejects expired references", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
     const result = broker.issueTokens(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
-      credential_ids: ["api_key"],
-      reason: "Need a token.",
+      access_ids: ["api_key"],
+      reason: "Need a reference.",
     });
 
     now += 101;
@@ -72,7 +72,7 @@ describe("token broker", () => {
     expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
-    }, result.tokens[0]?.token ?? ""), "token_expired");
+    }, result.tokens[0]?.token ?? ""), "reference_expired");
   });
 
   it("does not accept the removed tok prefix", () => {
@@ -81,16 +81,16 @@ describe("token broker", () => {
     expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
-    }, "tok_removed"), "token_invalid");
+    }, "tok_removed"), "reference_invalid");
   });
 
-  it("allows same-subject token use across changing or missing MCP transport sessions", () => {
+  it("allows same-subject reference use across changing or missing MCP transport sessions", () => {
     const broker = new TokenBroker(tokenConfig());
     const result = broker.issueTokens(auth("henric@example.com", "session-a"), {
       service: "portainer-prod",
       destination: "primary",
-      credential_ids: ["api_key"],
-      reason: "Need a token.",
+      access_ids: ["api_key"],
+      reason: "Need a reference.",
     });
     const token = result.tokens[0]?.token ?? "";
 
@@ -104,31 +104,31 @@ describe("token broker", () => {
     }, token).credentialId).toBe("api_key");
   });
 
-  it("rejects cross-user, cross-service, and cross-destination token use", () => {
+  it("rejects cross-user, cross-service, and cross-destination reference use", () => {
     const broker = new TokenBroker(tokenConfig());
     const result = broker.issueTokens(auth("henric@example.com", "session-a"), {
       service: "portainer-prod",
       destination: "primary",
-      credential_ids: ["api_key"],
-      reason: "Need a token.",
+      access_ids: ["api_key"],
+      reason: "Need a reference.",
     });
     const token = result.tokens[0]?.token ?? "";
 
     expectGatewayError(() => broker.validateTokenUse(auth("ada@example.com", "session-a"), {
       service: "portainer-prod",
       destination: "primary",
-    }, token), "token_invalid");
+    }, token), "reference_invalid");
     expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com", "session-a"), {
       service: "opnsense-home",
       destination: "primary",
-    }, token), "token_invalid");
+    }, token), "reference_invalid");
     expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com", "session-a"), {
       service: "portainer-prod",
       destination: "secondary",
-    }, token), "token_invalid");
+    }, token), "reference_invalid");
   });
 
-  it("issues and reuses service-scoped response secret tokens", () => {
+  it("issues and reuses service-scoped response secret references", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
     const first = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
@@ -144,7 +144,7 @@ describe("token broker", () => {
     expect(broker.validateResponseSecretUse(auth("henric@example.com"), "portainer-prod", first.token).secret).toBe("returned-secret");
   });
 
-  it("isolates response secret tokens by subject and service and expires them", () => {
+  it("isolates response secret references by subject and service and expires them", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
     const issued = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
@@ -152,10 +152,10 @@ describe("token broker", () => {
     const otherService = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "opnsense-home", "returned-secret");
     expect(otherSubject.token).not.toBe(issued.token);
     expect(otherService.token).not.toBe(issued.token);
-    expectGatewayError(() => broker.validateResponseSecretUse(auth("ada@example.com"), "portainer-prod", issued.token), "token_invalid");
-    expectGatewayError(() => broker.validateResponseSecretUse(auth("henric@example.com"), "opnsense-home", issued.token), "token_invalid");
+    expectGatewayError(() => broker.validateResponseSecretUse(auth("ada@example.com"), "portainer-prod", issued.token), "reference_invalid");
+    expectGatewayError(() => broker.validateResponseSecretUse(auth("henric@example.com"), "opnsense-home", issued.token), "reference_invalid");
     now += 101;
-    expectGatewayError(() => broker.validateResponseSecretUse(auth("henric@example.com"), "portainer-prod", issued.token), "token_expired");
+    expectGatewayError(() => broker.validateResponseSecretUse(auth("henric@example.com"), "portainer-prod", issued.token), "reference_expired");
     const replacement = broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
     expect(replacement.token).not.toBe(issued.token);
   });
@@ -164,11 +164,11 @@ describe("token broker", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
     const first = broker.issueTokens(auth("henric@example.com"), {
-      service: "portainer-prod", destination: "primary", credential_ids: ["api_key"], reason: "First token.",
+      service: "portainer-prod", destination: "primary", access_ids: ["api_key"], reason: "First token.",
     }).tokens[0]?.token ?? "";
     now += 10;
     const second = broker.issueTokens(auth("henric@example.com"), {
-      service: "portainer-prod", destination: "secondary", credential_ids: ["api_key"], reason: "Second token.",
+      service: "portainer-prod", destination: "secondary", access_ids: ["api_key"], reason: "Second token.",
     }).tokens[0]?.token ?? "";
     now += 10;
     broker.validateTokenUse(auth("henric@example.com"), { service: "portainer-prod", destination: "primary" }, first);
@@ -184,7 +184,7 @@ describe("token broker", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
     broker.issueTokens(auth("henric@example.com"), {
-      service: "portainer-prod", destination: "primary", credential_ids: ["api_key"], reason: "Token.",
+      service: "portainer-prod", destination: "primary", access_ids: ["api_key"], reason: "Token.",
     });
     expect(broker.findConfiguredTokenForSecret(auth("ada@example.com"), "portainer-prod", "portainer-secret")).toBeUndefined();
     expect(broker.findConfiguredTokenForSecret(auth("henric@example.com"), "opnsense-home", "portainer-secret")).toBeUndefined();
@@ -197,7 +197,7 @@ describe("token broker", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
     broker.issueTokens(auth("henric@example.com"), {
-      service: "portainer-prod", destination: "primary", credential_ids: ["api_key"], reason: "Token.",
+      service: "portainer-prod", destination: "primary", access_ids: ["api_key"], reason: "Token.",
     });
     broker.issueOrReuseResponseSecret(auth("henric@example.com"), "portainer-prod", "returned-secret");
     expect(broker.stats()).toEqual({ configured: 1, responseSecrets: 1, tokenValues: 2 });
@@ -209,7 +209,7 @@ describe("token broker", () => {
   it("enforces global and per-subject capacity without partial multi-token issuance", () => {
     const atomicBroker = new TokenBroker(tokenConfig({ maxTokenRecords: 1, maxTokenRecordsPerSubject: 1 }));
     expectGatewayError(() => atomicBroker.issueTokens(auth("henric@example.com"), {
-      service: "portainer-prod", destination: "primary", credential_ids: ["api_key", "password"], reason: "Too many.",
+      service: "portainer-prod", destination: "primary", access_ids: ["api_key", "password"], reason: "Too many.",
     }), "capacity_exceeded");
     expect(atomicBroker.stats()).toEqual({ configured: 0, responseSecrets: 0, tokenValues: 0 });
 

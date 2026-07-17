@@ -8,7 +8,7 @@ Policy and destination validation must happen before credential substitution.
 ## Scope
 - Implement `service_request`.
 - Validate auth, service access, destination, scheme, host, port, policy, and tokens before substitution.
-- Substitute recognized opaque tokens in headers, query, and JSON/string body.
+- Substitute recognized opaque references in headers, query, and JSON/string body.
 - Execute downstream HTTP using Node global `fetch`.
 - Disable redirects.
 - Enforce request body size, response body size, response header size if represented, and timeout.

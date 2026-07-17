@@ -286,7 +286,7 @@ Service ACLs and both opaque-token classes use only `auth.subject` as their prin
 
 #### Preconditions
 
-The configured IdP must issue an otherwise valid access token without `sub` and `client_id` (for example, one using a different client-identity claim), and an operator must grant `unknown` access or rely on opaque-token subject binding between such clients. Cross-client token abuse additionally requires an opaque token to be disclosed between clients. Runtime IdP claims were not available, so deployment exploitability needs validation.
+The configured IdP must issue an otherwise valid access token without `sub` and `client_id` (for example, one using a different client-identity claim), and an operator must grant `unknown` access or rely on opaque-token subject binding between such clients. Cross-client token abuse additionally requires an opaque reference to be disclosed between clients. Runtime IdP claims were not available, so deployment exploitability needs validation.
 
 #### Exploit Scenario
 

@@ -40,7 +40,7 @@ milestones:
     status: "completed"
     completed_at: "2026-07-10T04:59:43Z"
     commit_hash: null
-    notes: "Implemented opaque token broker, binding, TTL validation, sanitized token audit event, get_gateway_service_references tool; npm test and npm run build pass."
+    notes: "Implemented opaque reference broker, binding, TTL validation, sanitized reference audit event, get_gateway_service_references tool; npm test and npm run build pass."
   - id: "06"
     title: "Policy Engine"
     file: "docs/milestones/06-policy-engine.md"

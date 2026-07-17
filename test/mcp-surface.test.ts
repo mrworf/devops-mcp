@@ -250,8 +250,8 @@ describe("MCP surface", () => {
     }, config, auth);
     const removed = await callTool("request_tokens", {}, config, auth);
 
-    expect(malformed).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_credential" } } });
-    expect(empty).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_credential" } } });
+    expect(malformed).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_access" } } });
+    expect(empty).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_access" } } });
     expect(removed).toMatchObject({ isError: true, structuredContent: { error: { code: "not_implemented" } } });
   });
 

@@ -8,7 +8,7 @@ Token values are not raw credentials and must not be logged.
 ## Scope
 - Implement `get_gateway_service_references`.
 - Generate fully opaque, non-guessable token values.
-- Store token records in memory with internal IDs and token hashes.
+- Store reference records in memory with internal IDs and reference hashes.
 - Enforce subject, session if available, service, destination, credential, and reason binding.
 - Enforce idle TTL and hard max TTL.
 - Audit token issuance without raw token values.
@@ -32,27 +32,27 @@ Token values are not raw credentials and must not be logged.
 
 ## Tests
 Positive:
-- Authorized token request succeeds with reason.
-- Multiple requested credentials issue multiple tokens.
-- Token use refreshes idle TTL without extending past max TTL.
+- Authorized reference request succeeds with reason.
+- Multiple requested access methods issue multiple references.
+- Reference use refreshes idle TTL without extending past max TTL.
 
 Negative:
 - Missing reason fails.
-- Unknown credential fails.
-- Expired token fails.
-- Cross-user token use fails.
-- Cross-service token use fails.
-- Cross-destination token use fails.
-- Audit event omits raw opaque token value.
+- Unknown access id fails.
+- Expired reference fails.
+- Cross-user reference use fails.
+- Cross-service reference use fails.
+- Cross-destination reference use fails.
+- Audit event omits raw opaque reference value.
 
 ## Acceptance Criteria
 - `get_gateway_service_references` is functional.
-- Token responses contain no raw downstream credential.
-- Token stores and audit logs use internal token IDs/hashes, not raw token values.
+- Reference responses contain no raw downstream credential.
+- Reference stores and audit logs use internal reference IDs/hashes, not raw reference values.
 - `npm test` passes.
 
 ## Completion Checklist
-- [ ] Opaque token generation uses `crypto`.
-- [ ] Token binding is enforced.
+- [ ] Opaque reference generation uses `crypto`.
+- [ ] Reference binding is enforced.
 - [ ] TTL behavior is tested.
 - [ ] Audit output is sanitized.
