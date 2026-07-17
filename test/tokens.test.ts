@@ -17,7 +17,7 @@ describe("token broker", () => {
     });
 
     expect(result.tokens).toHaveLength(2);
-    expect(result.tokens[0]?.token).toMatch(/^tok_/);
+    expect(result.tokens[0]?.token).toMatch(/^gref_/);
     expect(result.tokens[0]?.token).not.toContain("portainer-secret");
     expect(result.tokens[1]?.token).not.toBe(result.tokens[0]?.token);
     const auditJson = JSON.stringify(result.audit);
@@ -73,6 +73,15 @@ describe("token broker", () => {
       service: "portainer-prod",
       destination: "primary",
     }, result.tokens[0]?.token ?? ""), "token_expired");
+  });
+
+  it("does not accept the removed tok prefix", () => {
+    const broker = new TokenBroker(tokenConfig());
+
+    expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com"), {
+      service: "portainer-prod",
+      destination: "primary",
+    }, "tok_removed"), "token_invalid");
   });
 
   it("allows same-subject token use across changing or missing MCP transport sessions", () => {

@@ -8,7 +8,7 @@ import type { TokenBroker, TokenInspectionReason } from "./tokens.js";
 import { findSensitiveJsonValues, isJsonLikeText } from "./sensitiveJson.js";
 import type { SensitiveNameMatcher } from "./sensitiveNames.js";
 
-const tokenCandidatePattern = /\b(?:tok|sec)_[^\s"'<>()[\]{},;]+/g;
+const tokenCandidatePattern = /\b(?:gref|sec)_[^\s"'<>()[\]{},;]+/g;
 
 interface Range {
   start: number;
@@ -21,7 +21,7 @@ interface Range {
 interface CollectedText {
   original: string;
   ranges: Range[];
-  warnings: Map<string, { prefix: "tok" | "sec"; reason: TokenInspectionReason; count: number }>;
+  warnings: Map<string, { prefix: "gref" | "sec"; reason: TokenInspectionReason; count: number }>;
 }
 
 export interface TokenizedResponseText {
@@ -31,7 +31,7 @@ export interface TokenizedResponseText {
   secretTokenizationCount: number;
   ruleIds: string[];
   internalRecordIds: string[];
-  warnings: Array<{ prefix: "tok" | "sec"; reason: TokenInspectionReason; count: number }>;
+  warnings: Array<{ prefix: "gref" | "sec"; reason: TokenInspectionReason; count: number }>;
 }
 
 export class ResponseTokenizer {
@@ -88,7 +88,7 @@ export class ResponseTokenizer {
       }
       return value;
     };
-    const warnings = new Map<string, { prefix: "tok" | "sec"; reason: TokenInspectionReason; count: number }>();
+    const warnings = new Map<string, { prefix: "gref" | "sec"; reason: TokenInspectionReason; count: number }>();
     for (const collected of all) {
       for (const [key, warning] of collected.warnings) {
         const existing = warnings.get(key);
@@ -145,7 +145,7 @@ export class ResponseTokenizer {
     }
 
     const validCandidates: Array<{ start: number; end: number }> = [];
-    const warnings = new Map<string, { prefix: "tok" | "sec"; reason: TokenInspectionReason; count: number }>();
+    const warnings = new Map<string, { prefix: "gref" | "sec"; reason: TokenInspectionReason; count: number }>();
     for (const match of text.matchAll(tokenCandidatePattern)) {
       const candidate = match[0];
       const start = match.index;
@@ -156,7 +156,7 @@ export class ResponseTokenizer {
         continue;
       }
       ranges.push({ start, end, ruleIds: new Set(["gateway:invalid-opaque-prefix"]) });
-      const prefix = candidate.startsWith("tok_") ? "tok" : "sec";
+      const prefix = candidate.startsWith("gref_") ? "gref" : "sec";
       const key = `${prefix}:${inspection.reason}`;
       const existing = warnings.get(key);
       if (existing) existing.count += 1;

@@ -5,7 +5,7 @@ import { findCompleteJsonStringRanges, isJsonLikeText } from "./sensitiveJson.js
 import type { ResponseSecretTokenRecord, TokenBroker, TokenRecord, TokenUseTarget } from "./tokens.js";
 import type { AuthContext, ServiceConfig } from "./types.js";
 
-const tokenPattern = /(?:tok|sec)_[A-Za-z0-9_-]+/g;
+const tokenPattern = /(?:gref|sec)_[A-Za-z0-9_-]+/g;
 
 export interface SubstitutionResult<T> {
   value: T;

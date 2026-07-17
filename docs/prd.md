@@ -166,7 +166,7 @@ A temporary placeholder returned to the agent instead of a real credential.
 Example:
 
 ```text
-tok_portainer_api_key_abc123
+gref_portainer_api_key_abc123
 ```
 
 The token is not valid outside the MCP server.
@@ -541,7 +541,7 @@ Required fields:
   "tokens": [
     {
       "credential_id": "api_key",
-      "token": "tok_portainer_api_key_abc123",
+      "token": "gref_portainer_api_key_abc123",
       "usage_hint": "Use as X-API-Key header",
       "expires_at": "2026-07-09T18:30:00Z"
     }
@@ -602,7 +602,7 @@ Send an HTTP request to a configured service destination after validating authen
   "method": "GET",
   "path": "/api/stacks",
   "headers": {
-    "X-API-Key": "tok_portainer_api_key_abc123"
+    "X-API-Key": "gref_portainer_api_key_abc123"
   },
   "reason": "List stacks so I can identify the Jellyfin stack."
 }
@@ -797,13 +797,13 @@ Readable service hints are allowed only if they do not leak sensitive informatio
 Acceptable:
 
 ```text
-tok_portainer_api_key_abcd1234
+gref_portainer_api_key_abcd1234
 ```
 
 Also acceptable:
 
 ```text
-tok_7t93KQeJ2jTqSg9c
+gref_7t93KQeJ2jTqSg9c
 ```
 
 The token value itself must not be logged in audit logs. Audit logs should reference internal token IDs.
@@ -1125,9 +1125,9 @@ The server must reject:
 
 ## 20. Response secret tokenization
 
-The gateway must scan response header values and UTF-8 body source text without parsing JSON. Exact configured credentials and Secretlint findings are replaced with reversible opaque placeholders. `sec_…` placeholders are bound to authenticated subject and service; valid existing `tok_…` placeholders may be reused for configured credentials.
+The gateway must scan response header values and UTF-8 body source text without parsing JSON. Exact configured credentials and Secretlint findings are replaced with reversible opaque placeholders. `sec_…` placeholders are bound to authenticated subject and service; valid existing `gref_…` placeholders may be reused for configured credentials.
 
-`tok_` and `sec_` are reserved prefixes. Only live tokens owned by the current subject/service pass through. Invalid candidates are themselves wrapped in `sec_…` and produce sanitized audit warnings.
+`gref_` and `sec_` are reserved prefixes. Only live tokens owned by the current subject/service pass through. Invalid candidates are themselves wrapped in `sec_…` and produce sanitized audit warnings.
 
 Whole Base64 bodies are decoded and scanned only when declared with `Content-Transfer-Encoding: base64`. Cookie headers are prohibited on the proxied surface. Scanning is bounded and fails closed.
 

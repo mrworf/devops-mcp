@@ -355,7 +355,7 @@ function resolveTokenDestination(destinationIds: string[], requested: string | u
 }
 
 function generateTokenValue(): string {
-  return `tok_${randomBytes(24).toString("base64url")}`;
+  return `gref_${randomBytes(24).toString("base64url")}`;
 }
 
 function generateResponseSecretTokenValue(): string {

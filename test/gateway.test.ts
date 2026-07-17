@@ -357,7 +357,7 @@ describe("HTTP gateway", () => {
         destination: "primary",
         method: "GET",
         path: "/api/echo",
-        headers: { "X-API-Key": "tok_unknown" },
+        headers: { "X-API-Key": "gref_unknown" },
         reason: "Unknown token.",
       }), "token_invalid");
       await expectGatewayError(() => executeServiceRequest(config, actor(), {
@@ -515,7 +515,7 @@ describe("HTTP gateway", () => {
         service: "demo-service", destination: "primary", method: "GET", path: "/api/forged", reason: "Test prefix guard.",
       });
       expect(response.body).toMatch(/^sec_[A-Za-z0-9_-]+$/);
-      expect(response.body).not.toContain("tok_ghp_");
+      expect(response.body).not.toContain("gref_ghp_");
       expect(response.body).not.toContain("ghp_");
       expect(response.secret_tokenized).toBe(true);
     } finally { await downstream.close(); }
@@ -781,7 +781,7 @@ async function startDownstream() {
       return;
     }
     if (request.url?.startsWith("/api/forged")) {
-      response.end(`tok_ghp_${"z".repeat(36)}`);
+      response.end(`gref_ghp_${"z".repeat(36)}`);
       return;
     }
     if (request.url?.startsWith("/api/base64")) {

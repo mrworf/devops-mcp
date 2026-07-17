@@ -6,18 +6,18 @@ import type { AuthContext } from "../src/types.js";
 
 describe("response opaque-token prefix guard", () => {
   it.each([
-    [`tok_ghp_${"a".repeat(36)}`, "ghp_"],
+    [`gref_ghp_${"a".repeat(36)}`, "ghp_"],
     [`sec_sk-proj-${"b".repeat(48)}`, "sk-proj-"],
-    ["tok_eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.signature", "eyJhbGci"],
+    ["gref_eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.signature", "eyJhbGci"],
     [`sec_AKIA${"C".repeat(16)}`, "AKIA"],
-    ["tok_configured-secret", "configured-secret"],
+    ["gref_configured-secret", "configured-secret"],
   ])("wraps a forged prefix before real secret material: %s", (attack, secretFragment) => {
     const broker = new TokenBroker(config());
     const result = guardResponseTokenCandidates(`before ${attack} after`, broker, auth("alice"), "service-a");
     expect(result.value).toMatch(/^before sec_[A-Za-z0-9_-]+ after$/);
     expect(result.value).not.toContain(attack);
     expect(result.value).not.toContain(secretFragment);
-    expect(result.warnings).toEqual([{ prefix: attack.startsWith("tok_") ? "tok" : "sec", reason: "unknown", count: 1 }]);
+    expect(result.warnings).toEqual([{ prefix: attack.startsWith("gref_") ? "gref" : "sec", reason: "unknown", count: 1 }]);
   });
 
   it("passes through valid same-scope values and wraps cross-scope real tokens", () => {
@@ -35,11 +35,19 @@ describe("response opaque-token prefix guard", () => {
   it("wraps a fake prefix placed before another real opaque token", () => {
     const broker = new TokenBroker(config());
     const actual = broker.issueOrReuseResponseSecret(auth("bob"), "service-a", "other-secret").token;
-    const attack = `tok_${actual}`;
+    const attack = `gref_${actual}`;
     const result = guardResponseTokenCandidates(attack, broker, auth("alice"), "service-a");
     expect(result.value).toMatch(/^sec_/);
     expect(result.value).not.toContain(actual);
     expect(result.value).not.toContain(attack);
+  });
+
+  it("does not treat the removed tok prefix as an opaque reference", () => {
+    const broker = new TokenBroker(config());
+    const value = "tok_plain_value";
+
+    expect(guardResponseTokenCandidates(value, broker, auth("alice"), "service-a"))
+      .toEqual({ value, tokenizationCount: 0, warnings: [] });
   });
 });
 

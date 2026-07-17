@@ -27,7 +27,7 @@ Generated/untracked `dist/` output was not treated as authoritative; the reviewe
 ## Threat Model
 
 - **Exposed interfaces:** unauthenticated `/health`; OAuth discovery/JWKS; built-in `/oauth/authorize` and `/oauth/token`; authenticated Streamable HTTP MCP endpoint; five MCP tools; configured downstream HTTP(S) destinations
-- **Sensitive assets:** configured downstream credentials, built-in OAuth signing key and admin password hash, OAuth/bearer access, subject/service ACLs, opaque `tok_...` and `sec_...` capabilities, downstream data, audit records, and internal network reachability
+- **Sensitive assets:** configured downstream credentials, built-in OAuth signing key and admin password hash, OAuth/bearer access, subject/service ACLs, opaque `gref_...` and `sec_...` capabilities, downstream data, audit records, and internal network reachability
 - **Trust boundaries:** unauthenticated network to gateway; OAuth issuer to gateway; authenticated subject to service ACL; model/tool input to privileged gateway; gateway to configured downstream; downstream response to model-visible output; process memory/filesystem to logs and audit storage; build pipeline to published container
 - **Likely attacker profiles:** unauthenticated internet client, authenticated but malicious/compromised MCP subject, prompt-injected model acting with a valid subject, malicious or compromised downstream, and supply-chain actor
 
@@ -70,7 +70,7 @@ The attacker needs a valid subject with `gateway.request` and access to a servic
 
 #### Exploit Scenario
 
-An authorized caller obtains a service-bound `tok_...`, requests an allowed URL, includes the token in its normal credential header, and supplies `Host: unapproved.example.org`. The gateway approves the URL and policy, substitutes the real credential, connects to the approved IP/hostname, but sends the unapproved HTTP authority. A shared reverse proxy can route the request and credential to a different virtual host. This bypasses the documented guarantee that credentials are not forwarded across host boundaries.
+An authorized caller obtains a service-bound `gref_...`, requests an allowed URL, includes the token in its normal credential header, and supplies `Host: unapproved.example.org`. The gateway approves the URL and policy, substitutes the real credential, connects to the approved IP/hostname, but sends the unapproved HTTP authority. A shared reverse proxy can route the request and credential to a different virtual host. This bypasses the documented guarantee that credentials are not forwarded across host boundaries.
 
 #### Safe PoC / Validation
 
@@ -290,7 +290,7 @@ The configured IdP must issue an otherwise valid access token without `sub` and 
 
 #### Exploit Scenario
 
-Two unrelated OAuth clients receive valid tokens that both map to `unknown`. If the service ACL permits that subject, both clients receive identical service authorization. If one client's `tok_...` or `sec_...` leaks to the other, the subject check accepts it, defeating the intended cross-subject isolation.
+Two unrelated OAuth clients receive valid tokens that both map to `unknown`. If the service ACL permits that subject, both clients receive identical service authorization. If one client's `gref_...` or `sec_...` leaks to the other, the subject check accepts it, defeating the intended cross-subject isolation.
 
 #### Safe PoC / Validation
 
@@ -310,7 +310,7 @@ Reject access tokens that lack a non-empty stable principal identifier. Make the
 
 #### Verification
 
-Add positive tests for accepted user and client identities and negative tests for missing, empty, non-string, and unsupported identity claims. Prove two distinct configured identities cannot use each other's `tok_...` or `sec_...` values.
+Add positive tests for accepted user and client identities and negative tests for missing, empty, non-string, and unsupported identity claims. Prove two distinct configured identities cannot use each other's `gref_...` or `sec_...` values.
 
 ## Exploit Chains
 

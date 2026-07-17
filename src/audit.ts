@@ -47,7 +47,7 @@ export interface InvalidOpaqueResponseTokensAuditEvent {
   session_id?: string;
   service: string;
   destination: string;
-  warnings: Array<{ prefix: "tok" | "sec"; reason: "unknown" | "expired" | "wrong_subject" | "wrong_service"; count: number }>;
+  warnings: Array<{ prefix: "gref" | "sec"; reason: "unknown" | "expired" | "wrong_subject" | "wrong_service"; count: number }>;
   timestamp: string;
 }
 

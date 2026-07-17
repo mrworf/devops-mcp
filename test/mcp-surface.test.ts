@@ -213,7 +213,7 @@ describe("MCP surface", () => {
 
       const serialized = JSON.stringify(call.body);
       expect(call.body.result.structuredContent.tokens).toHaveLength(1);
-      expect(call.body.result.structuredContent.tokens[0].token).toMatch(/^tok_/);
+      expect(call.body.result.structuredContent.tokens[0].token).toMatch(/^gref_/);
       expect(serialized).not.toContain("super-secret-api-key");
       expect(serialized).not.toContain("dev-token");
     } finally {

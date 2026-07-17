@@ -29,13 +29,13 @@ describe("plain-text response tokenizer", () => {
         service: "service-a", destination: "primary", credential_ids: ["key"], reason: "Test.",
       }).tokens[0]?.token ?? "";
       const github = `ghp_${"b".repeat(36)}`;
-      const attack = `tok_${github}`;
+      const attack = `gref_${github}`;
       const result = await fixture.tokenizer.tokenize({ headers: {}, body: `known=configured-secret attack=${attack}` }, fixture.auth, fixture.service);
       expect(result.body).toContain(`known=${tok}`);
       expect(result.body).not.toContain("configured-secret");
       expect(result.body).not.toContain(github);
       expect(result.body).not.toContain(attack);
-      expect(result.warnings).toEqual([{ prefix: "tok", reason: "unknown", count: 1 }]);
+      expect(result.warnings).toEqual([{ prefix: "gref", reason: "unknown", count: 1 }]);
     } finally { await fixture.pool.close(); }
   });
 
@@ -106,7 +106,7 @@ describe("plain-text response tokenizer", () => {
   it("decodes, tokenizes, and canonically re-encodes explicit Base64 responses", async () => {
     const fixture = setup();
     try {
-      const attack = `tok_ghp_${"e".repeat(36)}`;
+      const attack = `gref_ghp_${"e".repeat(36)}`;
       const encoded = Buffer.from(`prefix ${attack} suffix`, "utf8").toString("base64").replace(/(.{12})/g, "$1\n");
       const result = await fixture.tokenizer.tokenizeWithTransferEncoding({
         headers: { "Content-Transfer-Encoding": "base64" }, body: encoded,

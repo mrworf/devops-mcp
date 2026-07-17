@@ -23,7 +23,7 @@ Agents are never entrusted with raw API keys, passwords, bearer tokens, cookies,
 
 The gateway uses two kinds of opaque placeholders:
 
-- `tok_…` tokens represent configured credentials. They are bound to the authenticated subject, originating service, destination, and credential.
+- `gref_…` tokens represent configured credentials. They are bound to the authenticated subject, originating service, destination, and credential.
 - `sec_…` tokens represent secrets detected while scanning downstream responses. Detection and replacement happen on the backend before the response reaches the agent, and these tokens are bound to the authenticated subject and originating service.
 
 Both token types work only when submitted back through this gateway and expire under configured idle and maximum TTLs. Authenticated-subject binding remains in force across supported MCP transport reinitialization; `mcp-session-id` is transport state, not an authorization boundary.

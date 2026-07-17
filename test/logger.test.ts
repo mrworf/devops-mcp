@@ -25,9 +25,9 @@ describe("safe debug logging", () => {
     logger.debug("sensitive.sample", {
       authorization: "Bearer dev-token",
       cookie: "session=secret",
-      token: "tok_plain",
-      tokens: ["tok_array"],
-      raw_token: "tok_secret",
+      token: "gref_plain",
+      tokens: ["gref_array"],
+      raw_token: "gref_secret",
       api_key: "real-api-key",
       credential_value: "real-credential",
       body: "contains a secret",
@@ -41,9 +41,9 @@ describe("safe debug logging", () => {
     const serialized = lines[0] ?? "";
     expect(serialized).not.toContain("Bearer dev-token");
     expect(serialized).not.toContain("session=secret");
-    expect(serialized).not.toContain("tok_plain");
-    expect(serialized).not.toContain("tok_array");
-    expect(serialized).not.toContain("tok_secret");
+    expect(serialized).not.toContain("gref_plain");
+    expect(serialized).not.toContain("gref_array");
+    expect(serialized).not.toContain("gref_secret");
     expect(serialized).not.toContain("real-api-key");
     expect(serialized).not.toContain("real-credential");
     expect(serialized).not.toContain("contains a secret");
@@ -69,7 +69,7 @@ describe("safe debug logging", () => {
   it("can sanitize arbitrary records as a final guard", () => {
     expect(sanitizeLogFields({
       nested: {
-        token_value: "tok_secret",
+        token_value: "gref_secret",
         target_path: "/api/stacks",
       },
     })).toEqual({

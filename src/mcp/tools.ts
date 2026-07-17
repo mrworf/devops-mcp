@@ -73,7 +73,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "request_tokens",
     title: "Request credential tokens",
-    description: "Request temporary tok_ placeholders while configured credentials remain on the gateway backend. Tokens are bound to the authenticated subject, service, destination, and credential, expire under idle and maximum TTLs, and work only through this gateway.",
+    description: "Request temporary gref_ placeholders while configured credentials remain on the gateway backend. Tokens are bound to the authenticated subject, service, destination, and credential, expire under idle and maximum TTLs, and work only through this gateway.",
     inputSchema: requestTokensInputSchema,
     outputSchema: requestTokensOutputSchema,
     securitySchemes: tokenSecurity,

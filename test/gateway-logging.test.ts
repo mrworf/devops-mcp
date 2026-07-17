@@ -44,7 +44,7 @@ describe("gateway debug logging", () => {
         method: "GET",
         path: "/api/blocked",
         headers: {
-          Authorization: "Bearer tok_secret",
+          Authorization: "Bearer gref_secret",
           "X-Trace-Id": "trace-1",
         },
         reason: "Check debug denial log.",
@@ -59,7 +59,7 @@ describe("gateway debug logging", () => {
     expect(serialized).toContain("demo.internal");
     expect(serialized).toContain("/api/blocked");
     expect(serialized).not.toContain("real-downstream-secret");
-    expect(serialized).not.toContain("tok_secret");
+    expect(serialized).not.toContain("gref_secret");
     expect(serialized).not.toContain("Authorization");
   });
 });
