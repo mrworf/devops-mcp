@@ -214,16 +214,16 @@ The first 512 characters must be self-contained and explain the core safety mode
 Required opening text:
 
 ```text
-This MCP server lets agents call configured HTTP services without exposing raw credentials. Always call list_services first, then request_tokens with a clear reason, then use service_request with service, destination, method, path or allowed URL, headers/body containing opaque tokens, and a request reason. Tokens are not real credentials and only work through this MCP server. Requests may be denied by service policy.
+This MCP server lets agents call configured HTTP services without exposing protected backend values. Always call list_services first, then get_gateway_service_references with a clear reason, then use service_request with service, destination, method, path or allowed URL, headers/body containing gateway references, and a request reason. References have no meaning outside this MCP server. Requests may be denied by service policy.
 ```
 
 Full instructions should also include:
 
-* Never claim an opaque token is a real API key.
-* Never attempt to use opaque tokens outside this MCP server.
+* Never claim a gateway reference is a real API key.
+* Never attempt to use gateway references outside this MCP server.
 * Use relative paths when possible.
 * Use absolute URLs only when they match a configured destination.
-* Include a specific reason for every token request.
+* Include a specific reason for every reference request.
 * Include a specific reason for every service request.
 * Use `describe_service_policy` when endpoint policy needs to be inspected before attempting a request.
 * If denied, call `explain_denial`.
@@ -238,7 +238,7 @@ MVP exposes five model-visible tools:
 ```text
 list_services
 describe_service_policy
-request_tokens
+get_gateway_service_references
 service_request
 explain_denial
 ```
@@ -509,11 +509,11 @@ Recommended descriptor properties:
 auto
 ```
 
-## 11.3 Tool: `request_tokens`
+## 11.3 Tool: `get_gateway_service_references`
 
 ### Purpose
 
-Issue temporary opaque tokens representing configured downstream credentials.
+Return short-lived gateway-only references for configured service access.
 
 ### Input
 
@@ -521,7 +521,7 @@ Issue temporary opaque tokens representing configured downstream credentials.
 {
   "service": "portainer-prod",
   "destination": "primary",
-  "credential_ids": ["api_key"],
+  "access_ids": ["api_key"],
   "reason": "Inspect current stack configuration before proposing a Compose update."
 }
 ```
@@ -529,7 +529,7 @@ Issue temporary opaque tokens representing configured downstream credentials.
 Required fields:
 
 * `service`
-* `credential_ids`
+* `access_ids`
 * `reason`
 
 `destination` is required when the service has multiple destinations.
@@ -538,18 +538,21 @@ Required fields:
 
 ```json
 {
-  "tokens": [
+  "references": [
     {
-      "credential_id": "api_key",
-      "token": "gref_portainer_api_key_abc123",
+      "access_id": "api_key",
+      "reference": "gref_portainer_api_key_abc123",
       "usage_hint": "Use as X-API-Key header",
-      "expires_at": "2026-07-09T18:30:00Z"
+      "expires_at": "2026-07-09T18:30:00Z",
+      "exportable": false,
+      "usable_outside_gateway": false,
+      "reveals_protected_value": false
     }
   ]
 }
 ```
 
-The response must not include raw credentials.
+The response must not include protected backend values.
 
 ### Descriptor requirements
 
@@ -557,18 +560,18 @@ Recommended descriptor properties:
 
 ```ts
 {
-  title: "Request credential tokens",
+  title: "Get gateway service references",
   description:
-    "Request temporary opaque tokens for a configured service credential. Tokens are not raw credentials and only work through this gateway.",
+    "Get short-lived gateway-only references for configured service access. References cannot reveal or export protected values and creating one does not contact the downstream service.",
   securitySchemes: [
-    { type: "oauth2", scopes: ["gateway.tokens"] }
+    { type: "oauth2", scopes: ["gateway.references"] }
   ],
   _meta: {
     securitySchemes: [
-      { type: "oauth2", scopes: ["gateway.tokens"] }
+      { type: "oauth2", scopes: ["gateway.references"] }
     ],
-    "openai/toolInvocation/invoking": "Issuing tokens",
-    "openai/toolInvocation/invoked": "Tokens issued"
+    "openai/toolInvocation/invoking": "Getting service references",
+    "openai/toolInvocation/invoked": "Service references ready"
   },
   annotations: {
     readOnlyHint: false,
@@ -585,7 +588,7 @@ Recommended descriptor properties:
 prompt
 ```
 
-Rationale: issuing a token does not call the downstream service, but it grants temporary capability to use a downstream credential through the gateway.
+Rationale: creating a reference does not call the downstream service, but it grants temporary capability to use configured service access through the gateway.
 
 ## 11.4 Tool: `service_request`
 
@@ -1281,7 +1284,7 @@ auth:
     client_id: agent-credential-gateway
     required_scopes:
       - gateway.read
-      - gateway.tokens
+      - gateway.references
       - gateway.request
 
 tokens:
@@ -1419,7 +1422,7 @@ tool_timeout_sec = 60
 [mcp_servers.agent_credential_gateway.tools.list_services]
 approval_mode = "auto"
 
-[mcp_servers.agent_credential_gateway.tools.request_tokens]
+[mcp_servers.agent_credential_gateway.tools.get_gateway_service_references]
 approval_mode = "prompt"
 
 [mcp_servers.agent_credential_gateway.tools.service_request]
@@ -1464,7 +1467,7 @@ approval_mode = "auto"
 [mcp_servers.agent_credential_gateway.tools.explain_denial]
 approval_mode = "auto"
 
-[mcp_servers.agent_credential_gateway.tools.request_tokens]
+[mcp_servers.agent_credential_gateway.tools.get_gateway_service_references]
 approval_mode = "prompt"
 
 [mcp_servers.agent_credential_gateway.tools.service_request]
@@ -1586,7 +1589,7 @@ MVP is complete when:
 
    * `list_services`
    * `describe_service_policy`
-   * `request_tokens`
+   * `get_gateway_service_references`
    * `service_request`
    * `explain_denial`
 9. Tool descriptors include `inputSchema`.

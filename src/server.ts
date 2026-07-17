@@ -158,7 +158,7 @@ function requiredScopesForMcpBody(body: unknown): string[] {
   const message = body as { method?: unknown; params?: { name?: unknown } };
   if (message.method === "tools/list") return ["gateway.read"];
   if (message.method !== "tools/call") return [];
-  if (message.params?.name === "request_tokens") return ["gateway.tokens"];
+  if (message.params?.name === "get_gateway_service_references") return ["gateway.references"];
   if (message.params?.name === "service_request") return ["gateway.request"];
   if (message.params?.name === "list_services" || message.params?.name === "describe_service_policy" || message.params?.name === "explain_denial") return ["gateway.read"];
   return [];
@@ -167,7 +167,7 @@ function requiredScopesForMcpBody(body: unknown): string[] {
 function configuredMcpScopes(config: GatewayConfig): string[] {
   if (config.auth.mode === "oauth") return config.auth.oauth.requiredScopes;
   if (config.auth.mode === "builtin_oauth") return config.auth.builtinOAuth.requiredScopes;
-  return ["gateway.read", "gateway.tokens", "gateway.request"];
+  return ["gateway.read", "gateway.references", "gateway.request"];
 }
 
 function writeJson(response: ServerResponse, statusCode: number, body: unknown): void {

@@ -15,8 +15,8 @@ import {
   explainDenialInputSchema,
   explainDenialOutputSchema,
   listServicesOutputSchema,
-  requestTokensInputSchema,
-  requestTokensOutputSchema,
+  gatewayServiceReferencesInputSchema,
+  gatewayServiceReferencesOutputSchema,
   serviceRequestInputSchema,
   serviceRequestOutputSchema,
 } from "./schemas.js";
@@ -47,7 +47,7 @@ export interface ToolDescriptor {
 }
 
 const readSecurity = [{ type: "oauth2" as const, scopes: ["gateway.read"] }];
-const tokenSecurity = [{ type: "oauth2" as const, scopes: ["gateway.tokens"] }];
+const referenceSecurity = [{ type: "oauth2" as const, scopes: ["gateway.references"] }];
 const requestSecurity = [{ type: "oauth2" as const, scopes: ["gateway.request"] }];
 
 export const toolDescriptors: ToolDescriptor[] = [
@@ -71,12 +71,12 @@ export const toolDescriptors: ToolDescriptor[] = [
     },
   },
   {
-    name: "request_tokens",
-    title: "Request credential tokens",
-    description: "Request temporary gref_ placeholders while configured credentials remain on the gateway backend. Tokens are bound to the authenticated subject, service, destination, and credential, expire under idle and maximum TTLs, and work only through this gateway.",
-    inputSchema: requestTokensInputSchema,
-    outputSchema: requestTokensOutputSchema,
-    securitySchemes: tokenSecurity,
+    name: "get_gateway_service_references",
+    title: "Get gateway service references",
+    description: "Get short-lived gref_ references for configured service access. Protected values remain on the gateway: references cannot reveal or export them, have no meaning outside this gateway, and creating a reference does not contact or modify the downstream service.",
+    inputSchema: gatewayServiceReferencesInputSchema,
+    outputSchema: gatewayServiceReferencesOutputSchema,
+    securitySchemes: referenceSecurity,
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -84,9 +84,9 @@ export const toolDescriptors: ToolDescriptor[] = [
       idempotentHint: false,
     },
     _meta: {
-      securitySchemes: tokenSecurity,
-      "openai/toolInvocation/invoking": "Issuing tokens",
-      "openai/toolInvocation/invoked": "Tokens issued",
+      securitySchemes: referenceSecurity,
+      "openai/toolInvocation/invoking": "Getting service references",
+      "openai/toolInvocation/invoked": "Service references ready",
     },
   },
   {
@@ -111,7 +111,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "service_request",
     title: "Send service HTTP request",
-    description: "Send an HTTP request through the gateway. The backend substitutes opaque tokens only after authorization, destination, token-binding, and policy checks. Before the response reaches the agent, the backend scans it and replaces detected secrets with subject- and service-bound sec_ tokens. Cookie headers are not supported.",
+    description: "Send an HTTP request through the gateway. The backend resolves gateway references only after authorization, destination, reference-binding, and policy checks. Before the response reaches the agent, the backend scans it and replaces detected secrets with subject- and service-bound sec_ references. Cookie headers are not supported.",
     inputSchema: serviceRequestInputSchema,
     outputSchema: serviceRequestOutputSchema,
     securitySchemes: requestSecurity,
@@ -164,11 +164,20 @@ export async function callTool(
       auditTool(config, auth, name, "allow");
       return toolSuccess({ services }, `Found ${services.length} configured service(s).`);
     }
-    if (name === "request_tokens") {
-      const input = parseTokenRequest(args);
+    if (name === "get_gateway_service_references") {
+      const input = parseServiceReferenceRequest(args);
       const result = getTokenBroker(config).issueTokens(auth, input);
       auditTool(config, auth, name, "allow", { service: input.service });
-      return toolSuccess({ tokens: result.tokens }, `Issued ${result.tokens.length} opaque token(s).`);
+      const references = result.tokens.map((item) => ({
+        access_id: item.credential_id,
+        reference: item.token,
+        usage_hint: item.usage_hint,
+        expires_at: item.expires_at,
+        exportable: false,
+        usable_outside_gateway: false,
+        reveals_protected_value: false,
+      }));
+      return toolSuccess({ references }, `Prepared ${references.length} gateway service reference(s).`);
     }
     if (name === "describe_service_policy") {
       const service = readString(args ?? {}, "service");
@@ -212,7 +221,7 @@ function auditTool(
   outcome: "allow" | "deny" | "error",
   fields: { service?: string; request_id?: string; error_code?: string } = {},
 ): void {
-  if (tool !== "list_services" && tool !== "describe_service_policy" && tool !== "request_tokens" && tool !== "service_request" && tool !== "explain_denial") return;
+  if (tool !== "list_services" && tool !== "describe_service_policy" && tool !== "get_gateway_service_references" && tool !== "service_request" && tool !== "explain_denial") return;
   audit({
     type: "tool_invocation",
     subject: auth.subject,
@@ -224,19 +233,19 @@ function auditTool(
   }, config);
 }
 
-function parseTokenRequest(args: Record<string, unknown> | undefined): TokenRequestInput {
-  if (args === undefined) throw new GatewayError("token_invalid", "request_tokens arguments are required.");
+function parseServiceReferenceRequest(args: Record<string, unknown> | undefined): TokenRequestInput {
+  if (args === undefined) throw new GatewayError("token_invalid", "get_gateway_service_references arguments are required.");
   const service = readString(args, "service");
   const destination = readOptionalString(args, "destination");
   const reason = readString(args, "reason");
-  const credentialIds = args["credential_ids"];
-  if (!Array.isArray(credentialIds) || !credentialIds.every((value) => typeof value === "string")) {
-    throw new GatewayError("unknown_credential", "credential_ids must be an array of strings.");
+  const accessIds = args["access_ids"];
+  if (!Array.isArray(accessIds) || !accessIds.every((value) => typeof value === "string")) {
+    throw new GatewayError("unknown_credential", "access_ids must be an array of strings.");
   }
   return {
     service,
     ...(destination === undefined ? {} : { destination }),
-    credential_ids: credentialIds,
+    credential_ids: accessIds,
     reason,
   };
 }

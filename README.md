@@ -5,12 +5,12 @@
 
 `agent-credential-gateway-mcp` is a self-hosted MCP server that lets Codex, ChatGPT-compatible MCP clients, and other supported agents call configured HTTP services without receiving raw configured credentials. Secret isolation is enforced by the gateway backend before content reaches the agent; it does not depend on the agent recognizing secrets or keeping them confidential.
 
-The service acts as an MCP-controlled credential gateway. Agents request temporary opaque tokens, then use those tokens in approved service requests. The gateway enforces authentication, destination validation, token binding, and policy before substituting real credentials and making the downstream HTTP call. It also scans downstream responses and replaces detected secrets with opaque tokens before returning the response to the agent.
+The service acts as an MCP-controlled credential gateway. Agents get short-lived gateway service references, then use those references in approved service requests. The gateway enforces authentication, destination validation, reference binding, and policy before substituting protected backend values and making the downstream HTTP call. It also scans downstream responses and replaces detected secrets with opaque references before returning the response to the agent.
 
 ## What It Provides
 
 - Streamable HTTP MCP endpoint for configured clients.
-- A small generic tool surface for listing services, requesting opaque tokens, making service requests, and explaining denials.
+- A small generic tool surface for listing services, getting gateway service references, making service requests, and explaining denials.
 - Server-side credential substitution after auth, destination validation, and policy checks.
 - Default-deny request policy with explainable denials.
 - Secretlint response scanning plus configurable sensitive-name detection that replaces detected values with reversible, service-scoped `sec_…` tokens.
@@ -23,10 +23,10 @@ Agents are never entrusted with raw API keys, passwords, bearer tokens, cookies,
 
 The gateway uses two kinds of opaque placeholders:
 
-- `gref_…` tokens represent configured credentials. They are bound to the authenticated subject, originating service, destination, and credential.
+- `gref_…` references represent configured service access. They are bound to the authenticated subject, originating service, destination, and access entry.
 - `sec_…` tokens represent secrets detected while scanning downstream responses. Detection and replacement happen on the backend before the response reaches the agent, and these tokens are bound to the authenticated subject and originating service.
 
-Both token types work only when submitted back through this gateway and expire under configured idle and maximum TTLs. Authenticated-subject binding remains in force across supported MCP transport reinitialization; `mcp-session-id` is transport state, not an authorization boundary.
+Both reference types work only when submitted back through this gateway and expire under configured idle and maximum TTLs. Authenticated-subject binding remains in force across supported MCP transport reinitialization; `mcp-session-id` is transport state, not an authorization boundary.
 
 The proxied HTTP surface is deliberately cookie-free: caller-supplied cookie headers are rejected and downstream cookie headers are discarded. APIs that require browser-style cookie sessions are not supported. Response JSON is scanned as source text without deserialization or reserialization. A tolerant lexical scanner uses configurable, case-insensitive name patterns to protect complete string values in direct fields and common environment shapes, including recoverable JSON with comments, duplicate keys, missing commas, or a truncated outer container. A whole response body is decoded and scanned as Base64 only when it declares `Content-Transfer-Encoding: base64`. A string request body with the same declaration is decoded, has opaque tokens substituted with JSON-safe source edits when applicable, and is canonically re-encoded before delivery; undeclared Base64-looking content remains opaque.
 

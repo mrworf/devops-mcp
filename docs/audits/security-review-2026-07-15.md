@@ -195,7 +195,7 @@ Test exact-limit, limit-plus-one, chunked, misleading/missing `Content-Length`, 
 
 Every audit event is retained forever in the process-global `auditEvents` array, even when file-backed audit is enabled. `TokenBroker` stores issued tokens and its own duplicate audit-event list; expired configured tokens are generally removed only when presented or encountered during a response scan, not by periodic sweeping. Denials are kept indefinitely in a global map. Authorization codes and MCP transports have lifecycle deletion paths, but expired/unclosed entries are not periodically reaped or globally capped.
 
-An authenticated caller can generate audit entries with every tool call, token records with repeated `request_tokens`, and denial records with policy-denied requests. TTL expiry does not by itself release most of this memory.
+An authenticated caller can generate audit entries with every tool call, token records with repeated `get_gateway_service_references`, and denial records with policy-denied requests. TTL expiry does not by itself release most of this memory.
 
 #### Preconditions
 

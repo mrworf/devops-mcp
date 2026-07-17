@@ -149,11 +149,11 @@ describe("audit logging", () => {
     const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-audit-ring-")), "audit.jsonl");
     const config = auditConfig(auditFile, "http://127.0.0.1:1", 2);
     clearAuditEvents(config);
-    for (const tool of ["list_services", "request_tokens", "service_request"] as const) {
+    for (const tool of ["list_services", "get_gateway_service_references", "service_request"] as const) {
       audit({ type: "tool_invocation", subject: "actor", tool, outcome: "allow", timestamp: new Date().toISOString() }, config);
     }
     expect(getAuditEvents(config).map((event) => event.type)).toEqual(["tool_invocation", "tool_invocation"]);
-    expect((getAuditEvents(config)[0] as { tool: string }).tool).toBe("request_tokens");
+    expect((getAuditEvents(config)[0] as { tool: string }).tool).toBe("get_gateway_service_references");
     expect(readJsonl(auditFile)).toHaveLength(3);
   });
 });

@@ -9,25 +9,25 @@ import { createGatewayServer } from "../src/server.js";
 describe("MCP surface", () => {
   it("keeps the required safety opening in the first 512 instruction characters", () => {
     const opening = MCP_INSTRUCTIONS.slice(0, 512);
-    expect(opening).toContain("without exposing raw configured credentials");
+    expect(opening).toContain("without exposing protected backend values");
     expect(opening).toContain("enforced by the gateway backend before content reaches you");
     expect(opening).toContain("does not rely on you recognizing or keeping secrets confidential");
     expect(opening).toContain("Always call list_services first");
   });
 
-  it("tells agents how backend-issued opaque tokens are constrained", () => {
-    expect(MCP_INSTRUCTIONS).toContain("bound to the authenticated subject, originating service, destination, and credential");
+  it("tells agents how gateway service references are constrained", () => {
+    expect(MCP_INSTRUCTIONS).toContain("bound to the authenticated subject, originating service, destination, and access entry");
     expect(MCP_INSTRUCTIONS).toContain("idle and maximum lifetimes");
     expect(MCP_INSTRUCTIONS).toContain("work only through this gateway");
     expect(MCP_INSTRUCTIONS).toContain("scanned on the backend before delivery");
-    expect(MCP_INSTRUCTIONS).toContain("detected secrets are replaced with sec_ placeholders");
+    expect(MCP_INSTRUCTIONS).toContain("detected secrets are replaced with sec_ references");
     expect(MCP_INSTRUCTIONS).toContain("mcp-session-id is not an authorization boundary");
   });
 
   it("defines exactly five OpenAI-compatible tool descriptors", () => {
     expect(toolDescriptors.map((tool) => tool.name)).toEqual([
       "list_services",
-      "request_tokens",
+      "get_gateway_service_references",
       "describe_service_policy",
       "service_request",
       "explain_denial",
@@ -58,16 +58,23 @@ describe("MCP surface", () => {
     expect(toolDescriptors.find((tool) => tool.name === "service_request")?.annotations.destructiveHint).toBe(true);
     expect(toolDescriptors.find((tool) => tool.name === "service_request")?.annotations.openWorldHint).toBe(true);
 
-    const requestTokensDescription = toolDescriptors.find((tool) => tool.name === "request_tokens")?.description ?? "";
-    expect(requestTokensDescription).toContain("configured credentials remain on the gateway backend");
-    expect(requestTokensDescription).toContain("bound to the authenticated subject, service, destination, and credential");
-    expect(requestTokensDescription).toContain("idle and maximum TTLs");
-    expect(requestTokensDescription).toContain("work only through this gateway");
+    const referenceTool = toolDescriptors.find((tool) => tool.name === "get_gateway_service_references");
+    expect(referenceTool?.securitySchemes).toEqual([{ type: "oauth2", scopes: ["gateway.references"] }]);
+    expect(referenceTool?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+      idempotentHint: false,
+    });
+    expect(referenceTool?.inputSchema).toMatchObject({ required: ["service", "access_ids", "reason"] });
+    expect(referenceTool?.outputSchema).toMatchObject({ required: ["references"] });
+    expect(referenceTool?.description).toContain("cannot reveal or export");
+    expect(referenceTool?.description).toContain("does not contact or modify the downstream service");
 
     const serviceRequestDescription = toolDescriptors.find((tool) => tool.name === "service_request")?.description ?? "";
-    expect(serviceRequestDescription).toContain("backend substitutes opaque tokens only after authorization");
+    expect(serviceRequestDescription).toContain("backend resolves gateway references only after authorization");
     expect(serviceRequestDescription).toContain("Before the response reaches the agent");
-    expect(serviceRequestDescription).toContain("replaces detected secrets with subject- and service-bound sec_ tokens");
+    expect(serviceRequestDescription).toContain("replaces detected secrets with subject- and service-bound sec_ references");
   });
 
   it("initializes and lists tools through the configured MCP endpoint", async () => {
@@ -95,7 +102,7 @@ describe("MCP surface", () => {
 
       expect(list.body.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
         "list_services",
-        "request_tokens",
+        "get_gateway_service_references",
         "describe_service_policy",
         "service_request",
         "explain_denial",
@@ -183,7 +190,7 @@ describe("MCP surface", () => {
     }
   });
 
-  it("issues opaque tokens through request_tokens without configured secrets", async () => {
+  it("returns structured gateway service references without protected values", async () => {
     const fixture = await startFixtureServer();
     try {
       const initialize = await postMcp(fixture.url, {
@@ -202,18 +209,24 @@ describe("MCP surface", () => {
         id: 3,
         method: "tools/call",
         params: {
-          name: "request_tokens",
+          name: "get_gateway_service_references",
           arguments: {
             service: "demo-service",
-            credential_ids: ["api_key"],
+            access_ids: ["api_key"],
             reason: "test",
           },
         },
       }, sessionId ?? undefined);
 
       const serialized = JSON.stringify(call.body);
-      expect(call.body.result.structuredContent.tokens).toHaveLength(1);
-      expect(call.body.result.structuredContent.tokens[0].token).toMatch(/^gref_/);
+      expect(call.body.result.structuredContent.references).toHaveLength(1);
+      expect(call.body.result.structuredContent.references[0]).toMatchObject({
+        access_id: "api_key",
+        reference: expect.stringMatching(/^gref_/),
+        exportable: false,
+        usable_outside_gateway: false,
+        reveals_protected_value: false,
+      });
       expect(serialized).not.toContain("super-secret-api-key");
       expect(serialized).not.toContain("dev-token");
     } finally {
@@ -221,7 +234,28 @@ describe("MCP surface", () => {
     }
   });
 
-  it("uses opaque tokens across different MCP transport sessions", async () => {
+  it("rejects malformed access ids and the removed tool name", async () => {
+    const config = fixtureConfig();
+    const auth = { subject: "bearer-dev", scopes: ["gateway.references"], mode: "bearer" as const };
+
+    const malformed = await callTool("get_gateway_service_references", {
+      service: "demo-service",
+      access_ids: ["api_key", 7],
+      reason: "test malformed access ids",
+    }, config, auth);
+    const empty = await callTool("get_gateway_service_references", {
+      service: "demo-service",
+      access_ids: [],
+      reason: "test empty access ids",
+    }, config, auth);
+    const removed = await callTool("request_tokens", {}, config, auth);
+
+    expect(malformed).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_credential" } } });
+    expect(empty).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_credential" } } });
+    expect(removed).toMatchObject({ isError: true, structuredContent: { error: { code: "not_implemented" } } });
+  });
+
+  it("uses gateway service references across different MCP transport sessions", async () => {
     const downstream = await startDownstream();
     const fixture = await startFixtureServer({ destinationBaseUrl: downstream.baseUrl });
     try {
@@ -251,20 +285,20 @@ describe("MCP surface", () => {
       expect(secondSessionId).toBeTruthy();
       expect(secondSessionId).not.toBe(firstSessionId);
 
-      const tokenCall = await postMcp(fixture.url, {
+      const referenceCall = await postMcp(fixture.url, {
         jsonrpc: "2.0",
         id: 3,
         method: "tools/call",
         params: {
-          name: "request_tokens",
+          name: "get_gateway_service_references",
           arguments: {
             service: "demo-service",
-            credential_ids: ["api_key"],
-            reason: "test cross-session token use",
+            access_ids: ["api_key"],
+            reason: "test cross-session reference use",
           },
         },
       }, firstSessionId);
-      const token = tokenCall.body.result.structuredContent.tokens[0].token;
+      const reference = referenceCall.body.result.structuredContent.references[0].reference;
 
       const requestCall = await postMcp(fixture.url, {
         jsonrpc: "2.0",
@@ -276,8 +310,8 @@ describe("MCP surface", () => {
             service: "demo-service",
             method: "GET",
             path: "/api/echo",
-            headers: { "X-API-Key": token },
-            reason: "verify token survives transport session changes",
+            headers: { "X-API-Key": reference },
+            reason: "verify reference survives transport session changes",
           },
         },
       }, secondSessionId);

@@ -7,7 +7,7 @@ Do not add any HTTP framework; use Node `http` plus the MCP SDK transport.
 
 ## Scope
 - Add Streamable HTTP MCP endpoint at configured `server.mcp_path`.
-- Register exactly four tools: `list_services`, `request_tokens`, `service_request`, `explain_denial`.
+- Register exactly four tools: `list_services`, `get_gateway_service_references`, `service_request`, `explain_denial`.
 - Add the required initialization instructions.
 - Add input schemas, output schemas, per-tool `securitySchemes`, `_meta.securitySchemes`, annotations, and invocation status text.
 - Add safe result/error helpers.
@@ -18,7 +18,7 @@ Do not add any HTTP framework; use Node `http` plus the MCP SDK transport.
 
 ## Interfaces And Tool Names
 - `list_services`
-- `request_tokens`
+- `get_gateway_service_references`
 - `service_request`
 - `explain_denial`
 

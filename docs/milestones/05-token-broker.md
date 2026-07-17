@@ -6,7 +6,7 @@ Use the architecture in `00-architecture.md`. This milestone implements opaque c
 Token values are not raw credentials and must not be logged.
 
 ## Scope
-- Implement `request_tokens`.
+- Implement `get_gateway_service_references`.
 - Generate fully opaque, non-guessable token values.
 - Store token records in memory with internal IDs and token hashes.
 - Enforce subject, session if available, service, destination, credential, and reason binding.
@@ -46,7 +46,7 @@ Negative:
 - Audit event omits raw opaque token value.
 
 ## Acceptance Criteria
-- `request_tokens` is functional.
+- `get_gateway_service_references` is functional.
 - Token responses contain no raw downstream credential.
 - Token stores and audit logs use internal token IDs/hashes, not raw token values.
 - `npm test` passes.

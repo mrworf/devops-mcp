@@ -70,7 +70,7 @@ const rawConfigSchema = z.object({
         refresh_token_max_ttl: z.string().default("90d"),
         refresh_token_store_file: z.string().min(1).optional(),
         allowed_clients: z.array(z.string().min(1)).min(1),
-        required_scopes: z.array(z.string().min(1)).default(["gateway.read", "gateway.tokens", "gateway.request"]),
+        required_scopes: z.array(z.string().min(1)).default(["gateway.read", "gateway.references", "gateway.request"]),
         login_rate_limit: z.object({
           window: z.string().default("15m"),
           per_source: z.number().int().positive().default(10),

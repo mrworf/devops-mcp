@@ -55,7 +55,7 @@ export interface ToolInvocationAuditEvent {
   type: "tool_invocation";
   subject: string;
   session_id?: string;
-  tool: "list_services" | "describe_service_policy" | "request_tokens" | "service_request" | "explain_denial";
+  tool: "list_services" | "describe_service_policy" | "get_gateway_service_references" | "service_request" | "explain_denial";
   outcome: "allow" | "deny" | "error";
   service?: string;
   request_id?: string;

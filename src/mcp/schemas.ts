@@ -34,18 +34,18 @@ export const listServicesOutputSchema = {
   additionalProperties: false,
 } as const;
 
-export const requestTokensInputSchema = {
+export const gatewayServiceReferencesInputSchema = {
   type: "object",
   properties: {
     service: { type: "string" },
     destination: { type: "string" },
-    credential_ids: {
+    access_ids: {
       type: "array",
       items: { type: "string" },
     },
     reason: { type: "string" },
   },
-  required: ["service", "credential_ids", "reason"],
+  required: ["service", "access_ids", "reason"],
   additionalProperties: false,
 } as const;
 
@@ -79,15 +79,36 @@ export const describeServicePolicyOutputSchema = {
   additionalProperties: false,
 } as const;
 
-export const requestTokensOutputSchema = {
+export const gatewayServiceReferencesOutputSchema = {
   type: "object",
   properties: {
-    tokens: {
+    references: {
       type: "array",
-      items: { type: "object" },
+      items: {
+        type: "object",
+        properties: {
+          access_id: { type: "string" },
+          reference: { type: "string" },
+          usage_hint: { type: "string" },
+          expires_at: { type: "string" },
+          exportable: { type: "boolean", const: false },
+          usable_outside_gateway: { type: "boolean", const: false },
+          reveals_protected_value: { type: "boolean", const: false },
+        },
+        required: [
+          "access_id",
+          "reference",
+          "usage_hint",
+          "expires_at",
+          "exportable",
+          "usable_outside_gateway",
+          "reveals_protected_value",
+        ],
+        additionalProperties: false,
+      },
     },
   },
-  required: ["tokens"],
+  required: ["references"],
   additionalProperties: false,
 } as const;
 

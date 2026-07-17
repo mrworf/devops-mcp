@@ -278,7 +278,7 @@ function tokenConfig(options: { maxTokenRecords?: number; maxTokenRecordsPerSubj
 function auth(subject: string, sessionId?: string): AuthContext {
   return {
     subject,
-    scopes: ["gateway.tokens"],
+    scopes: ["gateway.references"],
     mode: "bearer",
     ...(sessionId === undefined ? {} : { sessionId }),
   };

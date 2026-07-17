@@ -111,7 +111,7 @@ export function protectedResourceMetadata(config: GatewayConfig, request: Incomi
     ? config.auth.oauth.requiredScopes
     : config.auth.mode === "builtin_oauth"
       ? config.auth.builtinOAuth.requiredScopes
-      : ["gateway.read", "gateway.tokens", "gateway.request"];
+      : ["gateway.read", "gateway.references", "gateway.request"];
   const authorizationServers = config.auth.mode === "oauth"
     ? [config.auth.oauth.issuer]
     : config.auth.mode === "builtin_oauth"

@@ -20,7 +20,7 @@ auth:
     principal_claim: sub
     required_scopes:
       - gateway.read
-      - gateway.tokens
+      - gateway.references
       - gateway.request
 ```
 
@@ -59,7 +59,7 @@ auth:
       - https://chatgpt.com
     required_scopes:
       - gateway.read
-      - gateway.tokens
+      - gateway.references
       - gateway.request
 ```
 

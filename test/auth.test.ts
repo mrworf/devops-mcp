@@ -41,7 +41,7 @@ describe("auth", () => {
       expect(response.status).toBe(200);
       expect(body.resource).toBe(fixture.baseUrl);
       expect(body.authorization_servers).toEqual([]);
-      expect(body.scopes_supported).toEqual(["gateway.read", "gateway.tokens", "gateway.request"]);
+      expect(body.scopes_supported).toEqual(["gateway.read", "gateway.references", "gateway.request"]);
     } finally {
       await fixture.close();
     }
@@ -59,7 +59,7 @@ describe("auth", () => {
 
       expect(response.status).toBe(200);
       expect(body.authorization_servers).toEqual(["https://auth.example.com"]);
-      expect(body.scopes_supported).toEqual(["gateway.read", "gateway.tokens", "gateway.request"]);
+      expect(body.scopes_supported).toEqual(["gateway.read", "gateway.references", "gateway.request"]);
     } finally {
       await fixture.close();
     }
@@ -77,7 +77,7 @@ describe("auth", () => {
       };
       expect(protectedBody.resource).toBe("https://mcp.example.org");
       expect(protectedBody.authorization_servers).toEqual(["https://mcp.example.org"]);
-      expect(protectedBody.scopes_supported).toEqual(["gateway.read", "gateway.tokens", "gateway.request"]);
+      expect(protectedBody.scopes_supported).toEqual(["gateway.read", "gateway.references", "gateway.request"]);
 
       const metadata = await fetch(`${fixture.baseUrl}/.well-known/oauth-authorization-server`);
       const metadataBody = await metadata.json() as Record<string, unknown>;
@@ -161,7 +161,7 @@ describe("auth", () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
     try {
       const verifier = "refresh-verifier";
-      const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier, "gateway.read gateway.tokens");
+      const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier, "gateway.read gateway.references");
       const issued = await localRequest(`${fixture.baseUrl}/oauth/token`, {
         method: "POST", body: tokenBody(code, redirectUri, verifier),
       });
@@ -175,7 +175,7 @@ describe("auth", () => {
       expect(refreshedBody.refresh_token).not.toBe(issuedBody.refresh_token);
       expect(refreshedBody.scope).toBe("gateway.read");
       await expect(authenticateRequest(requestWithBearer(refreshedBody.access_token), config, ["gateway.read"])).resolves.toMatchObject({ subject: "admin@example.com" });
-      await expect(authenticateRequest(requestWithBearer(refreshedBody.access_token), config, ["gateway.tokens"])).rejects.toThrow("required scopes");
+      await expect(authenticateRequest(requestWithBearer(refreshedBody.access_token), config, ["gateway.references"])).rejects.toThrow("required scopes");
     } finally {
       await fixture.close();
     }
@@ -193,7 +193,7 @@ describe("auth", () => {
       const first = JSON.parse(issued.body) as { refresh_token: string };
 
       const escalation = await localRequest(`${fixture.baseUrl}/oauth/token`, {
-        method: "POST", body: refreshBody(first.refresh_token, { scope: "gateway.read gateway.tokens" }),
+        method: "POST", body: refreshBody(first.refresh_token, { scope: "gateway.read gateway.references" }),
       });
       expect(escalation.status).toBe(400);
       expect(JSON.parse(escalation.body)).toEqual({ error: "invalid_scope" });
@@ -407,7 +407,7 @@ describe("auth", () => {
   it("does not keep opaque gateway tokens across fresh token broker instances", () => {
     const config = opaqueTokenRestartConfig();
     const broker = new TokenBroker(config);
-    const issued = broker.issueTokens({ subject: "henric@example.com", scopes: ["gateway.tokens"], mode: "bearer" }, {
+    const issued = broker.issueTokens({ subject: "henric@example.com", scopes: ["gateway.references"], mode: "bearer" }, {
       service: "demo-service",
       destination: "primary",
       credential_ids: ["api_key"],
@@ -876,6 +876,23 @@ describe("auth", () => {
       expect(response.headers.get("www-authenticate")).toContain("resource_metadata=");
       expect(response.headers.get("www-authenticate")).toContain("gateway.read");
       expect(body.error).toEqual({ code: "unauthenticated", message: "Authentication required." });
+
+      const referenceResponse = await fetch(`${fixture.baseUrl}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "accept": "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "get_gateway_service_references", arguments: {} },
+        }),
+      });
+
+      expect(referenceResponse.status).toBe(401);
+      expect(referenceResponse.headers.get("www-authenticate")).toContain("gateway.references");
     } finally {
       await fixture.close();
     }
@@ -920,12 +937,12 @@ describe("auth", () => {
     const jwks = await startJwks();
     try {
       const config = oauthConfig(jwks.jwksUri);
-      const token = await jwks.sign({ aud: "agent-credential-gateway", scope: "gateway.read gateway.tokens" });
+      const token = await jwks.sign({ aud: "agent-credential-gateway", scope: "gateway.read gateway.references" });
 
-      const context = await authenticateRequest(requestWithBearer(token), config, ["gateway.tokens"]);
+      const context = await authenticateRequest(requestWithBearer(token), config, ["gateway.references"]);
 
       expect(context.subject).toBe("henric@example.com");
-      expect(context.scopes).toContain("gateway.tokens");
+      expect(context.scopes).toContain("gateway.references");
       await expect(authenticateRequest(requestWithBearer(token), config, ["gateway.request"])).rejects.toThrow("required scopes");
     } finally {
       await jwks.close();
@@ -937,14 +954,14 @@ describe("auth", () => {
     try {
       const config = oauthConfig(jwks.jwksUri, "client_id");
       const firstToken = await jwks.sign(
-        { aud: "agent-credential-gateway", scope: "gateway.tokens" },
+        { aud: "agent-credential-gateway", scope: "gateway.references" },
         { subject: null, extraClaims: { client_id: "client-a" } },
       );
       const secondToken = await jwks.sign(
         { aud: "agent-credential-gateway", scope: "gateway.request" },
         { subject: null, extraClaims: { client_id: "client-b" } },
       );
-      const first = await authenticateRequest(requestWithBearer(firstToken), config, ["gateway.tokens"]);
+      const first = await authenticateRequest(requestWithBearer(firstToken), config, ["gateway.references"]);
       const second = await authenticateRequest(requestWithBearer(secondToken), config, ["gateway.request"]);
       expect(first.subject).toBe("client-a");
       expect(second.subject).toBe("client-b");
@@ -1021,7 +1038,7 @@ function oauthConfig(jwksUri: string, principalClaim?: string): GatewayConfig {
       issuer: "https://auth.example.com",
       audience: "agent-credential-gateway",
       jwks_uri: jwksUri,
-      required_scopes: ["gateway.read", "gateway.tokens", "gateway.request"],
+      required_scopes: ["gateway.read", "gateway.references", "gateway.request"],
       ...(principalClaim === undefined ? {} : { principal_claim: principalClaim }),
     },
   }), {
@@ -1066,7 +1083,7 @@ async function builtinOAuthConfig(options: {
         refresh_token_max_ttl: options.refreshTokenMaxTtl ?? "90d",
         ...(options.refreshTokenStoreFile === undefined ? {} : { refresh_token_store_file: options.refreshTokenStoreFile }),
         allowed_clients: options.allowedClients ?? ["https://chatgpt.com"],
-        required_scopes: ["gateway.read", "gateway.tokens", "gateway.request"],
+        required_scopes: ["gateway.read", "gateway.references", "gateway.request"],
         ...(options.loginRateLimit === undefined ? {} : { login_rate_limit: options.loginRateLimit }),
       },
     }),
