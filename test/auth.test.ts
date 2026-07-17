@@ -100,6 +100,74 @@ describe("auth", () => {
     }
   });
 
+  it("renders a responsive built-in OAuth authorization page with request details and defensive headers", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id: "https://chatgpt.com/oauth/client",
+      redirect_uri: "https://chatgpt.com/oauth/callback",
+      scope: "gateway.read gateway.references",
+      state: "setup-state",
+      code_challenge_method: "S256",
+      code_challenge: "page-challenge",
+      resource: "https://mcp.example.org",
+    });
+
+    try {
+      const response = await localRequest(`${fixture.baseUrl}/oauth/authorize?${query}`, { method: "GET" });
+
+      expect(response.status).toBe(200);
+      expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
+      expect(response.headers["cache-control"]).toBe("no-store");
+      expect(response.headers["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+      expect(response.headers["referrer-policy"]).toBe("no-referrer");
+      expect(response.headers["x-content-type-options"]).toBe("nosniff");
+      expect(response.headers["x-frame-options"]).toBe("DENY");
+      expect(response.body).toContain("Authorize Agent Credential Gateway");
+      expect(response.body).toContain('class="panel"');
+      expect(response.body).toContain('aria-label="OAuth request details"');
+      expect(response.body).toContain("https://chatgpt.com/oauth/client");
+      expect(response.body).toContain("https://chatgpt.com/oauth/callback");
+      expect(response.body).toContain("gateway.read, gateway.references");
+      expect(response.body).toContain('name="state" value="setup-state"');
+      expect(response.body).toContain('name="code_challenge" value="page-challenge"');
+      expect(response.body).toContain('label for="username"');
+      expect(response.body).toContain('label for="password"');
+      expect(response.body).toContain("@media (max-width: 680px)");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("escapes hostile OAuth display values and safely renders incomplete authorization requests", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    const hostileClient = '\"><script>alert("client")</script>';
+    const hostileRedirect = 'not-a-uri\"><svg onload="alert(redirect)">';
+    const query = new URLSearchParams({
+      client_id: hostileClient,
+      redirect_uri: hostileRedirect,
+      ignored: '<img src=x onerror="alert(ignored)">',
+    });
+
+    try {
+      const response = await localRequest(`${fixture.baseUrl}/oauth/authorize?${query}`, { method: "GET" });
+
+      expect(response.status).toBe(200);
+      expect(response.body).not.toContain(hostileClient);
+      expect(response.body).not.toContain(hostileRedirect);
+      expect(response.body).not.toContain("<script>");
+      expect(response.body).not.toContain("<svg");
+      expect(response.body).not.toContain("alert(ignored)");
+      expect(response.body).toContain("&quot;&gt;&lt;script&gt;alert(&quot;client&quot;)&lt;/script&gt;");
+      expect(response.body).toContain("Not provided");
+      expect(response.body).not.toContain('name="ignored"');
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("completes built-in OAuth authorization code flow and authenticates the issued token", async () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
@@ -505,16 +573,23 @@ describe("auth", () => {
     const fixture = await startServer(config);
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
     try {
+      const challenge = pkceChallenge("verifier");
       const response = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
         method: "POST",
         body: authorizationBody({
           password: "wrong-password",
-          code_challenge: pkceChallenge("verifier"),
+          code_challenge: challenge,
+          state: "retry-state",
         }),
       });
 
       expect(response.status).toBe(401);
+      expect(response.body).toContain('role="alert"');
       expect(response.body).toContain("Invalid username or password.");
+      expect(response.body).toContain('name="state" value="retry-state"');
+      expect(response.body).toContain(`name="code_challenge" value="${challenge}"`);
+      expect(response.body).not.toContain('name="username" value=');
+      expect(response.body).not.toContain('name="password" value=');
       expect(response.body).not.toContain("admin@example.com");
       expect(response.body).not.toContain("wrong-password");
     } finally {
@@ -530,11 +605,12 @@ describe("auth", () => {
     const fixture = await startServer(config);
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
     try {
+      const failedChallenge = pkceChallenge("failed-login");
       const wrongUsername = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
-        method: "POST", body: authorizationBody({ username: "nobody@example.org", code_challenge: pkceChallenge("wrong-user") }),
+        method: "POST", body: authorizationBody({ username: "nobody@example.org", code_challenge: failedChallenge }),
       });
       const wrongPassword = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
-        method: "POST", body: authorizationBody({ password: "wrong-password", code_challenge: pkceChallenge("wrong-password") }),
+        method: "POST", body: authorizationBody({ password: "wrong-password", code_challenge: failedChallenge }),
       });
       expect(wrongUsername.status).toBe(401);
       expect(wrongPassword.status).toBe(401);

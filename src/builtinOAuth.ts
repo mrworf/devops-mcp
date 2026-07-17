@@ -16,6 +16,24 @@ const OPENID_CONFIGURATION_PATH = "/.well-known/openid-configuration";
 const JWKS_PATH = "/oauth/jwks.json";
 const AUTHORIZE_PATH = "/oauth/authorize";
 const TOKEN_PATH = "/oauth/token";
+const AUTHORIZE_FORM_PARAMETER_NAMES = [
+  "response_type",
+  "client_id",
+  "redirect_uri",
+  "scope",
+  "state",
+  "code_challenge_method",
+  "code_challenge",
+  "resource",
+] as const;
+const AUTHORIZE_PAGE_HEADERS = {
+  "cache-control": "no-store",
+  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  "content-type": "text/html; charset=utf-8",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+} as const;
 
 interface AuthorizationCode {
   clientId: string;
@@ -144,25 +162,246 @@ async function jwks(auth: BuiltinOAuthAuthConfig["builtinOAuth"]): Promise<Recor
 
 function renderLoginForm(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): void {
   const params = new URL(request.url ?? AUTHORIZE_PATH, config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth.issuer : "http://localhost").searchParams;
-  const hidden = [...params.entries()]
-    .map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}">`)
+  renderLoginPage(response, params);
+}
+
+function renderLoginPage(
+  response: ServerResponse,
+  params: URLSearchParams,
+  statusCode = 200,
+  errorMessage?: string,
+): void {
+  const hidden = AUTHORIZE_FORM_PARAMETER_NAMES
+    .flatMap((key) => {
+      const value = params.get(key);
+      return value === null ? [] : [`<input type="hidden" name="${key}" value="${escapeHtml(value)}">`];
+    })
     .join("\n");
-  response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  const clientId = displayValue(params.get("client_id"));
+  const redirectUri = displayValue(params.get("redirect_uri"));
+  const redirectOrigin = displayValue(originFromUri(params.get("redirect_uri")));
+  const resource = displayValue(params.get("resource"));
+  const requestedScopes = params.get("scope")?.trim().split(/\s+/).filter(Boolean).join(", ") || null;
+  const error = errorMessage === undefined
+    ? ""
+    : `<div class="error" role="alert"><strong>Authorization failed.</strong> ${escapeHtml(errorMessage)}</div>`;
+  response.writeHead(statusCode, AUTHORIZE_PAGE_HEADERS);
   response.end(`<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Authorize MCP Gateway</title></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Authorize Agent Credential Gateway</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --text: #172033;
+  --muted: #5e6a7d;
+  --border: #d7deea;
+  --accent: #2563eb;
+  --accent-dark: #1d4ed8;
+  --error-bg: #fef2f2;
+  --error-border: #fecaca;
+  --error-text: #991b1b;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+main {
+  width: min(880px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 40px 0;
+}
+.panel {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 45px rgba(23, 32, 51, 0.08);
+}
+.intro {
+  padding: 32px 32px 24px;
+  border-bottom: 1px solid var(--border);
+}
+h1 {
+  margin: 0 0 12px;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  line-height: 1.1;
+}
+p {
+  margin: 0 0 16px;
+}
+.description {
+  max-width: 68ch;
+  color: var(--muted);
+}
+.client-details {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.detail-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.detail-row strong {
+  color: var(--text);
+}
+.info-box,
+.error {
+  margin-top: 20px;
+  padding: 12px 14px;
+  border-radius: 8px;
+}
+.info-box {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+.error {
+  margin: 0 0 20px;
+  border: 1px solid var(--error-border);
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+form {
+  padding: 28px 32px 32px;
+}
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.94rem;
+  font-weight: 650;
+}
+input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #aeb8c8;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+}
+input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  outline: none;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 24px;
+}
+button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 20px;
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+button:hover {
+  background: var(--accent-dark);
+}
+button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+@media (max-width: 680px) {
+  main {
+    width: min(100% - 20px, 880px);
+    padding: 10px 0;
+  }
+  .intro,
+  form {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .detail-row,
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+  .detail-row {
+    gap: 2px;
+  }
+  .actions {
+    justify-content: stretch;
+  }
+  button {
+    width: 100%;
+  }
+}
+</style>
+</head>
 <body>
 <main>
-<h1>Authorize MCP Gateway</h1>
+<section class="panel" aria-labelledby="authorize-title">
+<div class="intro">
+<h1 id="authorize-title">Authorize Agent Credential Gateway</h1>
+<p class="description">Connect your MCP client to configured services through this self-hosted gateway without giving the client access to backend credentials.</p>
+<div class="client-details" aria-label="OAuth request details">
+<div class="detail-row"><strong>Client ID</strong><span>${escapeHtml(clientId)}</span></div>
+<div class="detail-row"><strong>Redirect host</strong><span>${escapeHtml(redirectOrigin)}</span></div>
+<div class="detail-row"><strong>Redirect URI</strong><span>${escapeHtml(redirectUri)}</span></div>
+<div class="detail-row"><strong>Resource</strong><span>${escapeHtml(resource)}</span></div>
+<div class="detail-row"><strong>Scopes</strong><span>${escapeHtml(displayValue(requestedScopes))}</span></div>
+</div>
+<div class="info-box" role="note">The gateway enforces authentication, service access, destination validation, and request policy before using configured credentials. Backend credential values are not shared with the MCP client.</div>
+</div>
 <form method="post" action="${AUTHORIZE_PATH}">
 ${hidden}
-<label>Username <input name="username" autocomplete="username" required></label>
-<label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-<button type="submit">Authorize</button>
+${error}
+<div class="field-grid">
+<label for="username">Username <input id="username" name="username" autocomplete="username" required></label>
+<label for="password">Password <input id="password" name="password" type="password" autocomplete="current-password" required></label>
+</div>
+<div class="actions"><button type="submit">Authorize</button></div>
 </form>
+</section>
 </main>
 </body>
 </html>`);
+}
+
+function displayValue(value: string | null): string {
+  return value?.trim() || "Not provided";
+}
+
+function originFromUri(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const uri = new URL(value);
+    return uri.origin === "null" ? null : uri.origin;
+  } catch {
+    return null;
+  }
 }
 
 async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -233,8 +472,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
       resource_status: "match",
       scope_count: validation.scopes.length,
     });
-    response.writeHead(401, { "content-type": "text/html; charset=utf-8" });
-    response.end("<!doctype html><html><body><p>Invalid username or password.</p></body></html>");
+    renderLoginPage(response, body, 401, "Invalid username or password.");
     return;
   }
 
