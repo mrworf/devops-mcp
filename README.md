@@ -7,6 +7,11 @@
 
 The service acts as an MCP-controlled credential gateway. Agents get short-lived gateway service references, then use those references in approved service requests. The gateway enforces authentication, destination validation, reference binding, and policy before substituting protected backend values and making the downstream HTTP call. It also scans downstream responses and replaces detected secrets with opaque references before returning the response to the agent.
 
+> [!IMPORTANT]
+> **Recommended client:** This MCP works with ChatGPT in Chat mode, but Codex or ChatGPT Work mode is recommended for operational and multi-step service workflows. Chat mode may apply platform-level action safety checks that block an otherwise valid action before the tool call reaches this server; in that case, the gateway cannot provide a request ID or explain the denial. Codex and Work mode use agent-oriented security models built around sandboxing, approvals, and tool-specific controls, which are a better fit for these workflows. They are not less secure; they enforce security through a different execution and approval model. See [OpenAI's agent approvals and security documentation](https://learn.chatgpt.com/docs/agent-approvals-security).
+>
+> The client mode does not weaken this gateway's controls. Authentication, destination validation, policy enforcement, reference binding, protected-value substitution, and auditing remain enforced by the server for every client.
+
 ## What It Provides
 
 - Streamable HTTP MCP endpoint for configured clients.
