@@ -12,7 +12,7 @@ export interface ServiceSummary {
     base_url_hint: string;
     tls_verify: boolean;
   }>;
-  credentials: Array<{
+  access_methods: Array<{
     id: string;
     usage_hint: string;
   }>;
@@ -29,7 +29,7 @@ export interface ServicePolicyDescription {
     base_url_hint: string;
     tls_verify: boolean;
   }>;
-  credentials: Array<{
+  access_methods: Array<{
     id: string;
     usage_hint: string;
   }>;
@@ -65,7 +65,7 @@ export function describeServicePolicy(config: GatewayConfig, auth: AuthContext, 
       base_url_hint: destination.baseUrl,
       tls_verify: destination.tls.verify,
     })),
-    credentials: service.credentials.map((credential) => ({
+    access_methods: service.credentials.map((credential) => ({
       id: credential.id,
       usage_hint: usageHint(credential),
     })),
@@ -123,7 +123,7 @@ function serviceSummary(service: ServiceConfig): ServiceSummary {
       base_url_hint: destination.baseUrl,
       tls_verify: destination.tls.verify,
     })),
-    credentials: service.credentials.map((credential) => ({
+    access_methods: service.credentials.map((credential) => ({
       id: credential.id,
       usage_hint: usageHint(credential),
     })),
@@ -137,8 +137,8 @@ function serviceSummary(service: ServiceConfig): ServiceSummary {
 }
 
 function usageHint(credential: CredentialConfig): string {
-  if (credential.usage.name) return `Use token as ${credential.usage.name} ${credential.usage.kind}`;
-  return `Use token as ${credential.usage.kind}`;
+  if (credential.usage.name) return `Use reference as ${credential.usage.name} ${credential.usage.kind}`;
+  return `Use reference as ${credential.usage.kind}`;
 }
 
 function orderedRules(rules: PolicyRuleConfig[]): PolicyRuleConfig[] {

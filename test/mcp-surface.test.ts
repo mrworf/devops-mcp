@@ -392,7 +392,11 @@ describe("MCP surface", () => {
 
       expect(call.body.result.structuredContent.services).toHaveLength(1);
       expect(call.body.result.structuredContent.services[0].id).toBe("demo-service");
+      expect(call.body.result.structuredContent.services[0].access_methods).toEqual([
+        { id: "api_key", usage_hint: "Use reference as X-API-Key header" },
+      ]);
       expect(serialized).not.toContain("super-secret-api-key");
+      expect(serialized).not.toContain('"credentials"');
     } finally {
       await fixture.close();
     }
@@ -416,7 +420,7 @@ describe("MCP surface", () => {
       description: "Demo HTTP API",
       api_docs_url: "https://api.example.org/demo/openapi.json",
       destinations: [{ id: "primary", base_url_hint: "https://demo.internal" }],
-      credentials: [{ id: "api_key", usage_hint: "Use token as X-API-Key header" }],
+      access_methods: [{ id: "api_key", usage_hint: "Use reference as X-API-Key header" }],
       policy: {
         mode: "deny",
         rules: [
@@ -427,6 +431,7 @@ describe("MCP surface", () => {
     });
     expect(serialized).not.toContain("super-secret-api-key");
     expect(serialized).not.toContain("dev-token");
+    expect(serialized).not.toContain('"credentials"');
   });
 
   it("does not let unauthorized users inspect service policy", async () => {

@@ -27,7 +27,24 @@ export const listServicesOutputSchema = {
   properties: {
     services: {
       type: "array",
-      items: { type: "object" },
+      items: {
+        type: "object",
+        properties: {
+          access_methods: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                usage_hint: { type: "string" },
+              },
+              required: ["id", "usage_hint"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["access_methods"],
+      },
     },
   },
   required: ["services"],
@@ -69,13 +86,13 @@ export const describeServicePolicyOutputSchema = {
       type: "array",
       items: { type: "object" },
     },
-    credentials: {
+    access_methods: {
       type: "array",
       items: { type: "object" },
     },
     policy: { type: "object" },
   },
-  required: ["id", "name", "destinations", "credentials", "policy"],
+  required: ["id", "name", "destinations", "access_methods", "policy"],
   additionalProperties: false,
 } as const;
 

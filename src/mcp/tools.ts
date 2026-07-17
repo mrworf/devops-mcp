@@ -54,7 +54,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "list_services",
     title: "List configured services",
-    description: "List the HTTP services this authenticated user can access through the gateway. Never returns configured credential values.",
+    description: "List the HTTP services and access methods available to this authenticated user through the gateway. Never returns protected backend values.",
     inputSchema: emptyInputSchema,
     outputSchema: listServicesOutputSchema,
     securitySchemes: readSecurity,
@@ -92,7 +92,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "describe_service_policy",
     title: "Describe service policy",
-    description: "Describe the configured destinations, credential usage hints, and ordered allow/deny policy rules for a service this authenticated user can access. Never returns configured credential values.",
+    description: "Describe configured destinations, service access methods, and ordered allow/deny policy rules for a service this authenticated user can access. Never returns protected backend values.",
     inputSchema: describeServicePolicyInputSchema,
     outputSchema: describeServicePolicyOutputSchema,
     securitySchemes: readSecurity,

@@ -18,7 +18,8 @@ describe("service registry", () => {
       base_url_hint: "https://portainer.internal:9443",
       tls_verify: false,
     });
-    expect(services[0]?.credentials).toEqual([{ id: "api_key", usage_hint: "Use token as X-API-Key header" }]);
+    expect(services[0]?.access_methods).toEqual([{ id: "api_key", usage_hint: "Use reference as X-API-Key header" }]);
+    expect(JSON.stringify(services)).not.toContain('"credentials"');
     expect(JSON.stringify(services)).not.toContain("portainer-secret");
   });
 

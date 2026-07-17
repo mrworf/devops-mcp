@@ -377,10 +377,10 @@ List services and destinations available to the authenticated user.
           "tls_verify": false
         }
       ],
-      "credentials": [
+      "access_methods": [
         {
           "id": "api_key",
-          "usage_hint": "Use token as X-API-Key header"
+          "usage_hint": "Use reference as X-API-Key header"
         }
       ],
       "policy_summary": "mode=deny"
@@ -397,7 +397,7 @@ Recommended descriptor properties:
 {
   title: "List configured services",
   description:
-    "List the HTTP services this authenticated user can access through the gateway. Does not return raw credentials.",
+    "List the HTTP services and access methods available to this authenticated user through the gateway. Does not return protected backend values.",
   securitySchemes: [
     { type: "oauth2", scopes: ["gateway.read"] }
   ],
@@ -427,7 +427,7 @@ auto
 
 ### Purpose
 
-Describe configured destinations, credential usage hints, and ordered allow/deny policy rules for a service the authenticated user can access.
+Describe configured destinations, service access methods, and ordered allow/deny policy rules for a service the authenticated user can access.
 
 ### Input
 
@@ -452,10 +452,10 @@ Describe configured destinations, credential usage hints, and ordered allow/deny
       "tls_verify": false
     }
   ],
-  "credentials": [
+  "access_methods": [
     {
       "id": "api_key",
-      "usage_hint": "Use token as X-API-Key header"
+      "usage_hint": "Use reference as X-API-Key header"
     }
   ],
   "policy": {
@@ -483,7 +483,7 @@ Recommended descriptor properties:
 {
   title: "Describe service policy",
   description:
-    "Describe the configured destinations, credential usage hints, and ordered allow/deny policy rules for a service this authenticated user can access. Does not return raw credentials.",
+    "Describe configured destinations, service access methods, and ordered allow/deny policy rules for a service this authenticated user can access. Does not return protected backend values.",
   securitySchemes: [
     { type: "oauth2", scopes: ["gateway.read"] }
   ],
