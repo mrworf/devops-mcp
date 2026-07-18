@@ -1,5 +1,7 @@
 # Milestone 00: Architecture Baseline
 
+> Historical naming note: this completed milestone predates the rebrand to SecretSauce (MCP).
+
 ## Purpose
 This file is the shared implementation contract for the Agent Credential Gateway MCP MVP. Read it before implementing any milestone, then read only the selected milestone plan and the project guidance in `docs/AGENTS.md`.
 

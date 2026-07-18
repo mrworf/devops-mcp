@@ -90,6 +90,8 @@ describe("MCP surface", () => {
           clientInfo: { name: "mcp-surface-test", version: "1.0.0" },
         },
       });
+      expect(initialize.body.result.serverInfo.name).toBe("secretsauce-mcp");
+      expect(initialize.body.result.serverInfo.name).not.toBe(["agent", "credential", "gateway", "mcp"].join("-"));
       expect(initialize.body.result.instructions).toContain("Always call list_services first");
       const sessionId = initialize.response.headers.get("mcp-session-id");
       expect(sessionId).toBeTruthy();

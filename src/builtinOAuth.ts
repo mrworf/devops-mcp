@@ -191,7 +191,7 @@ function renderLoginPage(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authorize Agent Credential Gateway</title>
+<title>Authorize SecretSauce</title>
 <style>
 :root {
   color-scheme: light;
@@ -364,8 +364,8 @@ button:focus-visible {
 <main>
 <section class="panel" aria-labelledby="authorize-title">
 <div class="intro">
-<h1 id="authorize-title">Authorize Agent Credential Gateway</h1>
-<p class="description">Connect your MCP client to configured services through this self-hosted gateway without giving the client access to backend credentials.</p>
+<h1 id="authorize-title">Authorize SecretSauce</h1>
+<p class="description"><strong>Give agents access, not secrets.</strong> Connect your MCP client to configured services through this self-hosted gateway without giving the client access to backend credentials.</p>
 <div class="client-details" aria-label="OAuth request details">
 <div class="detail-row"><strong>Client ID</strong><span>${escapeHtml(clientId)}</span></div>
 <div class="detail-row"><strong>Redirect host</strong><span>${escapeHtml(redirectOrigin)}</span></div>

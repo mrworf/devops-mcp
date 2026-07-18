@@ -6,7 +6,7 @@ server:
 auth:
   mode: bearer
   bearer:
-    token_env: AGENT_GATEWAY_MCP_TOKEN
+    token_env: SECRETSAUCE_MCP_TOKEN
 
 tokens:
   idle_ttl: 10m
@@ -21,7 +21,7 @@ logging:
   level: info
 
 audit:
-  file: /var/lib/agent-credential-gateway/audit/audit.jsonl
+  file: /var/lib/secretsauce/audit/audit.jsonl
 
 services:
   portainer-prod:

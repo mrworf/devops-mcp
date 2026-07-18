@@ -1,9 +1,11 @@
-# Agent Credential Gateway MCP
+# SecretSauce (MCP)
 
-[![CI](https://github.com/mrworf/devops-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mrworf/devops-mcp/actions/workflows/ci.yml)
-[![Docker image](https://img.shields.io/badge/GHCR-agent--credential--gateway--mcp-2ea44f?logo=github)](https://github.com/mrworf/devops-mcp/pkgs/container/agent-credential-gateway-mcp)
+> **Give agents access, not secrets**
 
-`agent-credential-gateway-mcp` is a self-hosted MCP server that lets Codex, ChatGPT-compatible MCP clients, and other supported agents call configured HTTP services without receiving raw configured credentials. Secret isolation is enforced by the gateway backend before content reaches the agent; it does not depend on the agent recognizing secrets or keeping them confidential.
+[![CI](https://github.com/mrworf/secretsauce-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mrworf/secretsauce-mcp/actions/workflows/ci.yml)
+[![Docker image](https://img.shields.io/badge/GHCR-secretsauce--mcp-2ea44f?logo=github)](https://github.com/mrworf/secretsauce-mcp/pkgs/container/secretsauce-mcp)
+
+SecretSauce is a self-hosted MCP service that lets Codex, ChatGPT-compatible MCP clients, and other supported agents call configured HTTP services without receiving raw configured credentials. Secret isolation is enforced by the gateway backend before content reaches the agent; it does not depend on the agent recognizing secrets or keeping them confidential.
 
 The service acts as an MCP-controlled credential gateway. Agents get short-lived gateway service references, then use those references in approved service requests. The gateway enforces authentication, destination validation, reference binding, and policy before substituting protected backend values and making the downstream HTTP call. It also scans downstream responses and replaces detected secrets with opaque references before returning the response to the agent.
 
@@ -53,10 +55,10 @@ Codex CLI, the Codex IDE extension, and ChatGPT desktop can use shared Codex MCP
 Images are published to GitHub Container Registry:
 
 ```text
-ghcr.io/mrworf/agent-credential-gateway-mcp
+ghcr.io/mrworf/secretsauce-mcp
 ```
 
-Package page: [github.com/mrworf/devops-mcp/pkgs/container/agent-credential-gateway-mcp](https://github.com/mrworf/devops-mcp/pkgs/container/agent-credential-gateway-mcp)
+Package page: [github.com/mrworf/secretsauce-mcp/pkgs/container/secretsauce-mcp](https://github.com/mrworf/secretsauce-mcp/pkgs/container/secretsauce-mcp)
 
 The CI workflow runs `npm ci`, `npm run build`, and `npm test` first. The Docker image job depends on those quality gates, so a failing build or test run prevents image publishing. Pull requests validate the Docker build without pushing an image; pushes to `main` publish the GHCR image.
 
@@ -68,8 +70,8 @@ The workflow reports the `quality-gates` check on pull requests. To make failed 
 
 ```yaml
 services:
-  agent-credential-gateway:
-    image: ghcr.io/mrworf/agent-credential-gateway-mcp:latest
+  secretsauce:
+    image: ghcr.io/mrworf/secretsauce-mcp:latest
     ports:
       - "8080:8080"
     volumes:
@@ -78,14 +80,14 @@ services:
       - ./sensitive-names.yaml:/config/sensitive-names.yaml:ro
       - ./secrets:/run/secrets:ro
       - ./oauth:/run/oauth:ro
-      - ./audit:/var/lib/agent-credential-gateway/audit
-      - ./oauth-state:/var/lib/agent-credential-gateway/oauth
+      - ./audit:/var/lib/secretsauce/audit
+      - ./oauth-state:/var/lib/secretsauce/oauth
     environment:
       CONFIG_PATH: /config/config.yaml
       SECRETLINT_CONFIG_PATH: /config/secretlint.yaml
       SENSITIVE_NAMES_CONFIG_PATH: /config/sensitive-names.yaml
 ```
 
-Use the writable audit mount for `audit.file`, for example `/var/lib/agent-credential-gateway/audit/audit.jsonl`. When using `auth.mode: builtin_oauth`, keep `auth.builtin_oauth.signing_key_file` on stable mounted storage such as `/run/oauth/oauth_signing_key.pem`; changing that key forces clients to reauthenticate. Set `auth.builtin_oauth.refresh_token_store_file` to a stable writable path such as `/var/lib/agent-credential-gateway/oauth/refresh-state.json` to preserve hash-only refresh state across restarts. Omitting it keeps refresh grants in memory and requires reauthorization after restart.
+Use the writable audit mount for `audit.file`, for example `/var/lib/secretsauce/audit/audit.jsonl`. When using `auth.mode: builtin_oauth`, keep `auth.builtin_oauth.signing_key_file` on stable mounted storage such as `/run/oauth/oauth_signing_key.pem`; changing that key forces clients to reauthenticate. Set `auth.builtin_oauth.refresh_token_store_file` to a stable writable path such as `/var/lib/secretsauce/oauth/refresh-state.json` to preserve hash-only refresh state across restarts. Omitting it keeps refresh grants in memory and requires reauthorization after restart.
 
 Expose the service through an HTTPS endpoint such as `https://gateway.example.org/mcp` when using remote MCP clients.

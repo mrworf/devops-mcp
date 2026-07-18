@@ -1,4 +1,4 @@
-# Config Reference
+# SecretSauce Configuration Reference
 
 The gateway uses a primary YAML file plus a Secretlint rules YAML, both mounted read-only in Docker. Secrets are not stored in either file; use environment variables or mounted files.
 
@@ -15,7 +15,7 @@ auth:
   mode: oauth
   oauth:
     issuer: https://auth.example.com
-    audience: agent-credential-gateway
+    audience: secretsauce
     jwks_uri: https://auth.example.com/.well-known/jwks.json
     principal_claim: sub
     required_scopes:
@@ -30,7 +30,7 @@ Development bearer mode:
 auth:
   mode: bearer
   bearer:
-    token_env: AGENT_GATEWAY_MCP_TOKEN
+    token_env: SECRETSAUCE_MCP_TOKEN
 ```
 
 Bearer mode is simpler and useful for local deployments, but OAuth is the production path.
@@ -47,14 +47,14 @@ auth:
   mode: builtin_oauth
   builtin_oauth:
     issuer: https://mcp.example.org
-    admin_username_env: AGENT_GATEWAY_ADMIN_USERNAME
-    admin_password_hash_env: AGENT_GATEWAY_ADMIN_PASSWORD_HASH
+    admin_username_env: SECRETSAUCE_ADMIN_USERNAME
+    admin_password_hash_env: SECRETSAUCE_ADMIN_PASSWORD_HASH
     signing_key_file: /run/secrets/oauth_signing_key.pem
     access_token_ttl: 1h
     authorization_code_ttl: 5m
     refresh_token_idle_ttl: 30d
     refresh_token_max_ttl: 90d
-    refresh_token_store_file: /var/lib/agent-credential-gateway/oauth/refresh-state.json
+    refresh_token_store_file: /var/lib/secretsauce/oauth/refresh-state.json
     allowed_clients:
       - https://chatgpt.com
     required_scopes:
@@ -63,7 +63,7 @@ auth:
       - gateway.request
 ```
 
-`builtin_oauth` is intended for a private single-admin deployment. It publishes authorization server discovery from this gateway, accepts ChatGPT's CIMD public-client flow with PKCE, and issues JWT access tokens plus rotating opaque refresh tokens for the MCP resource. Refresh tokens are bound to the authorized client, resource, subject, and scope ceiling. Reusing a rotated token revokes its active family. Store `AGENT_GATEWAY_ADMIN_PASSWORD_HASH` as `pbkdf2-sha256$iterations$saltBase64url$hashBase64url`, not as a raw password. The signing key file must contain an RSA private key PEM and must be mounted from stable storage. If the signing key is regenerated inside an ephemeral container, existing ChatGPT OAuth access tokens become invalid after every restart.
+`builtin_oauth` is intended for a private single-admin deployment. It publishes authorization server discovery from this gateway, accepts ChatGPT's CIMD public-client flow with PKCE, and issues JWT access tokens plus rotating opaque refresh tokens for the MCP resource. Refresh tokens are bound to the authorized client, resource, subject, and scope ceiling. Reusing a rotated token revokes its active family. Store `SECRETSAUCE_ADMIN_PASSWORD_HASH` as `pbkdf2-sha256$iterations$saltBase64url$hashBase64url`, not as a raw password. The signing key file must contain an RSA private key PEM and must be mounted from stable storage. If the signing key is regenerated inside an ephemeral container, existing ChatGPT OAuth access tokens become invalid after every restart.
 
 Durations accept `ms`, `s`, `m`, `h`, and `d`. Refresh grants expire after 30 days without use and after 90 days regardless of use by default; both values are configurable, and the idle lifetime must not exceed the maximum lifetime.
 
@@ -91,7 +91,7 @@ Recent audit events are kept in a per-configuration memory ring and can also be 
 ```yaml
 audit:
   memory_events: 1000
-  file: /var/lib/agent-credential-gateway/audit/audit.jsonl
+  file: /var/lib/secretsauce/audit/audit.jsonl
 ```
 
 `audit.memory_events` defaults to 1000 and bounds only the in-memory view; file-backed JSONL retains every successfully written event. Mount the audit directory on persistent writable storage in Docker. Audit events are sanitized and do not include raw credentials, opaque reference values, Authorization headers, cookies, request bodies, or downstream response bodies. Opaque downstream access references are still in-memory only and expire on restart.

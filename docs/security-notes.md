@@ -1,4 +1,4 @@
-# Security Notes
+# SecretSauce Security Notes
 
 - The gateway is not a secrets vault. It is a service-scoped HTTP gateway that keeps configured credentials out of MCP tool results.
 - Policy is enforced before credential substitution.

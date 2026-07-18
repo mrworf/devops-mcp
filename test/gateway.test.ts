@@ -777,7 +777,7 @@ async function startDownstream() {
     }
     if (request.url?.startsWith("/api/sensitive-incomplete")) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end('{"AGENT_GATEWAY_ADMIN_PASSWORD_HASH_B64":"unterminated');
+      response.end('{"SECRETSAUCE_ADMIN_PASSWORD_HASH_B64":"unterminated');
       return;
     }
     if (request.url?.startsWith("/api/forged")) {
@@ -817,12 +817,12 @@ async function startDownstream() {
 const JSON_RESPONSE_BODY = '{  "duplicate":1, "duplicate" : 2, "number":1.00, "unicode":"雪", "secret" : "demo-secret" }\n';
 const BASE64_RESPONSE_BODY = 'prefix\n{ "unicode": "雪", "punctuation": "!@#$%^&*()", "secret": "demo-secret" }\nsuffix';
 const SENSITIVE_JSON_RESPONSE_BODY = `{ /* preserve */
- "AGENT_GATEWAY_OAUTH_SIGNING_KEY_PEM_B64" : "pem-value-雪"
+ "SECRETSAUCE_OAUTH_SIGNING_KEY_PEM_B64" : "pem-value-雪"
  "adminPasswordHashB64":"hash-value", "duplicate_password":"first", "duplicate_password" : "second",
  "public_key":"visible", "token_type":"Bearer", "PAYLOAD_B64":"visible",
  "environment":[
-   {"value":"signing-value", "name":"AGENT_GATEWAY_OAUTH_SIGNING_KEY_PEM_B64"},
-   "AGENT_GATEWAY_ADMIN_PASSWORD_HASH_B64=array-hash"
+   {"value":"signing-value", "name":"SECRETSAUCE_OAUTH_SIGNING_KEY_PEM_B64"},
+   "SECRETSAUCE_ADMIN_PASSWORD_HASH_B64=array-hash"
  ]`;
 
 async function startHttpsDownstream() {

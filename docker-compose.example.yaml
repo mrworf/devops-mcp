@@ -1,7 +1,7 @@
 services:
-  agent-credential-gateway:
+  secretsauce:
     build: .
-    image: agent-credential-gateway-mcp:latest
+    image: secretsauce-mcp:latest
     ports:
       - "8080:8080"
     volumes:
@@ -12,13 +12,13 @@ services:
       - ./config/sensitive-names.yaml:/config/sensitive-names.yaml:ro
       - ./secrets:/run/secrets:ro
       - ./oauth:/run/oauth:ro
-      - ./audit:/var/lib/agent-credential-gateway/audit
-      - ./oauth-state:/var/lib/agent-credential-gateway/oauth
+      - ./audit:/var/lib/secretsauce/audit
+      - ./oauth-state:/var/lib/secretsauce/oauth
     environment:
       CONFIG_PATH: /config/config.yaml
       SECRETLINT_CONFIG_PATH: /config/secretlint.yaml
       SENSITIVE_NAMES_CONFIG_PATH: /config/sensitive-names.yaml
-      AGENT_GATEWAY_MCP_TOKEN: change-me-dev-token
+      SECRETSAUCE_MCP_TOKEN: change-me-dev-token
       PORTAINER_API_KEY_FILE: /run/secrets/portainer_api_key
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]

@@ -15,8 +15,8 @@ describe("sensitive-name configuration", () => {
   it("matches bundled conservative names case-insensitively after normalization", () => {
     const matcher = new SensitiveNameMatcher(loadSensitiveNameConfig("config/sensitive-names.yaml"));
     for (const name of [
-      "AGENT_GATEWAY_OAUTH_SIGNING_KEY_PEM_B64",
-      "AGENT_GATEWAY_ADMIN_PASSWORD_HASH_B64",
+      "SECRETSAUCE_OAUTH_SIGNING_KEY_PEM_B64",
+      "SECRETSAUCE_ADMIN_PASSWORD_HASH_B64",
       "clientSecret",
       "X-API-Key",
       "refresh-token",

@@ -124,7 +124,9 @@ describe("auth", () => {
       expect(response.headers["referrer-policy"]).toBe("no-referrer");
       expect(response.headers["x-content-type-options"]).toBe("nosniff");
       expect(response.headers["x-frame-options"]).toBe("DENY");
-      expect(response.body).toContain("Authorize Agent Credential Gateway");
+      expect(response.body).toContain("Authorize SecretSauce");
+      expect(response.body).toContain("Give agents access, not secrets");
+      expect(response.body).not.toContain(["Agent", "Credential", "Gateway"].join(" "));
       expect(response.body).toContain('class="panel"');
       expect(response.body).toContain('aria-label="OAuth request details"');
       expect(response.body).toContain("https://chatgpt.com/oauth/client");
@@ -1013,7 +1015,7 @@ describe("auth", () => {
     const jwks = await startJwks();
     try {
       const config = oauthConfig(jwks.jwksUri);
-      const token = await jwks.sign({ aud: "agent-credential-gateway", scope: "gateway.read gateway.references" });
+      const token = await jwks.sign({ aud: "secretsauce", scope: "gateway.read gateway.references" });
 
       const context = await authenticateRequest(requestWithBearer(token), config, ["gateway.references"]);
 
@@ -1030,11 +1032,11 @@ describe("auth", () => {
     try {
       const config = oauthConfig(jwks.jwksUri, "client_id");
       const firstToken = await jwks.sign(
-        { aud: "agent-credential-gateway", scope: "gateway.references" },
+        { aud: "secretsauce", scope: "gateway.references" },
         { subject: null, extraClaims: { client_id: "client-a" } },
       );
       const secondToken = await jwks.sign(
-        { aud: "agent-credential-gateway", scope: "gateway.request" },
+        { aud: "secretsauce", scope: "gateway.request" },
         { subject: null, extraClaims: { client_id: "client-b" } },
       );
       const first = await authenticateRequest(requestWithBearer(firstToken), config, ["gateway.references"]);
@@ -1052,7 +1054,7 @@ describe("auth", () => {
 
       for (const extraClaims of [{}, { client_id: "" }, { client_id: "   " }, { client_id: 42 }]) {
         const invalid = await jwks.sign(
-          { aud: "agent-credential-gateway", scope: "gateway.read" },
+          { aud: "secretsauce", scope: "gateway.read" },
           { subject: null, extraClaims },
         );
         await expect(authenticateRequest(requestWithBearer(invalid), config)).rejects.toThrow("stable principal claim");
@@ -1067,7 +1069,7 @@ describe("auth", () => {
     const otherJwks = await startJwks();
     try {
       const config = oauthConfig(jwks.jwksUri);
-      const validClaims = { aud: "agent-credential-gateway", scope: "gateway.read" };
+      const validClaims = { aud: "secretsauce", scope: "gateway.read" };
       const invalidIssuer = await jwks.sign(validClaims, { issuer: "https://other-issuer.example.com" });
       const invalidAudience = await jwks.sign({ aud: "other-audience", scope: "gateway.read" });
       const expired = await jwks.sign(validClaims, { expiresIn: -60 });
@@ -1087,7 +1089,7 @@ describe("auth", () => {
     const jwks = await startJwks();
     try {
       const oauth = oauthConfig(jwks.jwksUri);
-      const jwt = await jwks.sign({ aud: "agent-credential-gateway", scope: "gateway.read" });
+      const jwt = await jwks.sign({ aud: "secretsauce", scope: "gateway.read" });
 
       await expect(authenticateRequest(requestWithBearer("dev-token"), oauth)).rejects.toThrow("Invalid OAuth access token");
       await expect(authenticateRequest(requestWithBearer(jwt), bearerConfig())).rejects.toThrow("Invalid bearer token");
@@ -1112,7 +1114,7 @@ function oauthConfig(jwksUri: string, principalClaim?: string): GatewayConfig {
     mode: "oauth",
     oauth: {
       issuer: "https://auth.example.com",
-      audience: "agent-credential-gateway",
+      audience: "secretsauce",
       jwks_uri: jwksUri,
       required_scopes: ["gateway.read", "gateway.references", "gateway.request"],
       ...(principalClaim === undefined ? {} : { principal_claim: principalClaim }),

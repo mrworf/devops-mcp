@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -15,7 +15,7 @@ describe("documentation examples", () => {
     raw.services["portainer-prod"].credentials[0].source.path = secretPath;
 
     const config = validateConfig(raw, {
-      AGENT_GATEWAY_MCP_TOKEN: "dev-token",
+      SECRETSAUCE_MCP_TOKEN: "dev-token",
     });
 
     expect(config.services["portainer-prod"]?.credentials[0]?.secret).toBe("example-secret");
@@ -45,4 +45,31 @@ describe("documentation examples", () => {
     expect(chatgptWeb).toContain("origin plus `/mcp`");
     expect(chatgptWeb).not.toMatch(/Server URL to `https:\/\/mcp\.example\.org`/);
   });
+
+  it("uses the SecretSauce identity outside preserved historical records", () => {
+    const readme = readFileSync("README.md", "utf8");
+    expect(readme).toContain("# SecretSauce (MCP)");
+    expect(readme).toContain("Give agents access, not secrets");
+    expect(readme).toContain("ghcr.io/mrworf/secretsauce-mcp");
+
+    const activeFiles = collectFiles(".").filter((file) =>
+      !file.startsWith("docs/audits/") && !file.startsWith("docs/milestones/"),
+    );
+    const legacyBrand = new RegExp(["agent", "credential", "gateway"].join("[ _-]"), "i");
+    const legacyRepository = new RegExp(["devops", "mcp"].join("-"), "i");
+    const offenders = activeFiles.filter((file) => {
+      const source = readFileSync(file, "utf8");
+      return legacyBrand.test(source) || legacyRepository.test(source);
+    });
+    expect(offenders).toEqual([]);
+  });
 });
+
+function collectFiles(root: string): string[] {
+  const ignored = new Set([".git", "dist", "node_modules"]);
+  return readdirSync(root).flatMap((entry) => {
+    if (ignored.has(entry)) return [];
+    const path = root === "." ? entry : join(root, entry);
+    return statSync(path).isDirectory() ? collectFiles(path) : [path];
+  });
+}

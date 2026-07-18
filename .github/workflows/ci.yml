@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: agent-credential-gateway-mcp
+  IMAGE_NAME: secretsauce-mcp
 
 jobs:
   quality-gates:

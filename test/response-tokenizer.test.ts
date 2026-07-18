@@ -57,7 +57,7 @@ describe("plain-text response tokenizer", () => {
   it("tokenizes regex-matched JSON properties and response headers by source range", async () => {
     const fixture = setup();
     try {
-      const body = '{ /* odd */ "AGENT_GATEWAY_OAUTH_SIGNING_KEY_PEM_B64" : "cGVtLWtleQ==" "public_key":"visible", "adminPasswordHashB64":"hash-value", "empty_password":"" }';
+      const body = '{ /* odd */ "SECRETSAUCE_OAUTH_SIGNING_KEY_PEM_B64" : "cGVtLWtleQ==" "public_key":"visible", "adminPasswordHashB64":"hash-value", "empty_password":"" }';
       const result = await fixture.tokenizer.tokenize({ headers: { "X-Api-Key": "header-value" }, body }, fixture.auth, fixture.service);
       expect(result.headers["X-Api-Key"]).toMatch(/^sec_/);
       expect(result.ruleIds).toContain("gateway:sensitive-name:keys");

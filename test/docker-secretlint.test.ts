@@ -15,7 +15,7 @@ describe("Secretlint container packaging", () => {
 
   it("mounts the rules file read-only in the compose example", () => {
     const compose = parse(readFileSync("docker-compose.example.yaml", "utf8")) as any;
-    const service = compose.services["agent-credential-gateway"];
+    const service = compose.services.secretsauce;
     expect(service.volumes).toContain("./config/secretlint.yaml:/config/secretlint.yaml:ro");
     expect(service.environment.SECRETLINT_CONFIG_PATH).toBe("/config/secretlint.yaml");
     expect(service.volumes).toContain("./config/sensitive-names.yaml:/config/sensitive-names.yaml:ro");

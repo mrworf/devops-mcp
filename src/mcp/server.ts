@@ -23,7 +23,7 @@ const transportStates = new WeakMap<GatewayConfig, TransportState>();
 export function createMcpServer(config: GatewayConfig): Server {
   const server = new Server(
     {
-      name: "agent-credential-gateway-mcp",
+      name: "secretsauce-mcp",
       version: "0.1.0",
     },
     {

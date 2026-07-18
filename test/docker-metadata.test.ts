@@ -12,14 +12,17 @@ describe("Docker CI metadata", () => {
     const output = runMetadata({ GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main", GITHUB_REF_NAME: "main" });
 
     expect(output.tags).toEqual([
-      "ghcr.io/exampleowner/agent-credential-gateway-mcp:main",
-      "ghcr.io/exampleowner/agent-credential-gateway-mcp:sha-0123456",
-      "ghcr.io/exampleowner/agent-credential-gateway-mcp:latest",
+      "ghcr.io/exampleowner/secretsauce-mcp:main",
+      "ghcr.io/exampleowner/secretsauce-mcp:sha-0123456",
+      "ghcr.io/exampleowner/secretsauce-mcp:latest",
     ]);
     expect(output.labels).toContain("org.opencontainers.image.version=main");
     expect(output.labels).toContain(`org.opencontainers.image.revision=${sha}`);
     expect(output.labels).toContain("org.opencontainers.image.licenses=GPL-3.0-only");
-    expect(output.labels).toContain("org.opencontainers.image.source=https://github.com/ExampleOwner/devops-mcp");
+    expect(output.labels).toContain("org.opencontainers.image.title=SecretSauce (MCP)");
+    expect(output.labels).toContain("org.opencontainers.image.description=Give agents access, not secrets");
+    expect(output.labels).toContain("org.opencontainers.image.source=https://github.com/ExampleOwner/secretsauce-mcp");
+    expect(output.labels).not.toContain(["Agent", "Credential", "Gateway"].join(" "));
   });
 
   it("sanitizes feature branches and omits latest", () => {
@@ -30,8 +33,8 @@ describe("Docker CI metadata", () => {
     });
 
     expect(output.tags).toEqual([
-      "ghcr.io/exampleowner/agent-credential-gateway-mcp:Feature-oauth-refresh",
-      "ghcr.io/exampleowner/agent-credential-gateway-mcp:sha-0123456",
+      "ghcr.io/exampleowner/secretsauce-mcp:Feature-oauth-refresh",
+      "ghcr.io/exampleowner/secretsauce-mcp:sha-0123456",
     ]);
     expect(output.labels).toContain("org.opencontainers.image.version=Feature-oauth-refresh");
   });
@@ -39,7 +42,7 @@ describe("Docker CI metadata", () => {
   it("generates only a SHA tag for pull-request validation", () => {
     const output = runMetadata({ GITHUB_EVENT_NAME: "pull_request", GITHUB_REF: "refs/pull/42/merge", GITHUB_REF_NAME: "42/merge" });
 
-    expect(output.tags).toEqual(["ghcr.io/exampleowner/agent-credential-gateway-mcp:sha-0123456"]);
+    expect(output.tags).toEqual(["ghcr.io/exampleowner/secretsauce-mcp:sha-0123456"]);
     expect(output.labels).toContain("org.opencontainers.image.version=sha-0123456");
   });
 
@@ -79,12 +82,12 @@ function runMetadata(overrides: Record<string, string>): Record<string, string[]
     GITHUB_REF: "refs/heads/main",
     GITHUB_REF_NAME: "main",
     GITHUB_REPOSITORY_OWNER: "ExampleOwner",
-    GITHUB_REPOSITORY: "ExampleOwner/devops-mcp",
+    GITHUB_REPOSITORY: "ExampleOwner/secretsauce-mcp",
     GITHUB_SERVER_URL: "https://github.com",
     GITHUB_SHA: sha,
     GITHUB_OUTPUT: outputPath,
     REGISTRY: "GHCR.IO",
-    IMAGE_NAME: "Agent-Credential-Gateway-MCP",
+    IMAGE_NAME: "SecretSauce-MCP",
     ...overrides,
   }, new Date("2026-07-16T00:00:00.000Z"));
   return parseOutputs(readFileSync(outputPath, "utf8"));

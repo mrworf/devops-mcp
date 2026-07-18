@@ -43,8 +43,8 @@ export function generateDockerMetadata(env, now = new Date()) {
   return {
     tags: tags.map((tag) => `${image}:${tag}`),
     labels: [
-      "org.opencontainers.image.title=Agent Credential Gateway MCP",
-      "org.opencontainers.image.description=Self-hosted MCP credential gateway for policy-controlled HTTP services",
+      "org.opencontainers.image.title=SecretSauce (MCP)",
+      "org.opencontainers.image.description=Give agents access, not secrets",
       `org.opencontainers.image.url=${source}`,
       `org.opencontainers.image.source=${source}`,
       `org.opencontainers.image.version=${version}`,

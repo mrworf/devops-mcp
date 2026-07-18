@@ -1,4 +1,6 @@
-# PRD: Agent Credential Gateway MCP — MVP
+# PRD: SecretSauce (MCP) — MVP
+
+> **Give agents access, not secrets**
 
 ## 1. Summary
 
@@ -1280,8 +1282,8 @@ server:
 auth:
   oauth:
     issuer: https://auth.example.com
-    audience: agent-credential-gateway
-    client_id: agent-credential-gateway
+    audience: secretsauce
+    client_id: secretsauce
     required_scopes:
       - gateway.read
       - gateway.references
@@ -1394,8 +1396,8 @@ Example Docker Compose:
 
 ```yaml
 services:
-  agent-credential-gateway:
-    image: agent-credential-gateway:latest
+  secretsauce:
+    image: secretsauce-mcp:latest
     ports:
       - "8080:8080"
     volumes:
@@ -1413,31 +1415,31 @@ Documentation must include an OpenAI Codex config example.
 OAuth example:
 
 ```toml
-[mcp_servers.agent_credential_gateway]
+[mcp_servers.secretsauce]
 url = "https://gateway.example.org/mcp"
 enabled = true
 default_tools_approval_mode = "prompt"
 tool_timeout_sec = 60
 
-[mcp_servers.agent_credential_gateway.tools.list_services]
+[mcp_servers.secretsauce.tools.list_services]
 approval_mode = "auto"
 
-[mcp_servers.agent_credential_gateway.tools.get_gateway_service_references]
+[mcp_servers.secretsauce.tools.get_gateway_service_references]
 approval_mode = "prompt"
 
-[mcp_servers.agent_credential_gateway.tools.service_request]
+[mcp_servers.secretsauce.tools.service_request]
 approval_mode = "prompt"
 
-[mcp_servers.agent_credential_gateway.tools.explain_denial]
+[mcp_servers.secretsauce.tools.explain_denial]
 approval_mode = "auto"
 ```
 
 Bearer-token development example:
 
 ```toml
-[mcp_servers.agent_credential_gateway]
+[mcp_servers.secretsauce]
 url = "https://gateway.example.org/mcp"
-bearer_token_env_var = "AGENT_GATEWAY_MCP_TOKEN"
+bearer_token_env_var = "SECRETSAUCE_MCP_TOKEN"
 enabled = true
 default_tools_approval_mode = "prompt"
 ```
@@ -1455,29 +1457,29 @@ Documentation must explain:
 Recommended defaults:
 
 ```toml
-[mcp_servers.agent_credential_gateway]
+[mcp_servers.secretsauce]
 default_tools_approval_mode = "prompt"
 
-[mcp_servers.agent_credential_gateway.tools.list_services]
+[mcp_servers.secretsauce.tools.list_services]
 approval_mode = "auto"
 
-[mcp_servers.agent_credential_gateway.tools.describe_service_policy]
+[mcp_servers.secretsauce.tools.describe_service_policy]
 approval_mode = "auto"
 
-[mcp_servers.agent_credential_gateway.tools.explain_denial]
+[mcp_servers.secretsauce.tools.explain_denial]
 approval_mode = "auto"
 
-[mcp_servers.agent_credential_gateway.tools.get_gateway_service_references]
+[mcp_servers.secretsauce.tools.get_gateway_service_references]
 approval_mode = "prompt"
 
-[mcp_servers.agent_credential_gateway.tools.service_request]
+[mcp_servers.secretsauce.tools.service_request]
 approval_mode = "prompt"
 ```
 
 Users who want stricter control may configure:
 
 ```toml
-[mcp_servers.agent_credential_gateway.tools.service_request]
+[mcp_servers.secretsauce.tools.service_request]
 approval_mode = "approve"
 ```
 

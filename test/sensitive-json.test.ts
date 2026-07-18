@@ -7,14 +7,14 @@ const matcher = new SensitiveNameMatcher(loadSensitiveNameConfig(new URL("../con
 describe("tolerant sensitive JSON scanning", () => {
   it("finds direct, duplicate, name/value, and environment-string values without normalizing source", () => {
     const source = `{ /* keep */
- "AGENT_GATEWAY_OAUTH_SIGNING_KEY_PEM_B64" : "pem-key"
+ "SECRETSAUCE_OAUTH_SIGNING_KEY_PEM_B64" : "pem-key"
  "duplicate_password":"first", "duplicate_password" : "second",
  "public_key":"visible", "token_type":"Bearer", "empty_password":"", "password_count":2,
  "nested":{"clientSecret":"nested-secret"},
  "environment":[
-   {"value":"admin-hash", "name":"AGENT_GATEWAY_ADMIN_PASSWORD_HASH_B64"},
-   {"key":"AGENT_GATEWAY_OAUTH_SIGNING_KEY_PEM_B64", "extra":true, "value":"signing-key"},
-   "AGENT_GATEWAY_ADMIN_PASSWORD_HASH_B64=array-hash",
+   {"value":"admin-hash", "name":"SECRETSAUCE_ADMIN_PASSWORD_HASH_B64"},
+   {"key":"SECRETSAUCE_OAUTH_SIGNING_KEY_PEM_B64", "extra":true, "value":"signing-key"},
+   "SECRETSAUCE_ADMIN_PASSWORD_HASH_B64=array-hash",
    {"name":"safe_name", "value":"visible"}
  ]`;
 
@@ -48,7 +48,7 @@ describe("tolerant sensitive JSON scanning", () => {
       '{"password":"unterminated',
       '{"password":',
       '{"name":"admin_password","value":"unterminated',
-      '["AGENT_GATEWAY_ADMIN_PASSWORD_HASH_B64=unterminated',
+      '["SECRETSAUCE_ADMIN_PASSWORD_HASH_B64=unterminated',
     ]) {
       expect(() => findSensitiveJsonValues(source, matcher)).toThrowError(expect.objectContaining({ code: "secret_scan_failed" }));
     }

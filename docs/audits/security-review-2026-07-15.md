@@ -1,5 +1,7 @@
 # Security Review Report
 
+> Historical naming note: this dated review predates the rebrand to SecretSauce (MCP).
+
 ## Metadata
 
 - **Project/repository:** `agent-credential-gateway-mcp` (`devops-mcp`)
