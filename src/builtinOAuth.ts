@@ -10,6 +10,7 @@ import { readBoundedBody, RequestBodyError } from "./httpBody.js";
 import { InflightLimiter } from "./inflightLimiter.js";
 import { LoginAttemptLimiter } from "./loginAttemptLimiter.js";
 import { registerMaintenanceTask } from "./maintenance.js";
+import { BRAND_ICON_PATH, BRAND_LOCKUP_PATH } from "./brandAssets.js";
 
 const AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 const OPENID_CONFIGURATION_PATH = "/.well-known/openid-configuration";
@@ -28,7 +29,7 @@ const AUTHORIZE_FORM_PARAMETER_NAMES = [
 ] as const;
 const AUTHORIZE_PAGE_HEADERS = {
   "cache-control": "no-store",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  "content-security-policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   "content-type": "text/html; charset=utf-8",
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
@@ -213,16 +214,19 @@ function renderLoginPage(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Connect to SecretSauce</title>
+<link rel="icon" type="image/png" href="${BRAND_ICON_PATH}">
 <style>
 :root {
   color-scheme: light;
-  --bg: #f5f7fb;
+  --bg: #f5f4f1;
   --panel: #ffffff;
-  --text: #172033;
-  --muted: #5e6a7d;
-  --border: #d7deea;
-  --accent: #2563eb;
-  --accent-dark: #1d4ed8;
+  --text: #111827;
+  --muted: #2a3744;
+  --border: #d8dde1;
+  --accent: #111827;
+  --accent-dark: #2a3744;
+  --paprika: #e44d26;
+  --amber: #f5a623;
   --error-bg: #fef2f2;
   --error-border: #fecaca;
   --error-text: #991b1b;
@@ -253,6 +257,12 @@ main {
 .intro {
   padding: 32px 32px 24px;
   border-bottom: 1px solid var(--border);
+}
+.brand-lockup {
+  display: block;
+  width: min(360px, 78%);
+  height: auto;
+  margin: 0 0 24px;
 }
 h1 {
   margin: 0 0 12px;
@@ -308,7 +318,7 @@ details {
   padding-top: 14px;
 }
 summary {
-  color: var(--accent-dark);
+  color: var(--paprika);
   font-weight: 700;
   cursor: pointer;
 }
@@ -328,9 +338,9 @@ summary {
   border-radius: 8px;
 }
 .info-box {
-  border: 1px solid #bfdbfe;
-  background: #eff6ff;
-  color: #1e3a8a;
+  border: 1px solid #f6c46d;
+  background: #fff8e8;
+  color: var(--text);
 }
 .error {
   margin: 0 0 20px;
@@ -367,8 +377,8 @@ input {
   font: inherit;
 }
 input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  border-color: var(--paprika);
+  box-shadow: 0 0 0 3px rgba(228, 77, 38, 0.18);
   outline: none;
 }
 .actions {
@@ -391,7 +401,7 @@ button:hover {
   background: var(--accent-dark);
 }
 button:focus-visible {
-  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline: 3px solid rgba(245, 166, 35, 0.65);
   outline-offset: 2px;
 }
 @media (max-width: 680px) {
@@ -426,6 +436,7 @@ button:focus-visible {
 <main>
 <section class="panel" aria-labelledby="authorize-title">
 <div class="intro">
+<img class="brand-lockup" src="${BRAND_LOCKUP_PATH}" alt="SecretSauce MCP">
 <h1 id="authorize-title">Connect ${connectClientName} to SecretSauce</h1>
 <p class="description"><strong>${sentenceClientName}</strong> is requesting access to use services configured in this gateway. Stored service credentials will not be shared with ${definiteClientName}.</p>
 <div class="trust-summary" aria-label="Connection summary">
@@ -475,20 +486,23 @@ function renderInvalidAuthorizationPage(response: ServerResponse): void {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Connection request could not be verified</title>
+<link rel="icon" type="image/png" href="${BRAND_ICON_PATH}">
 <style>
-:root { color-scheme: light; --bg: #f5f7fb; --panel: #ffffff; --text: #172033; --muted: #5e6a7d; --border: #d7deea; }
+:root { color-scheme: light; --bg: #f5f4f1; --panel: #ffffff; --text: #111827; --muted: #2a3744; --border: #d8dde1; }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; }
 main { width: min(680px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0; }
 .panel { padding: 32px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 18px 45px rgba(23, 32, 51, 0.08); }
 h1 { margin: 0 0 12px; font-size: clamp(1.75rem, 4vw, 2.25rem); line-height: 1.1; }
 p { margin: 0; color: var(--muted); }
+.brand-lockup { display: block; width: min(320px, 78%); height: auto; margin: 0 0 24px; }
 @media (max-width: 680px) { main { width: min(100% - 20px, 680px); padding: 10px 0; } .panel { padding: 24px 18px; } }
 </style>
 </head>
 <body>
 <main>
 <section class="panel" aria-labelledby="error-title">
+<img class="brand-lockup" src="${BRAND_LOCKUP_PATH}" alt="SecretSauce MCP">
 <h1 id="error-title">Connection request could not be verified</h1>
 <p>SecretSauce could not verify this client or its callback address. Return to your MCP client and try connecting again.</p>
 </section>

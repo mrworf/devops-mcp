@@ -10,6 +10,7 @@ import type { AuthContext } from "./types.js";
 import { initializeSecretRuntime } from "./secretRuntime.js";
 import { RequestBodyError } from "./httpBody.js";
 import { startMaintenance } from "./maintenance.js";
+import { handleBrandAssetRequest, isBrandAssetRequest } from "./brandAssets.js";
 
 type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
@@ -24,6 +25,11 @@ export function createGatewayServer(config: GatewayConfig) {
         status: "ready",
         service_count: Object.keys(config.services).length,
       });
+      return;
+    }
+
+    if (isBrandAssetRequest(request)) {
+      handleBrandAssetRequest(request, response);
       return;
     }
 

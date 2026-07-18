@@ -124,11 +124,14 @@ describe("auth", () => {
       expect(response.status).toBe(200);
       expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
       expect(response.headers["cache-control"]).toBe("no-store");
-      expect(response.headers["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+      expect(response.headers["content-security-policy"]).toBe("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
       expect(response.headers["referrer-policy"]).toBe("no-referrer");
       expect(response.headers["x-content-type-options"]).toBe("nosniff");
       expect(response.headers["x-frame-options"]).toBe("DENY");
       expect(response.body).toContain("Connect ChatGPT to SecretSauce");
+      expect(response.body).toContain('<link rel="icon" type="image/png" href="/assets/brand/secretsauce-icon.png">');
+      expect(response.body).toContain('<img class="brand-lockup" src="/assets/brand/secretsauce-lockup.png" alt="SecretSauce MCP">');
+      expect(response.body).toContain("--paprika: #e44d26");
       expect(response.body).not.toContain("Secretsauce");
       expect(response.body).toContain("Stored service credentials will not be shared with ChatGPT");
       expect(response.body).toContain("What ChatGPT will be able to do");
@@ -224,6 +227,8 @@ describe("auth", () => {
 
       expect(response.status).toBe(400);
       expect(response.body).toContain("Connection request could not be verified");
+      expect(response.body).toContain('<link rel="icon" type="image/png" href="/assets/brand/secretsauce-icon.png">');
+      expect(response.body).toContain('<img class="brand-lockup" src="/assets/brand/secretsauce-lockup.png" alt="SecretSauce MCP">');
       expect(response.body).not.toContain('name="username"');
       expect(response.body).not.toContain('name="password"');
     } finally {

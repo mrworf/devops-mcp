@@ -92,6 +92,11 @@ describe("MCP surface", () => {
       });
       expect(initialize.body.result.serverInfo.name).toBe("secretsauce-mcp");
       expect(initialize.body.result.serverInfo.name).not.toBe(["agent", "credential", "gateway", "mcp"].join("-"));
+      expect(initialize.body.result.serverInfo.icons).toEqual([{
+        src: `${fixture.baseUrl}/assets/brand/secretsauce-icon.png`,
+        sizes: ["512x512"],
+        mimeType: "image/png",
+      }]);
       expect(initialize.body.result.instructions).toContain("Always call list_services first");
       const sessionId = initialize.response.headers.get("mcp-session-id");
       expect(sessionId).toBeTruthy();
@@ -111,6 +116,25 @@ describe("MCP surface", () => {
       ]);
       expect(list.body.result.tools[0].securitySchemes).toEqual([{ type: "oauth2", scopes: ["gateway.read"] }]);
       expect(list.body.result.tools[0]._meta.securitySchemes).toEqual(list.body.result.tools[0].securitySchemes);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("uses the configured public resource origin for the advertised MCP icon", async () => {
+    const fixture = await startFixtureServer({ publicResource: "https://mcp.example.org" });
+    try {
+      const initialize = await postMcp(fixture.url, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "mcp-surface-test", version: "1.0.0" },
+        },
+      });
+      expect(initialize.body.result.serverInfo.icons[0].src).toBe("https://mcp.example.org/assets/brand/secretsauce-icon.png");
     } finally {
       await fixture.close();
     }
@@ -509,7 +533,7 @@ describe("MCP surface", () => {
 });
 
 async function startFixtureServer(options: {
-  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; mcpTransportIdleTtl?: string;
+  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; mcpTransportIdleTtl?: string; publicResource?: string;
 } = {}) {
   const config = fixtureConfig(options);
   const server = createGatewayServer(config);
@@ -528,10 +552,10 @@ async function startFixtureServer(options: {
 }
 
 function fixtureConfig(options: {
-  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; mcpTransportIdleTtl?: string;
+  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; mcpTransportIdleTtl?: string; publicResource?: string;
 } = {}) {
   return validateConfig({
-    server: { listen: "127.0.0.1:8080", mcp_path: "/mcp" },
+    server: { listen: "127.0.0.1:8080", mcp_path: "/mcp", ...(options.publicResource === undefined ? {} : { resource: options.publicResource }) },
     auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
     limits: {
       max_inbound_body: options.maxInboundBody ?? "1mb",

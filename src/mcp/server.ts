@@ -13,6 +13,7 @@ import { callTool, toolDescriptors } from "./tools.js";
 import type { AuthContext, GatewayConfig } from "../types.js";
 import { readBoundedBody } from "../httpBody.js";
 import { registerMaintenanceTask } from "../maintenance.js";
+import { BRAND_ICON_PATH, publicBrandAssetUrl } from "../brandAssets.js";
 
 type NodeRequestWithBody = IncomingMessage & { body?: unknown };
 
@@ -20,11 +21,12 @@ interface TransportRecord { transport: StreamableHTTPServerTransport; lastActivi
 interface TransportState { records: Map<string, TransportRecord> }
 const transportStates = new WeakMap<GatewayConfig, TransportState>();
 
-export function createMcpServer(config: GatewayConfig): Server {
+export function createMcpServer(config: GatewayConfig, iconUrl: string): Server {
   const server = new Server(
     {
       name: "secretsauce-mcp",
       version: "0.1.0",
+      icons: [{ src: iconUrl, sizes: ["512x512"], mimeType: "image/png" }],
     },
     {
       instructions: MCP_INSTRUCTIONS,
@@ -102,7 +104,7 @@ export async function handleMcpRequest(
     if (closedSessionId !== undefined) state.records.delete(closedSessionId);
   };
 
-  const server = createMcpServer(config);
+  const server = createMcpServer(config, publicBrandAssetUrl(config, request, BRAND_ICON_PATH));
   // SDK transport typings are not exactOptionalPropertyTypes-clean in this version.
   await server.connect(transport as Parameters<Server["connect"]>[0]);
   await transport.handleRequest(request as NodeRequestWithBody, response, parsedBody);
