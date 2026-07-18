@@ -65,6 +65,8 @@ auth:
 
 `builtin_oauth` is intended for a private single-admin deployment. It publishes authorization server discovery from this gateway, accepts ChatGPT's CIMD public-client flow with PKCE, and issues JWT access tokens plus rotating opaque refresh tokens for the MCP resource. Refresh tokens are bound to the authorized client, resource, subject, and scope ceiling. Reusing a rotated token revokes its active family. Store `SECRETSAUCE_ADMIN_PASSWORD_HASH` as `pbkdf2-sha256$iterations$saltBase64url$hashBase64url`, not as a raw password. The signing key file must contain an RSA private key PEM and must be mounted from stable storage. If the signing key is regenerated inside an ephemeral container, existing ChatGPT OAuth access tokens become invalid after every restart.
 
+The consent page verifies the allowlisted HTTPS client metadata document, its exact `client_id`, and the requested redirect URI before displaying credential fields. When verified metadata contains a non-empty `client_name` of at most 120 characters, the page uses it to identify the requesting client; otherwise it displays the neutral name “MCP client.” Technical OAuth values remain available under “Connection details.”
+
 Durations accept `ms`, `s`, `m`, `h`, and `d`. Refresh grants expire after 30 days without use and after 90 days regardless of use by default; both values are configurable, and the idle lifetime must not exceed the maximum lifetime.
 
 Password verification uses asynchronous PBKDF2 so expensive login checks do not block MCP traffic or health checks. At most `limits.max_password_verifications` checks run globally (default `2`) and `limits.max_password_verifications_per_source` per direct socket address (default `1`); excess checks receive `429` before PBKDF2 starts.

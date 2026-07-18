@@ -79,6 +79,13 @@ const bodyLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
 const passwordLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
 const loginAttemptLimiters = new WeakMap<GatewayConfig, LoginAttemptLimiter>();
 const pbkdf2Async = promisify(pbkdf2);
+const MAX_CLIENT_NAME_LENGTH = 120;
+
+interface VerifiedClientMetadata {
+  clientId: string;
+  redirectUris: string[];
+  clientName: string | null;
+}
 
 export function isBuiltinOAuthRequest(config: GatewayConfig, request: IncomingMessage): boolean {
   if (config.auth.mode !== "builtin_oauth") return false;
@@ -110,7 +117,7 @@ export async function handleBuiltinOAuthRequest(
     return;
   }
   if (request.method === "GET" && path === AUTHORIZE_PATH) {
-    renderLoginForm(config, request, response);
+    await renderLoginForm(config, request, response);
     return;
   }
   if (request.method === "POST" && path === AUTHORIZE_PATH) {
@@ -160,14 +167,21 @@ async function jwks(auth: BuiltinOAuthAuthConfig["builtinOAuth"]): Promise<Recor
   };
 }
 
-function renderLoginForm(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): void {
+async function renderLoginForm(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {
   const params = new URL(request.url ?? AUTHORIZE_PATH, config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth.issuer : "http://localhost").searchParams;
-  renderLoginPage(response, params);
+  const validation = await validateAuthorizationRequest(config, params);
+  if (!validation.ok) {
+    renderInvalidAuthorizationPage(response);
+    return;
+  }
+  renderLoginPage(config, response, params, validation);
 }
 
 function renderLoginPage(
+  config: GatewayConfig,
   response: ServerResponse,
   params: URLSearchParams,
+  client: Extract<Awaited<ReturnType<typeof validateAuthorizationRequest>>, { ok: true }>,
   statusCode = 200,
   errorMessage?: string,
 ): void {
@@ -177,21 +191,19 @@ function renderLoginPage(
       return value === null ? [] : [`<input type="hidden" name="${key}" value="${escapeHtml(value)}">`];
     })
     .join("\n");
-  const clientId = displayValue(params.get("client_id"));
-  const redirectUri = displayValue(params.get("redirect_uri"));
-  const redirectOrigin = displayValue(originFromUri(params.get("redirect_uri")));
-  const resource = displayValue(params.get("resource"));
-  const requestedScopes = params.get("scope")?.trim().split(/\s+/).filter(Boolean).join(", ") || null;
+  const clientName = client.clientName ?? "MCP client";
+  const gateway = gatewayHost(config);
+  const permissions = client.scopes.map((scope) => `<li>${escapeHtml(permissionDescription(scope))}</li>`).join("\n");
   const error = errorMessage === undefined
     ? ""
-    : `<div class="error" role="alert"><strong>Authorization failed.</strong> ${escapeHtml(errorMessage)}</div>`;
+    : `<div class="error" role="alert"><strong>Sign-in failed.</strong> ${escapeHtml(errorMessage)}</div>`;
   response.writeHead(statusCode, AUTHORIZE_PAGE_HEADERS);
   response.end(`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authorize SecretSauce</title>
+<title>Connect to SecretSauce</title>
 <style>
 :root {
   color-scheme: light;
@@ -245,7 +257,7 @@ p {
   max-width: 68ch;
   color: var(--muted);
 }
-.client-details {
+.trust-summary {
   display: grid;
   gap: 8px;
   margin-top: 18px;
@@ -254,6 +266,7 @@ p {
   border-radius: 8px;
   background: #f8fafc;
 }
+.trust-row,
 .detail-row {
   display: grid;
   grid-template-columns: 140px minmax(0, 1fr);
@@ -261,8 +274,43 @@ p {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+.trust-row strong,
 .detail-row strong {
   color: var(--text);
+}
+.permissions {
+  margin: 22px 0 0;
+}
+.permissions h2,
+.sign-in h2 {
+  margin: 0 0 8px;
+  font-size: 1.12rem;
+}
+.permissions ul {
+  margin: 8px 0 0;
+  padding-left: 22px;
+}
+.permissions li + li {
+  margin-top: 5px;
+}
+details {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+summary {
+  color: var(--accent-dark);
+  font-weight: 700;
+  cursor: pointer;
+}
+.connection-details {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
 }
 .info-box,
 .error {
@@ -283,6 +331,9 @@ p {
 }
 form {
   padding: 28px 32px 32px;
+}
+.sign-in p {
+  color: var(--muted);
 }
 .field-grid {
   display: grid;
@@ -344,10 +395,12 @@ button:focus-visible {
     padding-left: 18px;
     padding-right: 18px;
   }
+  .trust-row,
   .detail-row,
   .field-grid {
     grid-template-columns: 1fr;
   }
+  .trust-row,
   .detail-row {
     gap: 2px;
   }
@@ -364,25 +417,40 @@ button:focus-visible {
 <main>
 <section class="panel" aria-labelledby="authorize-title">
 <div class="intro">
-<h1 id="authorize-title">Authorize SecretSauce</h1>
-<p class="description"><strong>Give agents access, not secrets.</strong> Connect your MCP client to configured services through this self-hosted gateway without giving the client access to backend credentials.</p>
-<div class="client-details" aria-label="OAuth request details">
-<div class="detail-row"><strong>Client ID</strong><span>${escapeHtml(clientId)}</span></div>
-<div class="detail-row"><strong>Redirect host</strong><span>${escapeHtml(redirectOrigin)}</span></div>
-<div class="detail-row"><strong>Redirect URI</strong><span>${escapeHtml(redirectUri)}</span></div>
-<div class="detail-row"><strong>Resource</strong><span>${escapeHtml(resource)}</span></div>
-<div class="detail-row"><strong>Scopes</strong><span>${escapeHtml(displayValue(requestedScopes))}</span></div>
+<h1 id="authorize-title">Connect ${escapeHtml(clientName)} to SecretSauce</h1>
+<p class="description"><strong>${escapeHtml(clientName)}</strong> is requesting access to use services configured in this gateway. Stored service credentials will not be shared with ${escapeHtml(clientName)}.</p>
+<div class="trust-summary" aria-label="Connection summary">
+<div class="trust-row"><strong>Client</strong><span>${escapeHtml(clientName)}</span></div>
+<div class="trust-row"><strong>Gateway</strong><span>${escapeHtml(gateway)}</span></div>
+<div class="trust-row"><strong>You will sign in to</strong><span>SecretSauce</span></div>
 </div>
-<div class="info-box" role="note">The gateway enforces authentication, service access, destination validation, and request policy before using configured credentials. Backend credential values are not shared with the MCP client.</div>
+<div class="permissions" aria-labelledby="permissions-title">
+<h2 id="permissions-title">Requested access</h2>
+<ul>${permissions}</ul>
+</div>
+<div class="info-box" role="note">The gateway authenticates the client, verifies each destination and request, and uses stored service credentials on the client&rsquo;s behalf. Credential values are never returned to the MCP client.</div>
+<details>
+<summary>Connection details</summary>
+<div class="connection-details" aria-label="OAuth request details">
+<div class="detail-row"><strong>Client ID</strong><span>${escapeHtml(client.clientId)}</span></div>
+<div class="detail-row"><strong>Redirect URI</strong><span>${escapeHtml(client.redirectUri)}</span></div>
+<div class="detail-row"><strong>Resource</strong><span>${escapeHtml(client.resource)}</span></div>
+<div class="detail-row"><strong>Scopes</strong><span>${escapeHtml(client.scopes.join(", "))}</span></div>
+</div>
+</details>
 </div>
 <form method="post" action="${AUTHORIZE_PATH}">
 ${hidden}
+<div class="sign-in">
+<h2>Sign in to this gateway</h2>
+<p>These credentials are sent only to ${escapeHtml(gateway)} and are not shared with ${escapeHtml(clientName)}.</p>
+</div>
 ${error}
 <div class="field-grid">
 <label for="username">Username <input id="username" name="username" autocomplete="username" required></label>
 <label for="password">Password <input id="password" name="password" type="password" autocomplete="current-password" required></label>
 </div>
-<div class="actions"><button type="submit">Authorize</button></div>
+<div class="actions"><button type="submit">Sign in and connect</button></div>
 </form>
 </section>
 </main>
@@ -390,18 +458,46 @@ ${error}
 </html>`);
 }
 
-function displayValue(value: string | null): string {
-  return value?.trim() || "Not provided";
+function renderInvalidAuthorizationPage(response: ServerResponse): void {
+  response.writeHead(400, AUTHORIZE_PAGE_HEADERS);
+  response.end(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connection request could not be verified</title>
+<style>
+:root { color-scheme: light; --bg: #f5f7fb; --panel: #ffffff; --text: #172033; --muted: #5e6a7d; --border: #d7deea; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; }
+main { width: min(680px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0; }
+.panel { padding: 32px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 18px 45px rgba(23, 32, 51, 0.08); }
+h1 { margin: 0 0 12px; font-size: clamp(1.75rem, 4vw, 2.25rem); line-height: 1.1; }
+p { margin: 0; color: var(--muted); }
+@media (max-width: 680px) { main { width: min(100% - 20px, 680px); padding: 10px 0; } .panel { padding: 24px 18px; } }
+</style>
+</head>
+<body>
+<main>
+<section class="panel" aria-labelledby="error-title">
+<h1 id="error-title">Connection request could not be verified</h1>
+<p>SecretSauce could not verify this client or its callback address. Return to your MCP client and try connecting again.</p>
+</section>
+</main>
+</body>
+</html>`);
 }
 
-function originFromUri(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    const uri = new URL(value);
-    return uri.origin === "null" ? null : uri.origin;
-  } catch {
-    return null;
-  }
+function gatewayHost(config: GatewayConfig): string {
+  if (config.auth.mode !== "builtin_oauth") throw new Error("Expected built-in OAuth config");
+  return new URL(config.auth.builtinOAuth.issuer).host;
+}
+
+function permissionDescription(scope: string): string {
+  if (scope === "gateway.read") return "View available services";
+  if (scope === "gateway.request") return "Make approved requests through the gateway";
+  if (scope === "gateway.references") return "Use temporary references returned by the gateway";
+  return scope;
 }
 
 async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -472,7 +568,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
       resource_status: "match",
       scope_count: validation.scopes.length,
     });
-    renderLoginPage(response, body, 401, "Invalid username or password.");
+    renderLoginPage(config, response, body, validation, 401, "Invalid username or password.");
     return;
   }
 
@@ -943,7 +1039,7 @@ async function validateAuthorizationRequest(
   config: GatewayConfig,
   body: URLSearchParams,
 ): Promise<
-  | { ok: true; clientId: string; redirectUri: string; resource: string; scopes: string[]; codeChallenge: string }
+  | { ok: true; clientId: string; clientName: string | null; redirectUri: string; resource: string; scopes: string[]; codeChallenge: string }
   | { ok: false; error: string }
 > {
   const auth = config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth : undefined;
@@ -968,7 +1064,10 @@ async function validateAuthorizationRequest(
 
   const redirectUri = body.get("redirect_uri");
   if (!redirectUri) return { ok: false, error: "invalid_request" };
-  if (!await clientMetadataAllowsRedirect(clientId, redirectUri)) return { ok: false, error: "invalid_request" };
+  const clientMetadata = await fetchVerifiedClientMetadata(clientId);
+  if (clientMetadata === undefined || !clientMetadata.redirectUris.includes(redirectUri)) {
+    return { ok: false, error: "invalid_request" };
+  }
 
   const codeChallenge = body.get("code_challenge");
   if (!codeChallenge) return { ok: false, error: "invalid_request" };
@@ -976,17 +1075,26 @@ async function validateAuthorizationRequest(
   const scopes = scopesFromRequest(body.get("scope"), auth.requiredScopes);
   if (scopes.some((scope) => !auth.requiredScopes.includes(scope))) return { ok: false, error: "invalid_scope" };
 
-  return { ok: true, clientId, redirectUri, resource, scopes, codeChallenge };
+  return { ok: true, clientId, clientName: clientMetadata.clientName, redirectUri, resource, scopes, codeChallenge };
 }
 
-async function clientMetadataAllowsRedirect(clientId: string, redirectUri: string): Promise<boolean> {
+async function fetchVerifiedClientMetadata(clientId: string): Promise<VerifiedClientMetadata | undefined> {
   try {
     const response = await fetch(clientId, { signal: AbortSignal.timeout(5000) });
-    if (!response.ok) return false;
-    const metadata = await response.json() as { redirect_uris?: unknown };
-    return Array.isArray(metadata.redirect_uris) && metadata.redirect_uris.includes(redirectUri);
+    if (!response.ok) return undefined;
+    const metadata = await response.json() as unknown;
+    if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return undefined;
+    const record = metadata as Record<string, unknown>;
+    if (record.client_id !== clientId || !Array.isArray(record.redirect_uris)) return undefined;
+    const redirectUris = record.redirect_uris.filter((value): value is string => typeof value === "string");
+    const rawClientName = record.client_name;
+    const trimmedClientName = typeof rawClientName === "string" ? rawClientName.trim() : "";
+    const clientName = trimmedClientName !== "" && [...trimmedClientName].length <= MAX_CLIENT_NAME_LENGTH
+      ? trimmedClientName
+      : null;
+    return { clientId, redirectUris, clientName };
   } catch {
-    return false;
+    return undefined;
   }
 }
 

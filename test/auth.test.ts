@@ -100,9 +100,13 @@ describe("auth", () => {
     }
   });
 
-  it("renders a responsive built-in OAuth authorization page with request details and defensive headers", async () => {
+  it("renders a verified client name, human-readable permissions, and collapsed connection details", async () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(
+      ["https://chatgpt.com/oauth/callback"],
+      { client_name: "ChatGPT" },
+    ), { status: 200 }));
     const query = new URLSearchParams({
       response_type: "code",
       client_id: "https://chatgpt.com/oauth/client",
@@ -124,10 +128,18 @@ describe("auth", () => {
       expect(response.headers["referrer-policy"]).toBe("no-referrer");
       expect(response.headers["x-content-type-options"]).toBe("nosniff");
       expect(response.headers["x-frame-options"]).toBe("DENY");
-      expect(response.body).toContain("Authorize SecretSauce");
-      expect(response.body).toContain("Give agents access, not secrets");
-      expect(response.body).not.toContain(["Agent", "Credential", "Gateway"].join(" "));
+      expect(response.body).toContain("Connect ChatGPT to SecretSauce");
+      expect(response.body).toContain("Stored service credentials will not be shared with ChatGPT");
+      expect(response.body).toContain("View available services");
+      expect(response.body).toContain("Use temporary references returned by the gateway");
+      expect(response.body).toContain("<strong>Gateway</strong><span>mcp.example.org</span>");
+      expect(response.body).toContain("<strong>You will sign in to</strong><span>SecretSauce</span>");
+      expect(response.body).toContain("Sign in to this gateway");
+      expect(response.body).toContain("These credentials are sent only to mcp.example.org and are not shared with ChatGPT");
+      expect(response.body).toContain("Sign in and connect");
       expect(response.body).toContain('class="panel"');
+      expect(response.body).toContain("<details>");
+      expect(response.body).toContain("<summary>Connection details</summary>");
       expect(response.body).toContain('aria-label="OAuth request details"');
       expect(response.body).toContain("https://chatgpt.com/oauth/client");
       expect(response.body).toContain("https://chatgpt.com/oauth/callback");
@@ -142,7 +154,92 @@ describe("auth", () => {
     }
   });
 
-  it("escapes hostile OAuth display values and safely renders incomplete authorization requests", async () => {
+  it.each([
+    ["missing", {}],
+    ["empty", { client_name: "   " }],
+    ["wrong type", { client_name: 42 }],
+    ["overlong", { client_name: "x".repeat(121) }],
+  ])("uses the generic client name when metadata client_name is %s", async (_label, metadata) => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(
+      ["https://chatgpt.com/oauth/callback"],
+      metadata,
+    ), { status: 200 }));
+
+    try {
+      const response = await localRequest(`${fixture.baseUrl}/oauth/authorize?${authorizationQuery()}`, { method: "GET" });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toContain("Connect MCP client to SecretSauce");
+      expect(response.body).toContain("not shared with MCP client");
+      expect(response.body).toContain('label for="username"');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("escapes a verified client name before displaying it", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    const hostileName = '<script>alert("client")</script>';
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(
+      ["https://chatgpt.com/oauth/callback"],
+      { client_name: hostileName },
+    ), { status: 200 }));
+
+    try {
+      const response = await localRequest(`${fixture.baseUrl}/oauth/authorize?${authorizationQuery()}`, { method: "GET" });
+
+      expect(response.status).toBe(200);
+      expect(response.body).not.toContain(hostileName);
+      expect(response.body).not.toContain("<script>");
+      expect(response.body).toContain("&lt;script&gt;alert(&quot;client&quot;)&lt;/script&gt;");
+      expect(response.body).toContain('label for="username"');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it.each([
+    ["missing client ID", { redirect_uris: ["https://chatgpt.com/oauth/callback"] }],
+    ["mismatched client ID", { client_id: "https://other.example.org/client", redirect_uris: ["https://chatgpt.com/oauth/callback"] }],
+    ["mismatched redirect", { client_id: "https://chatgpt.com/oauth/client", redirect_uris: ["https://chatgpt.com/other"] }],
+  ])("does not render credentials for metadata with a %s", async (_label, metadata) => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify(metadata), { status: 200 }));
+
+    try {
+      const response = await localRequest(`${fixture.baseUrl}/oauth/authorize?${authorizationQuery()}`, { method: "GET" });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toContain("Connection request could not be verified");
+      expect(response.body).not.toContain('name="username"');
+      expect(response.body).not.toContain('name="password"');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("does not render credentials when client metadata cannot be fetched", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => { throw new Error("metadata unavailable"); });
+
+    try {
+      const response = await localRequest(`${fixture.baseUrl}/oauth/authorize?${authorizationQuery()}`, { method: "GET" });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toContain("Connection request could not be verified");
+      expect(response.body).not.toContain('name="username"');
+      expect(response.body).not.toContain('name="password"');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("does not echo hostile values or render credentials for a disallowed client", async () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
     const hostileClient = '\"><script>alert("client")</script>';
@@ -156,15 +253,15 @@ describe("auth", () => {
     try {
       const response = await localRequest(`${fixture.baseUrl}/oauth/authorize?${query}`, { method: "GET" });
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(400);
       expect(response.body).not.toContain(hostileClient);
       expect(response.body).not.toContain(hostileRedirect);
       expect(response.body).not.toContain("<script>");
       expect(response.body).not.toContain("<svg");
       expect(response.body).not.toContain("alert(ignored)");
-      expect(response.body).toContain("&quot;&gt;&lt;script&gt;alert(&quot;client&quot;)&lt;/script&gt;");
-      expect(response.body).toContain("Not provided");
-      expect(response.body).not.toContain('name="ignored"');
+      expect(response.body).toContain("Connection request could not be verified");
+      expect(response.body).not.toContain('name="username"');
+      expect(response.body).not.toContain('name="password"');
     } finally {
       await fixture.close();
     }
@@ -177,7 +274,7 @@ describe("auth", () => {
     const redirectUri = "https://chatgpt.com/oauth/callback";
     vi.stubGlobal("fetch", async (url: string) => {
       expect(url).toBe("https://chatgpt.com/oauth/client");
-      return new Response(JSON.stringify({ redirect_uris: [redirectUri] }), {
+      return new Response(clientMetadataJson([redirectUri]), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -228,7 +325,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const verifier = "refresh-verifier";
       const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier, "gateway.read gateway.references");
@@ -255,7 +352,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const verifier = "refresh-reuse-verifier";
       const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier, "gateway.read");
@@ -285,7 +382,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const verifier = "refresh-binding-verifier";
       const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier);
@@ -313,7 +410,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig({ refreshTokenIdleTtl: "1ms", refreshTokenMaxTtl: "1d" });
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const verifier = "refresh-expiry-verifier";
       const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier);
@@ -332,7 +429,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig({ maxRefreshTokenRecords: 1 });
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const verifier = "refresh-capacity-verifier";
       const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier);
@@ -354,7 +451,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig({ signingKeyPath });
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
 
     try {
       const verifier = "restart-verifier";
@@ -379,7 +476,7 @@ describe("auth", () => {
     const signingKeyPath = await createSigningKeyFile();
     const statePath = join(mkdtempSync(join(tmpdir(), "gateway-refresh-state-")), "refresh-state.json");
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
 
     const firstConfig = await builtinOAuthConfig({ signingKeyPath, refreshTokenStoreFile: statePath });
     const firstServer = await startServer(firstConfig);
@@ -419,7 +516,7 @@ describe("auth", () => {
   it("loses memory-only refresh grants across a fresh gateway configuration", async () => {
     const signingKeyPath = await createSigningKeyFile();
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     const first = await startServer(await builtinOAuthConfig({ signingKeyPath }));
     const verifier = "ephemeral-refresh-verifier";
     const code = await authorizeCode(first.baseUrl, redirectUri, verifier);
@@ -449,7 +546,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig({ refreshTokenStoreFile: statePath });
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const verifier = "failed-refresh-write-verifier";
       const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier);
@@ -495,7 +592,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
 
     try {
       const matchingVerifier = "matching-resource-verifier";
@@ -532,7 +629,7 @@ describe("auth", () => {
     const redirectUri = "https://chatgpt.com/oauth/callback";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const fixture = await startServer(config);
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
 
     try {
       const verifier = "log-verifier";
@@ -573,7 +670,10 @@ describe("auth", () => {
   it("rejects invalid built-in OAuth login without leaking credentials", async () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(
+      ["https://chatgpt.com/oauth/callback"],
+      { client_name: "ChatGPT" },
+    ), { status: 200 }));
     try {
       const challenge = pkceChallenge("verifier");
       const response = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
@@ -582,10 +682,13 @@ describe("auth", () => {
           password: "wrong-password",
           code_challenge: challenge,
           state: "retry-state",
+          client_name: "Spoofed client",
         }),
       });
 
       expect(response.status).toBe(401);
+      expect(response.body).toContain("Connect ChatGPT to SecretSauce");
+      expect(response.body).not.toContain("Spoofed client");
       expect(response.body).toContain('role="alert"');
       expect(response.body).toContain("Invalid username or password.");
       expect(response.body).toContain('name="state" value="retry-state"');
@@ -605,7 +708,7 @@ describe("auth", () => {
       initial_lockout: "1m", max_lockout: "2m", max_entries: 20,
     } });
     const fixture = await startServer(config);
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(["https://chatgpt.com/oauth/callback"]), { status: 200 }));
     try {
       const failedChallenge = pkceChallenge("failed-login");
       const wrongUsername = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
@@ -632,7 +735,7 @@ describe("auth", () => {
   it("keeps health responsive during asynchronous password verification", async () => {
     const config = await builtinOAuthConfig({ passwordIterations: 500_000 });
     const fixture = await startServer(config);
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(["https://chatgpt.com/oauth/callback"]), { status: 200 }));
     try {
       const login = localRequest(`${fixture.baseUrl}/oauth/authorize`, {
         method: "POST", body: authorizationBody({ code_challenge: pkceChallenge("async-verifier") }),
@@ -653,7 +756,7 @@ describe("auth", () => {
       maxPasswordVerificationsPerSource: 1,
     });
     const fixture = await startServer(config);
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(["https://chatgpt.com/oauth/callback"]), { status: 200 }));
     try {
       const first = localRequest(`${fixture.baseUrl}/oauth/authorize`, {
         method: "POST", body: authorizationBody({ code_challenge: pkceChallenge("first-verifier") }),
@@ -674,7 +777,7 @@ describe("auth", () => {
   it("fails safely when the configured password hash is malformed", async () => {
     const config = await builtinOAuthConfig({ adminPasswordHash: "malformed" });
     const fixture = await startServer(config);
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(["https://chatgpt.com/oauth/callback"]), { status: 200 }));
     try {
       const response = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
         method: "POST", body: authorizationBody({ code_challenge: pkceChallenge("malformed-verifier") }),
@@ -689,7 +792,7 @@ describe("auth", () => {
     const body = authorizationBody({ code_challenge: pkceChallenge("bounded-verifier") });
     const allowedConfig = await builtinOAuthConfig({ maxInboundBody: `${Buffer.byteLength(body)}b` });
     const allowedFixture = await startServer(allowedConfig);
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/oauth/callback"] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(["https://chatgpt.com/oauth/callback"]), { status: 200 }));
     try {
       const allowed = await localRequest(`${allowedFixture.baseUrl}/oauth/authorize`, { method: "POST", body });
       expect(allowed.status).toBe(302);
@@ -750,7 +853,7 @@ describe("auth", () => {
       expect(unallowed.status).toBe(400);
       expect(JSON.parse(unallowed.body)).toEqual({ error: "invalid_client" });
 
-      vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: ["https://chatgpt.com/other"] }), { status: 200 }));
+      vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(["https://chatgpt.com/other"]), { status: 200 }));
       const redirectMismatch = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
         method: "POST",
         body: authorizationBody({ code_challenge: pkceChallenge("verifier") }),
@@ -806,7 +909,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig();
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const verifier = "verifier";
       const authorize = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
@@ -843,7 +946,7 @@ describe("auth", () => {
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
     const verifier = "bounded-token-verifier";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const code = await authorizeCode(fixture.baseUrl, redirectUri, verifier);
       const normalBody = tokenBody(code, redirectUri, verifier);
@@ -864,7 +967,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig({ maxAuthorizationCodes: 1 });
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const firstVerifier = "first-capacity-verifier";
       const firstCode = await authorizeCode(fixture.baseUrl, redirectUri, firstVerifier);
@@ -893,7 +996,7 @@ describe("auth", () => {
     const second = await startServer(secondConfig);
     const redirectUri = "https://chatgpt.com/oauth/callback";
     const verifier = "isolated-code-verifier";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const code = await authorizeCode(first.baseUrl, redirectUri, verifier);
       const crossConfig = await localRequest(`${second.baseUrl}/oauth/token`, {
@@ -911,7 +1014,7 @@ describe("auth", () => {
     const config = await builtinOAuthConfig({ authorizationCodeTtl: "1ms" });
     const fixture = await startServer(config);
     const redirectUri = "https://chatgpt.com/oauth/callback";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ redirect_uris: [redirectUri] }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson([redirectUri]), { status: 200 }));
     try {
       const verifier = "verifier";
       const authorize = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
@@ -1244,6 +1347,28 @@ function requestWithBearer(token: string) {
       authorization: `Bearer ${token}`,
     },
   } as any;
+}
+
+function clientMetadataJson(redirectUris: string[], overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    client_id: "https://chatgpt.com/oauth/client",
+    redirect_uris: redirectUris,
+    ...overrides,
+  });
+}
+
+function authorizationQuery(overrides: Record<string, string> = {}): string {
+  return new URLSearchParams({
+    response_type: "code",
+    client_id: "https://chatgpt.com/oauth/client",
+    redirect_uri: "https://chatgpt.com/oauth/callback",
+    scope: "gateway.read",
+    state: "state",
+    code_challenge_method: "S256",
+    code_challenge: "challenge",
+    resource: "https://mcp.example.org",
+    ...overrides,
+  }).toString();
 }
 
 function authorizationBody(overrides: Record<string, string> = {}): string {
