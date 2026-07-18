@@ -23,7 +23,8 @@ ENV SECRETLINT_SUBJECT_QUEUE_MAX=4
 ENV SECRETLINT_QUEUE_TIMEOUT_MS=5000
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY assets ./assets
+COPY assets/brand/secretsauce-icon.png ./assets/brand/secretsauce-icon.png
+COPY assets/brand/secretsauce-lockup.png ./assets/brand/secretsauce-lockup.png
 COPY config/secretlint.yaml /app/config/secretlint.yaml
 COPY config/secretlint.yaml /config/secretlint.yaml
 COPY config/sensitive-names.yaml /app/config/sensitive-names.yaml

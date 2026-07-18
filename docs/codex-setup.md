@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/brand/secretsauce-lockup-docs-dark.png">
+    <img src="../assets/brand/secretsauce-lockup.png" alt="SecretSauce MCP" width="520">
+  </picture>
+</p>
+
 # SecretSauce (MCP) Setup for Codex and ChatGPT
 
 ## OAuth Mode

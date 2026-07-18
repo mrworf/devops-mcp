@@ -48,7 +48,7 @@ describe("documentation examples", () => {
 
   it("uses the SecretSauce identity outside preserved historical records", () => {
     const readme = readFileSync("README.md", "utf8");
-    expect(readme).toContain("# SecretSauce (MCP)");
+    expect(readme).toContain("SecretSauce MCP — Give agents access, not secrets");
     expect(readme).toContain("Give agents access, not secrets");
     expect(readme).toContain("ghcr.io/mrworf/secretsauce-mcp");
 
@@ -62,6 +62,25 @@ describe("documentation examples", () => {
       return legacyBrand.test(source) || legacyRepository.test(source);
     });
     expect(offenders).toEqual([]);
+  });
+
+  it("references accessible, theme-safe documentation branding assets", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const setup = readFileSync("docs/codex-setup.md", "utf8");
+    const expectedAssets = [
+      "assets/brand/secretsauce-primary.png",
+      "assets/brand/secretsauce-primary-docs-dark.png",
+      "assets/brand/secretsauce-chef.png",
+      "assets/brand/secretsauce-lockup.png",
+      "assets/brand/secretsauce-lockup-docs-dark.png",
+    ];
+
+    for (const asset of expectedAssets) expect(statSync(asset).isFile()).toBe(true);
+    expect(readme).toContain('alt="SecretSauce MCP — Give agents access, not secrets"');
+    expect(readme).toContain('alt="SecretSauce chef holding a protected secret recipe"');
+    expect(readme).toContain('media="(prefers-color-scheme: dark)"');
+    expect(setup).toContain('alt="SecretSauce MCP"');
+    expect(setup).toContain('media="(prefers-color-scheme: dark)"');
   });
 });
 

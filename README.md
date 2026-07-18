@@ -1,6 +1,9 @@
-# SecretSauce (MCP)
-
-> **Give agents access, not secrets**
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/secretsauce-primary-docs-dark.png">
+    <img src="assets/brand/secretsauce-primary.png" alt="SecretSauce MCP — Give agents access, not secrets" width="900">
+  </picture>
+</h1>
 
 [![CI](https://github.com/mrworf/secretsauce-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mrworf/secretsauce-mcp/actions/workflows/ci.yml)
 [![Docker image](https://img.shields.io/badge/GHCR-secretsauce--mcp-2ea44f?logo=github)](https://github.com/mrworf/secretsauce-mcp/pkgs/container/secretsauce-mcp)
@@ -91,3 +94,7 @@ services:
 Use the writable audit mount for `audit.file`, for example `/var/lib/secretsauce/audit/audit.jsonl`. When using `auth.mode: builtin_oauth`, keep `auth.builtin_oauth.signing_key_file` on stable mounted storage such as `/run/oauth/oauth_signing_key.pem`; changing that key forces clients to reauthenticate. Set `auth.builtin_oauth.refresh_token_store_file` to a stable writable path such as `/var/lib/secretsauce/oauth/refresh-state.json` to preserve hash-only refresh state across restarts. Omitting it keeps refresh grants in memory and requires reauthorization after restart.
 
 Expose the service through an HTTPS endpoint such as `https://gateway.example.org/mcp` when using remote MCP clients.
+
+<p align="right">
+  <img src="assets/brand/secretsauce-chef.png" alt="SecretSauce chef holding a protected secret recipe" width="220">
+</p>
