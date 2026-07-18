@@ -111,7 +111,7 @@ describe("auth", () => {
       response_type: "code",
       client_id: "https://chatgpt.com/oauth/client",
       redirect_uri: "https://chatgpt.com/oauth/callback",
-      scope: "gateway.read gateway.references",
+      scope: "gateway.references gateway.read gateway.request",
       state: "setup-state",
       code_challenge_method: "S256",
       code_challenge: "page-challenge",
@@ -129,9 +129,15 @@ describe("auth", () => {
       expect(response.headers["x-content-type-options"]).toBe("nosniff");
       expect(response.headers["x-frame-options"]).toBe("DENY");
       expect(response.body).toContain("Connect ChatGPT to SecretSauce");
+      expect(response.body).not.toContain("Secretsauce");
       expect(response.body).toContain("Stored service credentials will not be shared with ChatGPT");
+      expect(response.body).toContain("What ChatGPT will be able to do");
       expect(response.body).toContain("View available services");
+      expect(response.body).toContain("Make requests permitted by gateway policy");
       expect(response.body).toContain("Use temporary references returned by the gateway");
+      expect(response.body.indexOf("View available services")).toBeLessThan(response.body.indexOf("Make requests permitted by gateway policy"));
+      expect(response.body.indexOf("Make requests permitted by gateway policy")).toBeLessThan(response.body.indexOf("Use temporary references returned by the gateway"));
+      expect(response.body).toContain("The gateway authenticates ChatGPT, validates each destination and request against gateway policy, and uses stored service credentials on ChatGPT&rsquo;s behalf. Credential values are never shared with ChatGPT.");
       expect(response.body).toContain("<strong>Gateway</strong><span>mcp.example.org</span>");
       expect(response.body).toContain("<strong>You will sign in to</strong><span>SecretSauce</span>");
       expect(response.body).toContain("Sign in to this gateway");
@@ -143,7 +149,7 @@ describe("auth", () => {
       expect(response.body).toContain('aria-label="OAuth request details"');
       expect(response.body).toContain("https://chatgpt.com/oauth/client");
       expect(response.body).toContain("https://chatgpt.com/oauth/callback");
-      expect(response.body).toContain("gateway.read, gateway.references");
+      expect(response.body).toContain("gateway.references, gateway.read, gateway.request");
       expect(response.body).toContain('name="state" value="setup-state"');
       expect(response.body).toContain('name="code_challenge" value="page-challenge"');
       expect(response.body).toContain('label for="username"');
@@ -171,8 +177,10 @@ describe("auth", () => {
       const response = await localRequest(`${fixture.baseUrl}/oauth/authorize?${authorizationQuery()}`, { method: "GET" });
 
       expect(response.status).toBe(200);
-      expect(response.body).toContain("Connect MCP client to SecretSauce");
-      expect(response.body).toContain("not shared with MCP client");
+      expect(response.body).toContain("Connect an MCP client to SecretSauce");
+      expect(response.body).toContain("What the MCP client will be able to do");
+      expect(response.body).toContain("The gateway authenticates the MCP client, validates each destination and request against gateway policy, and uses stored service credentials on the MCP client&rsquo;s behalf. Credential values are never shared with the MCP client.");
+      expect(response.body).toContain("not shared with the MCP client");
       expect(response.body).toContain('label for="username"');
     } finally {
       await fixture.close();
@@ -195,6 +203,7 @@ describe("auth", () => {
       expect(response.body).not.toContain(hostileName);
       expect(response.body).not.toContain("<script>");
       expect(response.body).toContain("&lt;script&gt;alert(&quot;client&quot;)&lt;/script&gt;");
+      expect(response.body).toContain("What &lt;script&gt;alert(&quot;client&quot;)&lt;/script&gt; will be able to do");
       expect(response.body).toContain('label for="username"');
     } finally {
       await fixture.close();

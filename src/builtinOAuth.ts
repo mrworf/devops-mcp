@@ -80,6 +80,7 @@ const passwordLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
 const loginAttemptLimiters = new WeakMap<GatewayConfig, LoginAttemptLimiter>();
 const pbkdf2Async = promisify(pbkdf2);
 const MAX_CLIENT_NAME_LENGTH = 120;
+const PERMISSION_SCOPE_ORDER = ["gateway.read", "gateway.request", "gateway.references"] as const;
 
 interface VerifiedClientMetadata {
   clientId: string;
@@ -192,8 +193,16 @@ function renderLoginPage(
     })
     .join("\n");
   const clientName = client.clientName ?? "MCP client";
+  const escapedClientName = escapeHtml(clientName);
+  const connectClientName = client.clientName === null ? "an MCP client" : escapedClientName;
+  const sentenceClientName = client.clientName === null ? "An MCP client" : escapedClientName;
+  const definiteClientName = client.clientName === null ? "the MCP client" : escapedClientName;
+  const possessiveClientName = client.clientName === null ? "the MCP client&rsquo;s" : `${escapedClientName}&rsquo;s`;
   const gateway = gatewayHost(config);
-  const permissions = client.scopes.map((scope) => `<li>${escapeHtml(permissionDescription(scope))}</li>`).join("\n");
+  const permissions = PERMISSION_SCOPE_ORDER
+    .filter((scope) => client.scopes.includes(scope))
+    .map((scope) => `<li>${escapeHtml(permissionDescription(scope))}</li>`)
+    .join("\n");
   const error = errorMessage === undefined
     ? ""
     : `<div class="error" role="alert"><strong>Sign-in failed.</strong> ${escapeHtml(errorMessage)}</div>`;
@@ -417,18 +426,18 @@ button:focus-visible {
 <main>
 <section class="panel" aria-labelledby="authorize-title">
 <div class="intro">
-<h1 id="authorize-title">Connect ${escapeHtml(clientName)} to SecretSauce</h1>
-<p class="description"><strong>${escapeHtml(clientName)}</strong> is requesting access to use services configured in this gateway. Stored service credentials will not be shared with ${escapeHtml(clientName)}.</p>
+<h1 id="authorize-title">Connect ${connectClientName} to SecretSauce</h1>
+<p class="description"><strong>${sentenceClientName}</strong> is requesting access to use services configured in this gateway. Stored service credentials will not be shared with ${definiteClientName}.</p>
 <div class="trust-summary" aria-label="Connection summary">
-<div class="trust-row"><strong>Client</strong><span>${escapeHtml(clientName)}</span></div>
+<div class="trust-row"><strong>Client</strong><span>${escapedClientName}</span></div>
 <div class="trust-row"><strong>Gateway</strong><span>${escapeHtml(gateway)}</span></div>
 <div class="trust-row"><strong>You will sign in to</strong><span>SecretSauce</span></div>
 </div>
 <div class="permissions" aria-labelledby="permissions-title">
-<h2 id="permissions-title">Requested access</h2>
+<h2 id="permissions-title">What ${definiteClientName} will be able to do</h2>
 <ul>${permissions}</ul>
 </div>
-<div class="info-box" role="note">The gateway authenticates the client, verifies each destination and request, and uses stored service credentials on the client&rsquo;s behalf. Credential values are never returned to the MCP client.</div>
+<div class="info-box" role="note">The gateway authenticates ${definiteClientName}, validates each destination and request against gateway policy, and uses stored service credentials on ${possessiveClientName} behalf. Credential values are never shared with ${definiteClientName}.</div>
 <details>
 <summary>Connection details</summary>
 <div class="connection-details" aria-label="OAuth request details">
@@ -443,7 +452,7 @@ button:focus-visible {
 ${hidden}
 <div class="sign-in">
 <h2>Sign in to this gateway</h2>
-<p>These credentials are sent only to ${escapeHtml(gateway)} and are not shared with ${escapeHtml(clientName)}.</p>
+<p>These credentials are sent only to ${escapeHtml(gateway)} and are not shared with ${definiteClientName}.</p>
 </div>
 ${error}
 <div class="field-grid">
@@ -495,7 +504,7 @@ function gatewayHost(config: GatewayConfig): string {
 
 function permissionDescription(scope: string): string {
   if (scope === "gateway.read") return "View available services";
-  if (scope === "gateway.request") return "Make approved requests through the gateway";
+  if (scope === "gateway.request") return "Make requests permitted by gateway policy";
   if (scope === "gateway.references") return "Use temporary references returned by the gateway";
   return scope;
 }
