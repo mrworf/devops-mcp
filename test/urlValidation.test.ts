@@ -62,6 +62,24 @@ describe("destination validation", () => {
       path: "/api/stacks",
     }), "unknown_service");
   });
+
+  it("rejects routing-ambiguous escapes and canonicalizes the path sent downstream", () => {
+    const config = registryConfig();
+    const user = auth("henric@example.com");
+    const accepted = resolveDestination(config, user, "portainer-prod", "primary", {
+      url: "https://portainer.internal:9443/api//snow%20%E9%9B%AA/?view=%61dmin",
+    });
+    expect(accepted.methodPath).toBe("/api/snow%20%E9%9B%AA");
+    expect(accepted.url.pathname).toBe(accepted.methodPath);
+    expect(accepted.url.search).toBe("?view=%61dmin");
+
+    for (const path of [
+      "/%61dmin", "/%2e%2e/admin", "/%2Fadmin", "/%5cadmin", "/%00admin", "/%252e%252e/admin", "/bad%escape",
+      "/%7Eadmin", "/%2fadmin", "/%5Cadmin",
+    ]) {
+      expectGatewayError(() => resolveDestination(config, user, "portainer-prod", "primary", { path }), "destination_not_allowed");
+    }
+  });
 });
 
 function expectGatewayError(fn: () => unknown, code: GatewayError["code"]) {

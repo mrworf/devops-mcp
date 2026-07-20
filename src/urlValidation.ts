@@ -63,10 +63,40 @@ function resolveTargetUrl(destination: DestinationConfig, input: TargetInput): U
   if ((input.path === undefined && input.url === undefined) || (input.path !== undefined && input.url !== undefined)) {
     throw new GatewayError("destination_not_allowed", "Provide exactly one of path or url.");
   }
-  if (input.url !== undefined) return new URL(input.url);
+  if (input.url !== undefined) {
+    assertUnambiguousPathEncoding(rawAbsolutePath(input.url));
+    return canonicalizeTargetPath(new URL(input.url));
+  }
   const path = input.path ?? "/";
   if (!path.startsWith("/")) throw new GatewayError("destination_not_allowed", "path must start with /");
-  return new URL(path, destination.baseUrl);
+  assertUnambiguousPathEncoding(path.split(/[?#]/, 1)[0] ?? "/");
+  return canonicalizeTargetPath(new URL(path, destination.baseUrl));
+}
+
+function canonicalizeTargetPath(url: URL): URL {
+  url.pathname = normalizePath(url.pathname);
+  return url;
+}
+
+function rawAbsolutePath(input: string): string {
+  const match = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*(\/[^?#]*)?/.exec(input);
+  return match?.[1] ?? "/";
+}
+
+function assertUnambiguousPathEncoding(pathname: string): void {
+  for (let index = 0; index < pathname.length; index += 1) {
+    if (pathname[index] !== "%") continue;
+    const escape = pathname.slice(index + 1, index + 3);
+    if (!/^[0-9a-f]{2}$/i.test(escape)) {
+      throw new GatewayError("destination_not_allowed", "URL path contains an ambiguous percent escape.");
+    }
+    const byte = Number.parseInt(escape, 16);
+    const character = String.fromCharCode(byte);
+    if (/^[A-Za-z0-9._~-]$/.test(character) || byte === 0x2f || byte === 0x5c || byte === 0x00 || byte === 0x25) {
+      throw new GatewayError("destination_not_allowed", "URL path contains an ambiguous percent escape.");
+    }
+    index += 2;
+  }
 }
 
 function validateScheme(destination: DestinationConfig, url: URL): void {

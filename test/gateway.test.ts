@@ -76,6 +76,26 @@ describe("HTTP gateway", () => {
     }
   });
 
+  it("rejects ambiguous encoded paths before credential substitution or downstream I/O", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      const broker = installBroker(config);
+      const auth = actor();
+      const token = broker.issueTokens(auth, {
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Test encoded path rejection.",
+      }).tokens[0]?.token ?? "";
+
+      await expect(executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET",
+        path: "/%61pi/echo", headers: { "X-API-Key": token }, reason: "Reject ambiguous path.",
+      })).rejects.toMatchObject({ code: "destination_not_allowed" });
+      expect(downstream.requests).toHaveLength(0);
+    } finally {
+      await downstream.close();
+    }
+  });
+
   it("round trips response-generated sec tokens through headers, query, and nested bodies", async () => {
     const downstream = await startDownstream();
     try {
