@@ -37,6 +37,17 @@ describe("documentation examples", () => {
     expect(joined).not.toContain("super-secret-api-key");
   });
 
+  it("documents response scanning as defense in depth rather than an absolute isolation guarantee", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const securityNotes = readFileSync("docs/security-notes.md", "utf8");
+
+    expect(readme).toContain("Approved endpoints are part of the credential security boundary");
+    expect(readme).toContain("it cannot recognize every reversible transformation");
+    expect(securityNotes).toContain("Response scanning is defense in depth, not a sandbox");
+    expect(securityNotes).toContain("Treat allowed methods and routes as part of the credential security boundary");
+    expect(readme).not.toContain("Agents are never entrusted with raw");
+  });
+
   it("documents the full ChatGPT web MCP endpoint URL", () => {
     const docs = readFileSync("docs/codex-setup.md", "utf8");
     const chatgptWeb = docs.slice(docs.indexOf("## ChatGPT Web"));

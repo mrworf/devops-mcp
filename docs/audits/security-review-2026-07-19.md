@@ -19,7 +19,7 @@ The public OAuth surface also needs attention. Built-in OAuth retrieves client m
 Recommended release priority:
 
 1. Fix `SEC-001` before exposing any service configured with suffix host matching.
-2. Address `CHAIN-001` structurally by constraining credential injection and response egress; do not rely on secret scanning as a complete isolation boundary.
+2. Treat `SEC-002`/`CHAIN-001` as an explicit deployment limitation: narrowly curate downstream methods and routes, and do not rely on secret scanning as a complete isolation boundary.
 3. Fix the encoded-path policy mismatch and OAuth client metadata retrieval before public deployment.
 4. Add per-subject MCP capacity controls and OAuth cache-prevention headers.
 
@@ -47,7 +47,7 @@ Exploitability was assessed for an internet attacker without filesystem or serve
 | ID | Severity | CVSS | Confidence | Title | Status |
 |----|----------|------|------------|-------|--------|
 | SEC-001 | High | 8.1 | Confirmed | Suffix host matching accepts attacker-controlled sibling domains | Open |
-| SEC-002 | Medium | 5.3 | Confirmed | Invertible response transformations bypass credential scanning | Open |
+| SEC-002 | Medium | 5.3 | Confirmed | Invertible response transformations bypass credential scanning | Accepted risk |
 | SEC-003 | Medium | 6.8 | High | Encoded paths can bypass route policy | Open |
 | SEC-004 | Medium | 6.8 | High | OAuth client metadata retrieval follows redirects and lacks SSRF/resource bounds | Open |
 | SEC-005 | Medium | 6.5 | Confirmed | One authenticated subject can exhaust global MCP transport capacity | Open |
@@ -108,7 +108,7 @@ Add positive and negative unit tests for label boundaries, apex behavior, case, 
 - **Severity:** Medium
 - **CVSS v3.1:** 5.3 `CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:N/A:N`
 - **Confidence:** Confirmed
-- **Status:** Open
+- **Status:** Accepted risk
 - **Affected components:** `src/substitution.ts:16-35`, `src/responseTokenizer.ts:112-121`, `src/responseTokenizer.ts:139-147`, credential usage metadata and public credential-isolation claims
 
 #### Evidence
@@ -143,7 +143,7 @@ The attack is remote and requires Low privileges. Attack Complexity is High beca
 
 #### Remediation
 
-Do not use scanning as the sole credential-isolation boundary. Bind each credential to configured injection locations and have the gateway inject it there; reject references in all other fields. Deny routes that reflect, transform, debug, export, or introspect requests unless their response egress is structurally constrained. For high-assurance services, use response schemas/allowlists or purpose-built adapters that release only expected fields. Codec-aware scanning can add defense in depth for explicitly declared encodings, but arbitrary reversible transformations cannot be comprehensively enumerated.
+This limitation cannot be eliminated by a finite response-scanning rule set. Treat administrator selection of downstream methods and routes as part of the credential security boundary. Deny routes that reflect, transform, debug, export, introspect, template, proxy, or execute caller-controlled input unless their risk is explicitly accepted. For high-assurance services, bind credentials to configured injection locations and use response schemas/allowlists or purpose-built adapters that release only expected fields. Codec-aware scanning can add defense in depth for explicitly declared encodings, but arbitrary reversible transformations cannot be comprehensively enumerated.
 
 Clarify public documentation: the gateway substantially reduces accidental disclosure and blocks recognized secrets, but cannot guarantee non-exfiltration through arbitrary downstream computation.
 
@@ -392,4 +392,4 @@ The temporary `security-review-poc.test.ts` contained only synthetic pure/local 
 
 ### Release Gate
 
-Do not advertise universal raw-credential non-exfiltration or expose suffix-configured destinations publicly until `SEC-001` is fixed. Before broad public deployment, also close `SEC-004` and choose a documented response-isolation model for `SEC-002`/`CHAIN-001`. If a constrained deployment proceeds earlier, require exact hosts, external OAuth, carefully enumerated non-reflective routes, TLS/rate limiting at the edge, durable bounded audit storage, and explicit residual-risk acceptance.
+Do not advertise universal raw-credential non-exfiltration or expose suffix-configured destinations publicly until `SEC-001` is fixed. Before broad public deployment, also close `SEC-004` and explicitly accept the documented endpoint-selection limitation in `SEC-002`/`CHAIN-001`. If a constrained deployment proceeds earlier, require exact hosts, external OAuth, carefully enumerated non-reflective routes, TLS/rate limiting at the edge, durable bounded audit storage, and explicit residual-risk acceptance.
