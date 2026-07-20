@@ -40,12 +40,15 @@ describe("documentation examples", () => {
   it("documents response scanning as defense in depth rather than an absolute isolation guarantee", () => {
     const readme = readFileSync("README.md", "utf8");
     const securityNotes = readFileSync("docs/security-notes.md", "utf8");
+    const securityReview = readFileSync("docs/audits/security-review-2026-07-19.md", "utf8");
 
     expect(readme).toContain("Approved endpoints are part of the credential security boundary");
     expect(readme).toContain("it cannot recognize every reversible transformation");
     expect(securityNotes).toContain("Response scanning is defense in depth, not a sandbox");
     expect(securityNotes).toContain("Treat allowed methods and routes as part of the credential security boundary");
+    expect(securityReview).toContain("| SEC-002 | Medium | 5.3 | Confirmed | Invertible response transformations bypass credential scanning | Accepted risk |");
     expect(readme).not.toContain("Agents are never entrusted with raw");
+    expect(securityReview).not.toContain("CHAIN-001");
   });
 
   it("documents the full ChatGPT web MCP endpoint URL", () => {

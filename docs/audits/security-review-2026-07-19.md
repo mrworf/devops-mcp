@@ -12,14 +12,14 @@
 
 ## Executive Summary
 
-SecretSauce has a strong security foundation, but this revision is **not ready for an unqualified public-internet claim that credentials cannot be exfiltrated**. Six findings remain: one High, four Medium, and one Low, plus one High exploit chain. The most direct credential-boundary defect is a hostname suffix comparison that can allow an attacker-controlled sibling domain. The additional High-risk chain arises because callers can place a credential reference in arbitrary request fields while response filtering cannot recognize undeclared Base64, percent, hex, split, or application-specific transformations. If an allowed downstream reflects or transforms input, an authenticated caller can recover the raw credential and use it outside gateway policy.
+SecretSauce has a strong security foundation, but this revision is **not ready for an unqualified public-internet claim that credentials cannot be exfiltrated**. Six findings remain: one High, four Medium, and one Low. The most direct credential-boundary defect is a hostname suffix comparison that can allow an attacker-controlled sibling domain. SEC-002 records a separate accepted limitation: if an administrator approves a downstream endpoint that reversibly transforms caller-controlled input, an authenticated caller may be able to recover a substituted credential despite response scanning.
 
 The public OAuth surface also needs attention. Built-in OAuth retrieves client metadata with automatic redirects and an unbounded JSON body, without validating the connected IP or final URL. When an entire origin is allowlisted, an open redirect or attacker-controlled path on that origin can turn this into OAuth code theft and blind SSRF. Built-in OAuth should remain a private, single-administrator option until this is fixed; use a hardened external OAuth provider for general public exposure.
 
 Recommended release priority:
 
 1. Fix `SEC-001` before exposing any service configured with suffix host matching.
-2. Treat `SEC-002`/`CHAIN-001` as an explicit deployment limitation: narrowly curate downstream methods and routes, and do not rely on secret scanning as a complete isolation boundary.
+2. Treat `SEC-002` as an explicit deployment limitation: narrowly curate downstream methods and routes, and do not rely on secret scanning as a complete isolation boundary.
 3. Fix the encoded-path policy mismatch and OAuth client metadata retrieval before public deployment.
 4. Add per-subject MCP capacity controls and OAuth cache-prevention headers.
 
@@ -117,7 +117,7 @@ Credential references are substituted recursively wherever they appear in caller
 
 A focused test Base64-encoded a synthetic configured secret in an ordinary response without `Content-Transfer-Encoding: base64`. `tokenizeWithTransferEncoding` returned that value unchanged and reported `secretTokenized: false`. Percent encoding, hex, character arrays/splitting, hashes of low-entropy values, compression, encryption with caller-known keys, and application-specific transforms have the same structural problem.
 
-This limitation is acknowledged in `docs/security-notes.md` and the configuration reference, but stronger public wording such as “Agents are never entrusted with raw credentials” can reasonably be read as a universal guarantee.
+This limitation is documented in `README.md`, `docs/security-notes.md`, and the configuration reference so operators can treat endpoint selection as part of the credential security boundary.
 
 #### Preconditions
 
@@ -135,11 +135,11 @@ Instantiate the tokenizer with a synthetic credential, encode that value locally
 
 #### Impact
 
-The individual scanner gap discloses a configured secret when an allowed transformation endpoint exists. Its combined effect is higher because recovering the raw credential removes all gateway destination, method, path, audit, and rate-policy controls; see `CHAIN-001`.
+When an allowed transformation endpoint exists, the limitation can disclose a configured secret. A caller who recovers the raw credential can then use it directly, outside gateway destination, method, path, audit, revocation, and rate-policy controls. This is the consequence of SEC-002, not a separate exploit chain.
 
 #### CVSS Rationale
 
-The attack is remote and requires Low privileges. Attack Complexity is High because exploitability depends on a suitable policy-allowed downstream behavior. Confidentiality impact is High; integrity is represented in the chain rather than this primitive.
+The attack is remote and requires Low privileges. Attack Complexity is High because exploitability depends on a suitable policy-allowed downstream behavior. Confidentiality impact is High because the configured credential can be recovered. Subsequent use of that credential may affect integrity, but it is deployment-specific and is not separately scored.
 
 #### Remediation
 
@@ -315,22 +315,6 @@ Use a dedicated OAuth token/error response writer that sets `Cache-Control: no-s
 
 Assert both headers on successful authorization-code and refresh responses and on token endpoint errors. Verify discovery/JWKS endpoints retain appropriate independent caching semantics.
 
-## Exploit Chains
-
-### CHAIN-001: Credential reference to raw credential and policy escape
-
-- **Combined severity:** High
-- **CVSS v3.1:** 8.2 `CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:C/C:H/I:H/A:N`
-
-1. An authenticated subject receives a destination- and service-bound `gref_...`.
-2. The subject places it in an arbitrary field of a policy-allowed call to a downstream endpoint that transforms or reflects input.
-3. The gateway substitutes the raw credential after destination/policy approval.
-4. The downstream returns an undeclared Base64, percent, hex, split, or application-specific representation.
-5. Response scanning does not recognize the transformed value, so it reaches the caller.
-6. The caller reverses the transform and uses the raw credential directly, outside all gateway destination, route, audit, and future revocation controls.
-
-This chain crosses from constrained gateway capability into the downstream credential's native authority, so its combined integrity impact and changed scope are higher than `SEC-002` alone. `SEC-001` supplies a simpler alternative exfiltration path in deployments with a vulnerable suffix matcher.
-
 ## Hardening Recommendations
 
 1. Keep built-in OAuth limited to its documented private, single-administrator use case. For public multi-user access, prefer an external provider with MFA, mature abuse detection, key rotation, and account recovery.
@@ -392,4 +376,4 @@ The temporary `security-review-poc.test.ts` contained only synthetic pure/local 
 
 ### Release Gate
 
-Do not advertise universal raw-credential non-exfiltration or expose suffix-configured destinations publicly until `SEC-001` is fixed. Before broad public deployment, also close `SEC-004` and explicitly accept the documented endpoint-selection limitation in `SEC-002`/`CHAIN-001`. If a constrained deployment proceeds earlier, require exact hosts, external OAuth, carefully enumerated non-reflective routes, TLS/rate limiting at the edge, durable bounded audit storage, and explicit residual-risk acceptance.
+Do not advertise universal raw-credential non-exfiltration or expose suffix-configured destinations publicly until `SEC-001` is fixed. Before broad public deployment, also close `SEC-004` and explicitly accept the documented endpoint-selection limitation in `SEC-002`. If a constrained deployment proceeds earlier, require exact hosts, external OAuth, carefully enumerated non-reflective routes, TLS/rate limiting at the edge, durable bounded audit storage, and explicit residual-risk acceptance.
