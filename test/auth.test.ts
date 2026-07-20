@@ -99,10 +99,14 @@ describe("auth", () => {
       expect(metadataBody.code_challenge_methods_supported).toEqual(["S256"]);
       expect(metadataBody.token_endpoint_auth_methods_supported).toEqual(["none"]);
       expect(metadataBody.grant_types_supported).toEqual(["authorization_code", "refresh_token"]);
+      expect(metadata.headers.get("cache-control")).toBeNull();
+      expect(metadata.headers.get("pragma")).toBeNull();
 
       const jwks = await fetch(`${fixture.baseUrl}/oauth/jwks.json`);
       const jwksBody = await jwks.json() as { keys: unknown[] };
       expect(jwksBody.keys).toHaveLength(1);
+      expect(jwks.headers.get("cache-control")).toBeNull();
+      expect(jwks.headers.get("pragma")).toBeNull();
     } finally {
       await fixture.close();
     }
@@ -314,6 +318,9 @@ describe("auth", () => {
         }),
       });
       expect(authorize.status).toBe(302);
+      expect(authorize.headers["cache-control"]).toBe("no-store");
+      expect(authorize.headers["pragma"]).toBe("no-cache");
+      expect(authorize.headers["referrer-policy"]).toBe("no-referrer");
       const location = new URL(authorize.headers.location ?? "");
       expect(location.origin + location.pathname).toBe(redirectUri);
       expect(location.searchParams.get("state")).toBe("setup-state");
@@ -330,6 +337,9 @@ describe("auth", () => {
           code_verifier: codeVerifier,
         }).toString(),
       });
+      expect(token.headers["cache-control"]).toBe("no-store");
+      expect(token.headers["pragma"]).toBe("no-cache");
+      expect(token.headers["referrer-policy"]).toBe("no-referrer");
       expect(token.status).toBe(200);
       const tokenBody = JSON.parse(token.body) as { access_token: string; refresh_token: string; token_type: string; scope: string };
       expect(tokenBody.token_type).toBe("Bearer");
@@ -338,6 +348,38 @@ describe("auth", () => {
 
       const context = await authenticateRequest(requestWithBearer(tokenBody.access_token), config, ["gateway.read"]);
       expect(context).toMatchObject({ subject: "admin@example.com", mode: "builtin_oauth" });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("prevents caching of successful refreshes and token endpoint errors", async () => {
+    const config = await builtinOAuthConfig();
+    const fixture = await startServer(config);
+    vi.stubGlobal("fetch", async () => new Response(clientMetadataJson(["https://chatgpt.com/oauth/callback"]), { status: 200 }));
+    const verifier = "cache-header-verifier";
+    try {
+      const authorize = await localRequest(`${fixture.baseUrl}/oauth/authorize`, {
+        method: "POST",
+        body: authorizationBody({ code_challenge: pkceChallenge(verifier) }),
+      });
+      const code = new URL(authorize.headers.location ?? "").searchParams.get("code") ?? "";
+      const issued = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST", body: tokenBody(code, "https://chatgpt.com/oauth/callback", verifier),
+      });
+      const refreshToken = (JSON.parse(issued.body) as { refresh_token: string }).refresh_token;
+      const refreshed = await localRequest(`${fixture.baseUrl}/oauth/token`, { method: "POST", body: refreshBody(refreshToken) });
+      const error = await localRequest(`${fixture.baseUrl}/oauth/token`, {
+        method: "POST", body: new URLSearchParams({ grant_type: "unsupported" }).toString(),
+      });
+
+      for (const response of [refreshed, error]) {
+        expect(response.headers["cache-control"]).toBe("no-store");
+        expect(response.headers["pragma"]).toBe("no-cache");
+        expect(response.headers["referrer-policy"]).toBe("no-referrer");
+      }
+      expect(refreshed.status).toBe(200);
+      expect(error.status).toBe(400);
     } finally {
       await fixture.close();
     }

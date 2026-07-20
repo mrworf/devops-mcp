@@ -36,6 +36,11 @@ const AUTHORIZE_PAGE_HEADERS = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
 } as const;
+const OAUTH_SENSITIVE_RESPONSE_HEADERS = {
+  "cache-control": "no-store",
+  "pragma": "no-cache",
+  "referrer-policy": "no-referrer",
+} as const;
 
 interface AuthorizationCode {
   clientId: string;
@@ -122,6 +127,7 @@ export async function handleBuiltinOAuthRequest(
     return;
   }
   if (request.method === "POST" && path === TOKEN_PATH) {
+    for (const [name, value] of Object.entries(OAUTH_SENSITIVE_RESPONSE_HEADERS)) response.setHeader(name, value);
     await handleTokenPost(config, request, response);
     return;
   }
@@ -623,7 +629,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
     resource_status: "match",
     scope_count: validation.scopes.length,
   });
-  response.writeHead(302, { location: redirect.toString() });
+  response.writeHead(302, { ...OAUTH_SENSITIVE_RESPONSE_HEADERS, location: redirect.toString() });
   response.end();
 }
 
