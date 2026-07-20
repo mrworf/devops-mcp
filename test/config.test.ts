@@ -269,12 +269,31 @@ describe("config validation", () => {
 
   it("defaults and validates MCP transport retention", () => {
     const raw = validRaw();
-    expect(validateConfig(raw, validEnv).limits).toMatchObject({ maxMcpTransports: 1000, mcpTransportIdleTtlMs: 1_800_000 });
+    expect(validateConfig(raw, validEnv).limits).toMatchObject({
+      maxMcpTransports: 1000,
+      maxMcpTransportsPerSubject: 10,
+      maxMcpInitializationsPerSubject: 20,
+      mcpInitializationWindowMs: 60_000,
+      maxMcpInitializationRecords: 10_000,
+      mcpTransportIdleTtlMs: 1_800_000,
+    });
     raw.limits.max_mcp_transports = 0;
     expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
     raw.limits.max_mcp_transports = 1;
     raw.limits.mcp_transport_idle_ttl = "never";
     expectConfigError(() => validateConfig(raw, validEnv), "limits.mcp_transport_idle_ttl");
+    raw.limits.mcp_transport_idle_ttl = "30m";
+    raw.limits.max_mcp_transports_per_subject = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+    raw.limits.max_mcp_transports_per_subject = 1;
+    raw.limits.max_mcp_initializations_per_subject = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+    raw.limits.max_mcp_initializations_per_subject = 1;
+    raw.limits.max_mcp_initialization_records = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+    raw.limits.max_mcp_initialization_records = 1;
+    raw.limits.mcp_initialization_window = "never";
+    expectConfigError(() => validateConfig(raw, validEnv), "limits.mcp_initialization_window");
   });
 
   it("accepts service API documentation URLs", () => {

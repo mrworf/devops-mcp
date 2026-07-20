@@ -116,6 +116,10 @@ const rawConfigSchema = z.object({
     max_oauth_client_metadata_inflight: z.number().int().positive().default(4),
     max_oauth_client_metadata_inflight_per_origin: z.number().int().positive().default(2),
     max_mcp_transports: z.number().int().positive().default(1000),
+    max_mcp_transports_per_subject: z.number().int().positive().default(10),
+    max_mcp_initializations_per_subject: z.number().int().positive().default(20),
+    mcp_initialization_window: z.string().default("1m"),
+    max_mcp_initialization_records: z.number().int().positive().default(10000),
     mcp_transport_idle_ttl: z.string().default("30m"),
     max_request_body: z.string().default("1mb"),
     max_response_body: z.string().default("5mb"),
@@ -128,7 +132,9 @@ const rawConfigSchema = z.object({
     max_token_records: 10000, max_token_records_per_subject: 1000,
     max_authorization_codes: 1000, max_refresh_token_records: 10000,
     max_oauth_client_metadata_inflight: 4, max_oauth_client_metadata_inflight_per_origin: 2,
-    max_mcp_transports: 1000, mcp_transport_idle_ttl: "30m",
+    max_mcp_transports: 1000, max_mcp_transports_per_subject: 10,
+    max_mcp_initializations_per_subject: 20, mcp_initialization_window: "1m", max_mcp_initialization_records: 10000,
+    mcp_transport_idle_ttl: "30m",
     max_request_body: "1mb", max_response_body: "5mb", timeout: "30s",
   }),
   logging: z.object({
@@ -369,7 +375,8 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
   const denialTtlMs = parseDuration(raw.denial_ttl, "limits.denial_ttl");
   const stateSweepIntervalMs = parseDuration(raw.state_sweep_interval, "limits.state_sweep_interval");
   const mcpTransportIdleTtlMs = parseDuration(raw.mcp_transport_idle_ttl, "limits.mcp_transport_idle_ttl");
-  if (maxInboundBodyBytes <= 0 || inboundBodyTimeoutMs <= 0 || maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || timeoutMs <= 0 || denialTtlMs <= 0 || stateSweepIntervalMs <= 0 || mcpTransportIdleTtlMs <= 0) {
+  const mcpInitializationWindowMs = parseDuration(raw.mcp_initialization_window, "limits.mcp_initialization_window");
+  if (maxInboundBodyBytes <= 0 || inboundBodyTimeoutMs <= 0 || maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || timeoutMs <= 0 || denialTtlMs <= 0 || stateSweepIntervalMs <= 0 || mcpTransportIdleTtlMs <= 0 || mcpInitializationWindowMs <= 0) {
     throw configError("limits values must be positive");
   }
   if (raw.max_unauthenticated_inflight_per_source > raw.max_unauthenticated_inflight) {
@@ -401,6 +408,10 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
     maxOAuthClientMetadataInflight: raw.max_oauth_client_metadata_inflight,
     maxOAuthClientMetadataInflightPerOrigin: raw.max_oauth_client_metadata_inflight_per_origin,
     maxMcpTransports: raw.max_mcp_transports,
+    maxMcpTransportsPerSubject: raw.max_mcp_transports_per_subject,
+    maxMcpInitializationsPerSubject: raw.max_mcp_initializations_per_subject,
+    mcpInitializationWindowMs,
+    maxMcpInitializationRecords: raw.max_mcp_initialization_records,
     mcpTransportIdleTtlMs,
     maxRequestBodyBytes,
     maxResponseBodyBytes,

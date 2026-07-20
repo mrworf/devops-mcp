@@ -14,11 +14,12 @@ import type { AuthContext, GatewayConfig } from "../types.js";
 import { readBoundedBody } from "../httpBody.js";
 import { registerMaintenanceTask } from "../maintenance.js";
 import { BRAND_ICON_PATH, publicBrandAssetUrl } from "../brandAssets.js";
+import { McpInitializationLimiter } from "./initializationLimiter.js";
 
 type NodeRequestWithBody = IncomingMessage & { body?: unknown };
 
-interface TransportRecord { transport: StreamableHTTPServerTransport; lastActivityAt: number }
-interface TransportState { records: Map<string, TransportRecord> }
+interface TransportRecord { transport: StreamableHTTPServerTransport; lastActivityAt: number; subject: string }
+interface TransportState { records: Map<string, TransportRecord>; initializations: McpInitializationLimiter }
 const transportStates = new WeakMap<GatewayConfig, TransportState>();
 
 export function createMcpServer(config: GatewayConfig, iconUrl: string): Server {
@@ -70,16 +71,25 @@ export async function handleMcpRequest(
 ): Promise<void> {
   const state = getTransportState(config);
   sweepTransports(config, state, Date.now());
+  const auth = (request as IncomingMessage & { auth?: AuthContext }).auth;
+  if (auth === undefined) {
+    writeJsonRpcError(response, 401, -32002, "Authentication context is required.");
+    return;
+  }
   const sessionId = readHeader(request, "mcp-session-id");
   const existingRecord = sessionId === undefined ? undefined : state.records.get(sessionId);
   if (existingRecord !== undefined) {
+    if (existingRecord.subject !== auth.subject) {
+      writeStaleSession(response);
+      return;
+    }
     existingRecord.lastActivityAt = Date.now();
     await existingRecord.transport.handleRequest(request, response, parsedBody);
     return;
   }
 
   if (sessionId !== undefined) {
-    writeJsonRpcError(response, 400, -32001, "MCP session expired or is no longer available. Reinitialize the MCP connection and retry the request.");
+    writeStaleSession(response);
     return;
   }
 
@@ -91,12 +101,23 @@ export async function handleMcpRequest(
     writeJsonRpcError(response, 429, -32003, "MCP transport capacity is temporarily exhausted. Retry later.");
     return;
   }
+  const subjectTransportCount = [...state.records.values()].filter((record) => record.subject === auth.subject).length;
+  if (subjectTransportCount >= config.limits.maxMcpTransportsPerSubject) {
+    writeJsonRpcError(response, 429, -32003, "MCP transport capacity is temporarily exhausted. Retry later.");
+    return;
+  }
+  const admission = state.initializations.admit(auth.subject, Date.now());
+  if (!admission.allowed) {
+    response.setHeader("retry-after", String(Math.max(1, Math.ceil(admission.retryAfterMs / 1000))));
+    writeJsonRpcError(response, 429, -32003, "MCP initialization rate limit is temporarily exhausted. Retry later.");
+    return;
+  }
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
     enableJsonResponse: true,
     onsessioninitialized: (newSessionId) => {
-      state.records.set(newSessionId, { transport, lastActivityAt: Date.now() });
+      state.records.set(newSessionId, { transport, lastActivityAt: Date.now(), subject: auth.subject });
     },
   });
   transport.onclose = () => {
@@ -113,7 +134,14 @@ export async function handleMcpRequest(
 function getTransportState(config: GatewayConfig): TransportState {
   let state = transportStates.get(config);
   if (state === undefined) {
-    state = { records: new Map() };
+    state = {
+      records: new Map(),
+      initializations: new McpInitializationLimiter(
+        config.limits.maxMcpInitializationsPerSubject,
+        config.limits.mcpInitializationWindowMs,
+        config.limits.maxMcpInitializationRecords,
+      ),
+    };
     transportStates.set(config, state);
     registerMaintenanceTask(config, (now) => sweepTransports(config, state!, now));
   }
@@ -121,11 +149,16 @@ function getTransportState(config: GatewayConfig): TransportState {
 }
 
 function sweepTransports(config: GatewayConfig, state: TransportState, now: number): void {
+  state.initializations.sweep(now);
   for (const [sessionId, record] of state.records) {
     if (record.lastActivityAt + config.limits.mcpTransportIdleTtlMs > now) continue;
     state.records.delete(sessionId);
     void record.transport.close().catch(() => undefined);
   }
+}
+
+function writeStaleSession(response: ServerResponse): void {
+  writeJsonRpcError(response, 400, -32001, "MCP session expired or is no longer available. Reinitialize the MCP connection and retry the request.");
 }
 
 export function isMcpPost(request: IncomingMessage, mcpPath: string): boolean {

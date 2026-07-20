@@ -5,6 +5,8 @@ import { validateConfig } from "../src/config.js";
 import { MCP_INSTRUCTIONS } from "../src/mcp/instructions.js";
 import { callTool, toolDescriptors } from "../src/mcp/tools.js";
 import { createGatewayServer } from "../src/server.js";
+import { handleMcpRequest, readJsonBody } from "../src/mcp/server.js";
+import type { AuthContext } from "../src/types.js";
 
 describe("MCP surface", () => {
   it("keeps the required safety opening in the first 512 instruction characters", () => {
@@ -211,6 +213,42 @@ describe("MCP surface", () => {
       const stale = await postMcp(fixture.url, { jsonrpc: "2.0", id: 3, method: "tools/list" }, staleSession);
       expect(stale.response.status).toBe(400);
       expect(stale.body.error.code).toBe(-32001);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("preserves capacity for another subject and rejects cross-subject session reuse", async () => {
+    const fixture = await startSubjectFixtureServer({ maxMcpTransports: 2, maxMcpTransportsPerSubject: 1 });
+    try {
+      const alice = await postMcp(fixture.url, initializeRequest(1), undefined, "alice");
+      const aliceSession = alice.response.headers.get("mcp-session-id") ?? undefined;
+      expect(alice.response.status).toBe(200);
+
+      const aliceExcess = await postMcp(fixture.url, initializeRequest(2), undefined, "alice");
+      expect(aliceExcess.response.status).toBe(429);
+      const bob = await postMcp(fixture.url, initializeRequest(3), undefined, "bob");
+      expect(bob.response.status).toBe(200);
+
+      const stolen = await postMcp(fixture.url, { jsonrpc: "2.0", id: 4, method: "tools/list" }, aliceSession, "bob");
+      expect(stolen.response.status).toBe(400);
+      expect(stolen.body.error.code).toBe(-32001);
+      const aliceExisting = await postMcp(fixture.url, { jsonrpc: "2.0", id: 5, method: "tools/list" }, aliceSession, "alice");
+      expect(aliceExisting.response.status).toBe(200);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rate limits subject initialization with Retry-After", async () => {
+    const fixture = await startSubjectFixtureServer({ maxMcpInitializationsPerSubject: 2 });
+    try {
+      expect((await postMcp(fixture.url, initializeRequest(1), undefined, "alice")).response.status).toBe(200);
+      expect((await postMcp(fixture.url, initializeRequest(2), undefined, "alice")).response.status).toBe(200);
+      const rejected = await postMcp(fixture.url, initializeRequest(3), undefined, "alice");
+      expect(rejected.response.status).toBe(429);
+      expect(rejected.response.headers.get("retry-after")).toBe("60");
+      expect(rejected.body.error.message).not.toContain("alice");
     } finally {
       await fixture.close();
     }
@@ -533,7 +571,8 @@ describe("MCP surface", () => {
 });
 
 async function startFixtureServer(options: {
-  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; mcpTransportIdleTtl?: string; publicResource?: string;
+  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; maxMcpTransportsPerSubject?: number;
+  maxMcpInitializationsPerSubject?: number; mcpTransportIdleTtl?: string; publicResource?: string;
 } = {}) {
   const config = fixtureConfig(options);
   const server = createGatewayServer(config);
@@ -552,7 +591,8 @@ async function startFixtureServer(options: {
 }
 
 function fixtureConfig(options: {
-  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; mcpTransportIdleTtl?: string; publicResource?: string;
+  destinationBaseUrl?: string; maxInboundBody?: string; maxMcpTransports?: number; maxMcpTransportsPerSubject?: number;
+  maxMcpInitializationsPerSubject?: number; mcpTransportIdleTtl?: string; publicResource?: string;
 } = {}) {
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp", ...(options.publicResource === undefined ? {} : { resource: options.publicResource }) },
@@ -560,6 +600,8 @@ function fixtureConfig(options: {
     limits: {
       max_inbound_body: options.maxInboundBody ?? "1mb",
       max_mcp_transports: options.maxMcpTransports ?? 1000,
+      max_mcp_transports_per_subject: options.maxMcpTransportsPerSubject ?? 10,
+      max_mcp_initializations_per_subject: options.maxMcpInitializationsPerSubject ?? 20,
       mcp_transport_idle_ttl: options.mcpTransportIdleTtl ?? "30m",
     },
     services: {
@@ -627,11 +669,11 @@ async function readBody(request: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function postMcp(url: string, body: Record<string, unknown>, sessionId?: string) {
+async function postMcp(url: string, body: Record<string, unknown>, sessionId?: string, token = "dev-token") {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "accept": "application/json, text/event-stream",
-    "authorization": "Bearer dev-token",
+    "authorization": `Bearer ${token}`,
   };
   if (sessionId !== undefined) headers["mcp-session-id"] = sessionId;
   const response = await fetch(url, {
@@ -642,5 +684,34 @@ async function postMcp(url: string, body: Record<string, unknown>, sessionId?: s
   return {
     response,
     body: await response.json() as any,
+  };
+}
+
+async function startSubjectFixtureServer(options: {
+  maxMcpTransports?: number; maxMcpTransportsPerSubject?: number; maxMcpInitializationsPerSubject?: number;
+} = {}) {
+  const config = fixtureConfig(options);
+  const server = createServer(async (request, response) => {
+    const subject = request.headers.authorization?.replace(/^Bearer /, "") ?? "missing";
+    (request as IncomingMessage & { auth?: AuthContext }).auth = {
+      subject, scopes: ["gateway.read", "gateway.references", "gateway.request"], mode: "bearer",
+    };
+    const body = await readJsonBody(request, config.limits.maxInboundBodyBytes);
+    await handleMcpRequest(config, request, response, body);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected TCP address");
+  return {
+    url: `http://127.0.0.1:${address.port}/mcp`,
+    close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+function initializeRequest(id: number): Record<string, unknown> {
+  return {
+    jsonrpc: "2.0", id, method: "initialize",
+    params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "fairness-test", version: "1.0" } },
   };
 }

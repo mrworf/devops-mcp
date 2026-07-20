@@ -98,6 +98,10 @@ export interface LimitsConfig {
   maxOAuthClientMetadataInflight: number;
   maxOAuthClientMetadataInflightPerOrigin: number;
   maxMcpTransports: number;
+  maxMcpTransportsPerSubject: number;
+  maxMcpInitializationsPerSubject: number;
+  mcpInitializationWindowMs: number;
+  maxMcpInitializationRecords: number;
   mcpTransportIdleTtlMs: number;
   maxRequestBodyBytes: number;
   maxResponseBodyBytes: number;
