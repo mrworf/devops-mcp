@@ -19,3 +19,4 @@
 - Do not rely on Secretlint's `basicauth` rule for `Authorization: Basic ...` values; it detects credential-bearing URLs, so valid HTTP Basic response values require the gateway-owned detector and qualified API auth names require sensitive-name coverage.
 - Treat response scanning as best-effort exact/pattern defense, not a universal non-exfiltration guarantee: invertible downstream encodings or reflections can bypass it. Do not claim raw credentials can never reach clients unless credential placement and response egress are structurally constrained.
 - Evaluate path policy against the same canonical pathname sent downstream; reject percent encodings that can change routing semantics before credential substitution or downstream I/O.
+- OAuth client metadata retrieval must reject redirects and special-use addresses, pin a validated DNS result to the HTTPS connection, and bound response size, time, concurrency, and cache state.

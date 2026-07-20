@@ -11,6 +11,7 @@ import { InflightLimiter } from "./inflightLimiter.js";
 import { LoginAttemptLimiter } from "./loginAttemptLimiter.js";
 import { registerMaintenanceTask } from "./maintenance.js";
 import { BRAND_ICON_PATH, BRAND_LOCKUP_PATH } from "./brandAssets.js";
+import { OAuthClientMetadataFetcher } from "./oauthClientMetadata.js";
 
 const AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 const OPENID_CONFIGURATION_PATH = "/.well-known/openid-configuration";
@@ -79,15 +80,9 @@ const publicKeyCache = new Map<string, ReturnType<typeof importSPKI>>();
 const bodyLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
 const passwordLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
 const loginAttemptLimiters = new WeakMap<GatewayConfig, LoginAttemptLimiter>();
+const clientMetadataFetchers = new WeakMap<GatewayConfig, OAuthClientMetadataFetcher>();
 const pbkdf2Async = promisify(pbkdf2);
-const MAX_CLIENT_NAME_LENGTH = 120;
 const PERMISSION_SCOPE_ORDER = ["gateway.read", "gateway.request", "gateway.references"] as const;
-
-interface VerifiedClientMetadata {
-  clientId: string;
-  redirectUris: string[];
-  clientName: string | null;
-}
 
 export function isBuiltinOAuthRequest(config: GatewayConfig, request: IncomingMessage): boolean {
   if (config.auth.mode !== "builtin_oauth") return false;
@@ -1087,7 +1082,7 @@ async function validateAuthorizationRequest(
 
   const redirectUri = body.get("redirect_uri");
   if (!redirectUri) return { ok: false, error: "invalid_request" };
-  const clientMetadata = await fetchVerifiedClientMetadata(clientId);
+  const clientMetadata = await fetchVerifiedClientMetadata(config, clientId);
   if (clientMetadata === undefined || !clientMetadata.redirectUris.includes(redirectUri)) {
     return { ok: false, error: "invalid_request" };
   }
@@ -1101,24 +1096,16 @@ async function validateAuthorizationRequest(
   return { ok: true, clientId, clientName: clientMetadata.clientName, redirectUri, resource, scopes, codeChallenge };
 }
 
-async function fetchVerifiedClientMetadata(clientId: string): Promise<VerifiedClientMetadata | undefined> {
-  try {
-    const response = await fetch(clientId, { signal: AbortSignal.timeout(5000) });
-    if (!response.ok) return undefined;
-    const metadata = await response.json() as unknown;
-    if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return undefined;
-    const record = metadata as Record<string, unknown>;
-    if (record.client_id !== clientId || !Array.isArray(record.redirect_uris)) return undefined;
-    const redirectUris = record.redirect_uris.filter((value): value is string => typeof value === "string");
-    const rawClientName = record.client_name;
-    const trimmedClientName = typeof rawClientName === "string" ? rawClientName.trim() : "";
-    const clientName = trimmedClientName !== "" && [...trimmedClientName].length <= MAX_CLIENT_NAME_LENGTH
-      ? trimmedClientName
-      : null;
-    return { clientId, redirectUris, clientName };
-  } catch {
-    return undefined;
+async function fetchVerifiedClientMetadata(config: GatewayConfig, clientId: string) {
+  let fetcher = clientMetadataFetchers.get(config);
+  if (fetcher === undefined) {
+    fetcher = new OAuthClientMetadataFetcher(
+      config.limits.maxOAuthClientMetadataInflight,
+      config.limits.maxOAuthClientMetadataInflightPerOrigin,
+    );
+    clientMetadataFetchers.set(config, fetcher);
   }
+  return fetcher.fetch(clientId);
 }
 
 function isAllowedClient(allowedClients: string[], clientId: string): boolean {

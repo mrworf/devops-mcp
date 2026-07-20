@@ -13,10 +13,18 @@ import { GatewayError } from "../src/errors.js";
 import { createGatewayServer } from "../src/server.js";
 import { TokenBroker } from "../src/tokens.js";
 import type { GatewayConfig } from "../src/types.js";
+import { setOAuthClientMetadataTestFetch } from "../src/oauthClientMetadata.js";
 
 describe("auth", () => {
+  const originalStubGlobal = vi.stubGlobal.bind(vi);
+  vi.stubGlobal = ((name: string, value: unknown) => {
+    if (name === "fetch") setOAuthClientMetadataTestFetch(value as typeof fetch);
+    return originalStubGlobal(name, value);
+  }) as typeof vi.stubGlobal;
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    setOAuthClientMetadataTestFetch(undefined);
   });
 
   it("accepts bearer dev tokens only in bearer mode", async () => {
@@ -1363,12 +1371,12 @@ function requestWithBearer(token: string) {
   } as any;
 }
 
-function clientMetadataJson(redirectUris: string[], overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
+function clientMetadataJson(redirectUris: string[], overrides: Record<string, unknown> = {}): Blob {
+  return new Blob([JSON.stringify({
     client_id: "https://chatgpt.com/oauth/client",
     redirect_uris: redirectUris,
     ...overrides,
-  });
+  })], { type: "application/json" });
 }
 
 function authorizationQuery(overrides: Record<string, string> = {}): string {

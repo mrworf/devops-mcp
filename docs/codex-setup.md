@@ -73,6 +73,7 @@ For the built-in private OAuth mode:
 3. Mount a stable RSA private signing key at `auth.builtin_oauth.signing_key_file`.
 4. Configure `auth.builtin_oauth.refresh_token_store_file` on stable writable storage when OAuth sessions must survive restarts.
 5. Add ChatGPT's CIMD origin or exact client metadata URL to `auth.builtin_oauth.allowed_clients`.
+   The metadata URL must resolve exclusively to public IP addresses and return JSON directly; redirects and private-network metadata hosts are rejected.
 6. In ChatGPT developer mode, create the app with the public `/mcp` URL.
 
 The signing key must survive container restarts. If it is generated inside the container or stored on ephemeral media, ChatGPT's existing OAuth access token cannot be verified after restart and the app may require reconnecting.

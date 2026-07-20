@@ -113,6 +113,8 @@ const rawConfigSchema = z.object({
     max_token_records_per_subject: z.number().int().positive().default(1000),
     max_authorization_codes: z.number().int().positive().default(1000),
     max_refresh_token_records: z.number().int().positive().default(10000),
+    max_oauth_client_metadata_inflight: z.number().int().positive().default(4),
+    max_oauth_client_metadata_inflight_per_origin: z.number().int().positive().default(2),
     max_mcp_transports: z.number().int().positive().default(1000),
     mcp_transport_idle_ttl: z.string().default("30m"),
     max_request_body: z.string().default("1mb"),
@@ -125,6 +127,7 @@ const rawConfigSchema = z.object({
     max_denial_records: 1000, denial_ttl: "15m", state_sweep_interval: "1m",
     max_token_records: 10000, max_token_records_per_subject: 1000,
     max_authorization_codes: 1000, max_refresh_token_records: 10000,
+    max_oauth_client_metadata_inflight: 4, max_oauth_client_metadata_inflight_per_origin: 2,
     max_mcp_transports: 1000, mcp_transport_idle_ttl: "30m",
     max_request_body: "1mb", max_response_body: "5mb", timeout: "30s",
   }),
@@ -378,6 +381,9 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
   if (raw.max_token_records_per_subject > raw.max_token_records) {
     throw configError("limits.max_token_records_per_subject must not exceed limits.max_token_records");
   }
+  if (raw.max_oauth_client_metadata_inflight_per_origin > raw.max_oauth_client_metadata_inflight) {
+    throw configError("limits.max_oauth_client_metadata_inflight_per_origin must not exceed limits.max_oauth_client_metadata_inflight");
+  }
   return {
     maxInboundBodyBytes,
     inboundBodyTimeoutMs,
@@ -392,6 +398,8 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
     maxTokenRecordsPerSubject: raw.max_token_records_per_subject,
     maxAuthorizationCodes: raw.max_authorization_codes,
     maxRefreshTokenRecords: raw.max_refresh_token_records,
+    maxOAuthClientMetadataInflight: raw.max_oauth_client_metadata_inflight,
+    maxOAuthClientMetadataInflightPerOrigin: raw.max_oauth_client_metadata_inflight_per_origin,
     maxMcpTransports: raw.max_mcp_transports,
     mcpTransportIdleTtlMs,
     maxRequestBodyBytes,

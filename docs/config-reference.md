@@ -67,6 +67,8 @@ auth:
 
 The consent page verifies the allowlisted HTTPS client metadata document, its exact `client_id`, and the requested redirect URI before displaying credential fields. When verified metadata contains a non-empty `client_name` of at most 120 characters, the page uses it to identify the requesting client; otherwise it displays the neutral name “MCP client.” Technical OAuth values remain available under “Connection details.”
 
+Client metadata retrieval never follows redirects and connects only to a DNS-resolved, pinned public address while retaining HTTPS hostname verification. Loopback, private, link-local, multicast, unspecified, documentation, and other special-use IPv4/IPv6 ranges are rejected. Responses must be JSON, are limited to 5 KiB and five seconds, and are cached only when HTTP freshness permits (at most one hour) in a 1,000-entry LRU. Origin entries in `allowed_clients` continue to authorize metadata paths on that origin; exact entries authorize only that URL. Fetches are limited by `limits.max_oauth_client_metadata_inflight` (default `4`) and `limits.max_oauth_client_metadata_inflight_per_origin` (default `2`).
+
 Durations accept `ms`, `s`, `m`, `h`, and `d`. Refresh grants expire after 30 days without use and after 90 days regardless of use by default; both values are configurable, and the idle lifetime must not exceed the maximum lifetime.
 
 Password verification uses asynchronous PBKDF2 so expensive login checks do not block MCP traffic or health checks. At most `limits.max_password_verifications` checks run globally (default `2`) and `limits.max_password_verifications_per_source` per direct socket address (default `1`); excess checks receive `429` before PBKDF2 starts.

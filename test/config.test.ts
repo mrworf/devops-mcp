@@ -249,6 +249,24 @@ describe("config validation", () => {
     expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
   });
 
+  it("defaults and validates OAuth client metadata concurrency", () => {
+    const raw = validRaw();
+    expect(validateConfig(raw, validEnv).limits).toMatchObject({
+      maxOAuthClientMetadataInflight: 4,
+      maxOAuthClientMetadataInflightPerOrigin: 2,
+    });
+    raw.limits.max_oauth_client_metadata_inflight = 3;
+    raw.limits.max_oauth_client_metadata_inflight_per_origin = 3;
+    expect(validateConfig(raw, validEnv).limits).toMatchObject({
+      maxOAuthClientMetadataInflight: 3,
+      maxOAuthClientMetadataInflightPerOrigin: 3,
+    });
+    raw.limits.max_oauth_client_metadata_inflight_per_origin = 4;
+    expectConfigError(() => validateConfig(raw, validEnv), "must not exceed");
+    raw.limits.max_oauth_client_metadata_inflight_per_origin = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+  });
+
   it("defaults and validates MCP transport retention", () => {
     const raw = validRaw();
     expect(validateConfig(raw, validEnv).limits).toMatchObject({ maxMcpTransports: 1000, mcpTransportIdleTtlMs: 1_800_000 });

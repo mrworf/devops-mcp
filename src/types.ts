@@ -95,6 +95,8 @@ export interface LimitsConfig {
   maxTokenRecordsPerSubject: number;
   maxAuthorizationCodes: number;
   maxRefreshTokenRecords: number;
+  maxOAuthClientMetadataInflight: number;
+  maxOAuthClientMetadataInflightPerOrigin: number;
   maxMcpTransports: number;
   mcpTransportIdleTtlMs: number;
   maxRequestBodyBytes: number;
