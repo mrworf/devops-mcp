@@ -5,7 +5,7 @@ const githubRule = [{ id: "@secretlint/secretlint-rule-github" as const }];
 
 describe("Secretlint worker pool", () => {
   it("scans with persistent bounded workers for different subjects", async () => {
-    const pool = new SecretScannerPool({ workers: 2, queueMax: 4, subjectActiveMax: 1, subjectQueueMax: 2, queueTimeoutMs: 1_000 });
+    const pool = new SecretScannerPool({ workers: 2, queueMax: 4, subjectActiveMax: 1, subjectQueueMax: 2, queueTimeoutMs: 1_000, secretlintDebug: false });
     try {
       const [first, second] = await Promise.all([
         pool.scan("alice", `ghp_${"a".repeat(36)}`, githubRule, 5_000),
@@ -17,7 +17,7 @@ describe("Secretlint worker pool", () => {
   });
 
   it("rejects work beyond the per-subject queue limit", async () => {
-    const pool = new SecretScannerPool({ workers: 1, queueMax: 1, subjectActiveMax: 1, subjectQueueMax: 1, queueTimeoutMs: 1_000 });
+    const pool = new SecretScannerPool({ workers: 1, queueMax: 1, subjectActiveMax: 1, subjectQueueMax: 1, queueTimeoutMs: 1_000, secretlintDebug: false });
     try {
       const first = pool.scan("alice", "x".repeat(1_000_000), githubRule, 5_000);
       const second = pool.scan("alice", "queued", githubRule, 5_000);
@@ -27,8 +27,13 @@ describe("Secretlint worker pool", () => {
   });
 
   it("validates environment overrides", () => {
-    expect(loadSecretScannerPoolConfig({ SECRETLINT_WORKERS: "3", SECRETLINT_QUEUE_MAX: "40" })).toMatchObject({ workers: 3, queueMax: 40 });
+    expect(loadSecretScannerPoolConfig({ SECRETLINT_WORKERS: "3", SECRETLINT_QUEUE_MAX: "40" })).toMatchObject({
+      workers: 3, queueMax: 40, secretlintDebug: false,
+    });
+    expect(loadSecretScannerPoolConfig({ SECRETLINT_DEBUG: "true" }).secretlintDebug).toBe(true);
+    expect(loadSecretScannerPoolConfig({ SECRETLINT_DEBUG: "false" }).secretlintDebug).toBe(false);
     expect(() => loadSecretScannerPoolConfig({ SECRETLINT_WORKERS: "0" })).toThrow(/SECRETLINT_WORKERS/);
     expect(() => loadSecretScannerPoolConfig({ SECRETLINT_QUEUE_MAX: "many" })).toThrow(/SECRETLINT_QUEUE_MAX/);
+    expect(() => loadSecretScannerPoolConfig({ SECRETLINT_DEBUG: "1" })).toThrow(/SECRETLINT_DEBUG/);
   });
 });

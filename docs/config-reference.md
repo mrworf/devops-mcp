@@ -173,6 +173,8 @@ rules:
 
 Scanner capacity defaults to `min(4, availableParallelism)` workers, a 32-job global queue, and one active plus four queued scans per subject. Override these with `SECRETLINT_WORKERS`, `SECRETLINT_QUEUE_MAX`, `SECRETLINT_SUBJECT_ACTIVE_MAX`, `SECRETLINT_SUBJECT_QUEUE_MAX`, and `SECRETLINT_QUEUE_TIMEOUT_MS`.
 
+Secretlint's own dependency diagnostics are disabled by default, even when the gateway process uses a broad `DEBUG` value such as `DEBUG=*`. Set `SECRETLINT_DEBUG=true` to enable only the Secretlint debug namespaces temporarily. This output is verbose and is separate from the gateway's structured `logging.level` setting; unset the variable or set it to `false` during normal operation.
+
 ## Sensitive Name Rules
 
 `SENSITIVE_NAMES_CONFIG_PATH` defaults to `/config/sensitive-names.yaml`. Name detection is separate from Secretlint and uses this strict schema:

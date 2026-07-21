@@ -55,13 +55,34 @@ parentPort.on("message", async ({ id, text, rules: configuredRules }) => {
 });
 `;
 
+export function readSecretlintDebug(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.SECRETLINT_DEBUG;
+  if (raw === undefined || raw === "false") return false;
+  if (raw === "true") return true;
+  throw new Error("SECRETLINT_DEBUG must be true or false");
+}
+
+export function secretScannerWorkerEnv(
+  enabled: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const workerEnv = { ...env };
+  if (enabled) workerEnv.DEBUG = "@secretlint/*";
+  else delete workerEnv.DEBUG;
+  return workerEnv;
+}
+
 export async function scanSecretText(
   text: string,
   rules: SecretlintRuleConfig[],
   timeoutMs: number,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<SecretFinding[]> {
   return await new Promise<SecretFinding[]>((resolve, reject) => {
-    const worker = new Worker(SECRET_SCANNER_WORKER_SOURCE, { eval: true });
+    const worker = new Worker(SECRET_SCANNER_WORKER_SOURCE, {
+      eval: true,
+      env: secretScannerWorkerEnv(readSecretlintDebug(env), env),
+    });
     const timeout = setTimeout(() => {
       void worker.terminate();
       reject(new Error("Secretlint scan timed out"));

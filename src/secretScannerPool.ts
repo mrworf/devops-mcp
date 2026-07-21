@@ -1,7 +1,13 @@
 import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 import type { SecretlintRuleConfig } from "./secretlintConfig.js";
-import { SECRET_SCANNER_WORKER_SOURCE, validateFindings, type SecretFinding } from "./secretScanner.js";
+import {
+  readSecretlintDebug,
+  SECRET_SCANNER_WORKER_SOURCE,
+  secretScannerWorkerEnv,
+  validateFindings,
+  type SecretFinding,
+} from "./secretScanner.js";
 
 export interface SecretScannerPoolConfig {
   workers: number;
@@ -9,6 +15,7 @@ export interface SecretScannerPoolConfig {
   subjectActiveMax: number;
   subjectQueueMax: number;
   queueTimeoutMs: number;
+  secretlintDebug: boolean;
 }
 
 interface Job {
@@ -88,7 +95,13 @@ export class SecretScannerPool {
   }
 
   private createWorker(): PoolWorker {
-    const entry: PoolWorker = { worker: new Worker(SECRET_SCANNER_WORKER_SOURCE, { eval: true }), job: undefined };
+    const entry: PoolWorker = {
+      worker: new Worker(SECRET_SCANNER_WORKER_SOURCE, {
+        eval: true,
+        env: secretScannerWorkerEnv(this.config.secretlintDebug),
+      }),
+      job: undefined,
+    };
     entry.worker.unref();
     entry.worker.on("message", (message: { id?: number; findings?: unknown; error?: string }) => {
       const job = entry.job;
@@ -163,6 +176,7 @@ export function loadSecretScannerPoolConfig(env: NodeJS.ProcessEnv = process.env
     subjectActiveMax: readInteger(env, "SECRETLINT_SUBJECT_ACTIVE_MAX", 1, 32),
     subjectQueueMax: readInteger(env, "SECRETLINT_SUBJECT_QUEUE_MAX", 4, 10_000),
     queueTimeoutMs: readInteger(env, "SECRETLINT_QUEUE_TIMEOUT_MS", 5_000, 300_000),
+    secretlintDebug: readSecretlintDebug(env),
   };
 }
 

@@ -193,7 +193,7 @@ function setup(max = 100, maxTokenRecords = 10_000) {
     ], access: { users: ["alice"] } } },
   }, { AUTH: "auth", KEY: "configured-secret", ESCAPED: "line\n\"quoted\"" });
   const broker = new TokenBroker(config);
-  const pool = new SecretScannerPool({ workers: 1, queueMax: 4, subjectActiveMax: 1, subjectQueueMax: 4, queueTimeoutMs: 1_000 });
+  const pool = new SecretScannerPool({ workers: 1, queueMax: 4, subjectActiveMax: 1, subjectQueueMax: 4, queueTimeoutMs: 1_000, secretlintDebug: false });
   const auth: AuthContext = { subject: "alice", scopes: [], mode: "bearer" };
   const sensitiveNames = new SensitiveNameMatcher(loadSensitiveNameConfig("config/sensitive-names.yaml"));
   return {
