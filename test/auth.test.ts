@@ -1160,19 +1160,22 @@ describe("auth", () => {
     }
   });
 
-  it("keeps the MCP session-streaming error for authenticated MCP GET requests", async () => {
+  it("rejects authenticated MCP GET and DELETE methods in stateless mode", async () => {
     const fixture = await startServer(bearerConfig());
     try {
-      const response = await fetch(`${fixture.baseUrl}/mcp`, {
-        headers: { authorization: "Bearer dev-token" },
-      });
-      const body = await response.json() as { error: { code: string; message: string } };
+      for (const method of ["GET", "DELETE"]) {
+        const response = await fetch(`${fixture.baseUrl}/mcp`, {
+          method,
+          headers: { authorization: "Bearer dev-token" },
+        });
+        const body = await response.json() as { error: { code: string; message: string } };
 
-      expect(response.status).toBe(400);
-      expect(body.error).toEqual({
-        code: "invalid_request",
-        message: "MCP session streaming is not available before initialization.",
-      });
+        expect(response.status).toBe(405);
+        expect(body.error).toEqual({
+          code: "method_not_allowed",
+          message: "Stateless MCP supports POST requests only.",
+        });
+      }
     } finally {
       await fixture.close();
     }

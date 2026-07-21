@@ -21,7 +21,6 @@ export type AuthConfig = OAuthAuthConfig | BuiltinOAuthAuthConfig | BearerAuthCo
 
 export interface AuthContext {
   subject: string;
-  sessionId?: string;
   scopes: string[];
   mode: AuthConfig["mode"];
 }
@@ -97,12 +96,6 @@ export interface LimitsConfig {
   maxRefreshTokenRecords: number;
   maxOAuthClientMetadataInflight: number;
   maxOAuthClientMetadataInflightPerOrigin: number;
-  maxMcpTransports: number;
-  maxMcpTransportsPerSubject: number;
-  maxMcpInitializationsPerSubject: number;
-  mcpInitializationWindowMs: number;
-  maxMcpInitializationRecords: number;
-  mcpTransportIdleTtlMs: number;
   maxRequestBodyBytes: number;
   maxResponseBodyBytes: number;
   timeoutMs: number;

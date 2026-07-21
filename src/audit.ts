@@ -6,7 +6,6 @@ import type { GatewayConfig } from "./types.js";
 export interface ReferenceIssuedAuditEvent {
   type: "reference_issued";
   subject: string;
-  session_id?: string;
   service: string;
   destination: string;
   access_ids: string[];
@@ -19,7 +18,6 @@ export interface ServiceRequestAuditEvent {
   type: "service_request";
   request_id: string;
   subject: string;
-  session_id?: string;
   service: string;
   destination: string;
   access_ids: string[];
@@ -44,7 +42,6 @@ export interface InvalidOpaqueResponseReferencesAuditEvent {
   type: "invalid_opaque_response_references";
   request_id: string;
   subject: string;
-  session_id?: string;
   service: string;
   destination: string;
   warnings: Array<{ prefix: "gref" | "sec"; reason: "unknown" | "expired" | "wrong_subject" | "wrong_service"; count: number }>;
@@ -54,7 +51,6 @@ export interface InvalidOpaqueResponseReferencesAuditEvent {
 export interface ToolInvocationAuditEvent {
   type: "tool_invocation";
   subject: string;
-  session_id?: string;
   tool: "list_services" | "describe_service_policy" | "get_gateway_service_references" | "service_request" | "explain_denial";
   outcome: "allow" | "deny" | "error";
   service?: string;

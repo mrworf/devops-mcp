@@ -10,7 +10,7 @@
 - Update AGENTS.md when findings are important to remember beyond current session
 - Service must work from both ChatGPT and Codex
 - Minimal OAuth implementation to support the use-cases
-- Do not use MCP transport `mcp-session-id` as a hard authorization boundary; supported clients may reinitialize or vary transport sessions between tool calls.
+- Keep MCP HTTP stateless: authenticate every POST independently, do not issue or trust `mcp-session-id`, and bind durable gateway references to authenticated subjects and services instead of transport state.
 - When changing downstream HTTP transport, verify `tls.verify: false` with an actual self-signed HTTPS test so metadata and socket behavior cannot drift apart.
 - Docker examples should keep opaque gateway tokens ephemeral, but mount stable OAuth signing keys and writable audit storage when restart continuity or audit trails matter.
 - Persist built-in OAuth refresh state as atomic hash-only snapshots; never store raw refresh tokens, and treat the configured state file as single-process writable state.

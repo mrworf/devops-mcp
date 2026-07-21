@@ -62,7 +62,6 @@ export async function executeServiceRequest(
   if (!policy.allowed) {
     const denial = getDenialStore(config).record({
       subject: auth.subject,
-      ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
       reason: policy.reason,
       ...(policy.matchedRule === undefined ? {} : { matched_rule: policy.matchedRule }),
       policy_mode: policy.policyMode,
@@ -72,7 +71,6 @@ export async function executeServiceRequest(
       type: "service_request",
       request_id: denial.request_id,
       subject: auth.subject,
-      ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
       service: service.id,
       destination: target.destination.id,
       access_ids: [],
@@ -92,7 +90,6 @@ export async function executeServiceRequest(
     logger.debug("service_request.denied", {
       request_id: denial.request_id,
       subject: auth.subject,
-      session_present: auth.sessionId !== undefined,
       service: service.id,
       destination: target.destination.id,
       method: input.method.toUpperCase(),
@@ -128,7 +125,6 @@ export async function executeServiceRequest(
   const downstream = buildDownstreamRequest(config, target.url, input.method, substitutedHeaders, substitutedQuery, substitutedBody, target.tls.verify);
   logger.debug("service_request.downstream_ready", {
     subject: auth.subject,
-    session_present: auth.sessionId !== undefined,
     service: service.id,
     destination: target.destination.id,
     method: input.method.toUpperCase(),
@@ -173,7 +169,6 @@ export async function executeServiceRequest(
     type: "service_request",
     request_id: requestId,
     subject: auth.subject,
-    ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
     service: service.id,
     destination: target.destination.id,
     access_ids: [...new Set(tokenRecords.map((record) => record.credentialId))],
@@ -196,7 +191,6 @@ export async function executeServiceRequest(
       type: "invalid_opaque_response_references",
       request_id: requestId,
       subject: auth.subject,
-      ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
       service: service.id,
       destination: target.destination.id,
       warnings: tokenized.warnings,

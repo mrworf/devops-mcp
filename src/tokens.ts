@@ -129,7 +129,6 @@ export class TokenBroker {
     const audit = referenceIssuedAuditEvent({
       type: "reference_issued",
       subject: auth.subject,
-      ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
       service: service.id,
       destination,
       access_ids: [...input.access_ids],

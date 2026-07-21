@@ -4,7 +4,7 @@
 - Policy is enforced before credential substitution.
 - Destination scheme, host, and port are validated before credential substitution.
 - Caller-controlled authority, forwarding, and hop-by-hop headers are rejected before credential substitution, and the outbound HTTP authority is derived from the validated destination URL.
-- Configured-credential `gref_…` values are bound to subject, service, destination, and credential. Response-derived `sec_…` values are bound to subject and service so they can be reused across that service's destinations. MCP transport session IDs are not a hard token boundary.
+- Configured-credential `gref_…` values are bound to subject, service, destination, and credential. Response-derived `sec_…` values are bound to subject and service so they can be reused across that service's destinations. MCP HTTP is stateless, and every POST is authenticated independently.
 - External OAuth requires one configured non-empty string principal claim (default `sub`); identity-less tokens are rejected rather than mapped to a shared subject.
 - `tls.verify: false` is supported for self-signed homelab services and is reported in response metadata and audit events.
 - Secretlint scans response header values and UTF-8 body source text. A separate case-insensitive regex catalog protects sensitive response header names and complete string values in tolerant JSON/environment shapes even when endpoint Secretlint is disabled. A gateway-owned detector also protects canonical HTTP Basic credentials with non-empty usernames and passwords regardless of their surrounding names or Secretlint settings. JSON is never deserialized or reserialized, so all bytes outside replacement ranges remain unchanged.

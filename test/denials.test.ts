@@ -33,14 +33,14 @@ describe("denial explanations", () => {
     expect(explanation?.suggestion).not.toContain("bypass");
   });
 
-  it("does not expose denial context to another subject or session", async () => {
+  it("keeps denial context subject-bound across stateless requests", async () => {
     const config = registryConfig();
     defaultTokenBrokers.set(config, new TokenBroker(config));
-    const sameSession = auth("henric@example.com", "session-a");
+    const sameSubject = auth("henric@example.com");
     let requestId = "";
 
     try {
-      await executeServiceRequest(config, sameSession, {
+      await executeServiceRequest(config, sameSubject, {
         service: "portainer-prod",
         destination: "primary",
         method: "GET",
@@ -51,8 +51,8 @@ describe("denial explanations", () => {
       requestId = (error as GatewayError).requestId ?? "";
     }
 
-    expect(explainDenial(config, auth("ada@example.com", "session-a"), requestId)).toBeUndefined();
-    expect(explainDenial(config, auth("henric@example.com", "session-b"), requestId)).toBeUndefined();
+    expect(explainDenial(config, auth("ada@example.com"), requestId)).toBeUndefined();
+    expect(explainDenial(config, sameSubject, requestId)?.request_id).toBe(requestId);
   });
 
   it("expires denial records and evicts the least recently used record", () => {

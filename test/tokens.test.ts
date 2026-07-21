@@ -9,7 +9,7 @@ describe("reference broker", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
 
-    const result = broker.issueTokens(auth("henric@example.com", "session-a"), {
+    const result = broker.issueTokens(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
       access_ids: ["api_key", "password"],
@@ -25,12 +25,12 @@ describe("reference broker", () => {
     expect(auditJson).not.toContain("portainer-secret");
     expect(result.audit.internal_reference_ids).toHaveLength(2);
 
-    const originalMax = broker.validateTokenUse(auth("henric@example.com", "session-a"), {
+    const originalMax = broker.validateTokenUse(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
     }, result.tokens[0]?.token ?? "").maxExpiresAt;
     now += 20;
-    const used = broker.validateTokenUse(auth("henric@example.com", "session-a"), {
+    const used = broker.validateTokenUse(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
     }, result.tokens[0]?.token ?? "");
@@ -84,9 +84,9 @@ describe("reference broker", () => {
     }, "tok_removed"), "reference_invalid");
   });
 
-  it("allows same-subject reference use across changing or missing MCP transport sessions", () => {
+  it("allows same-subject reference use across independent stateless requests", () => {
     const broker = new TokenBroker(tokenConfig());
-    const result = broker.issueTokens(auth("henric@example.com", "session-a"), {
+    const result = broker.issueTokens(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
       access_ids: ["api_key"],
@@ -94,10 +94,6 @@ describe("reference broker", () => {
     });
     const token = result.tokens[0]?.token ?? "";
 
-    expect(broker.validateTokenUse(auth("henric@example.com", "session-b"), {
-      service: "portainer-prod",
-      destination: "primary",
-    }, token).credentialId).toBe("api_key");
     expect(broker.validateTokenUse(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
@@ -106,7 +102,7 @@ describe("reference broker", () => {
 
   it("rejects cross-user, cross-service, and cross-destination reference use", () => {
     const broker = new TokenBroker(tokenConfig());
-    const result = broker.issueTokens(auth("henric@example.com", "session-a"), {
+    const result = broker.issueTokens(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "primary",
       access_ids: ["api_key"],
@@ -114,15 +110,15 @@ describe("reference broker", () => {
     });
     const token = result.tokens[0]?.token ?? "";
 
-    expectGatewayError(() => broker.validateTokenUse(auth("ada@example.com", "session-a"), {
+    expectGatewayError(() => broker.validateTokenUse(auth("ada@example.com"), {
       service: "portainer-prod",
       destination: "primary",
     }, token), "reference_invalid");
-    expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com", "session-a"), {
+    expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com"), {
       service: "opnsense-home",
       destination: "primary",
     }, token), "reference_invalid");
-    expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com", "session-a"), {
+    expectGatewayError(() => broker.validateTokenUse(auth("henric@example.com"), {
       service: "portainer-prod",
       destination: "secondary",
     }, token), "reference_invalid");
@@ -275,12 +271,11 @@ function tokenConfig(options: { maxTokenRecords?: number; maxTokenRecordsPerSubj
   });
 }
 
-function auth(subject: string, sessionId?: string): AuthContext {
+function auth(subject: string): AuthContext {
   return {
     subject,
     scopes: ["gateway.references"],
     mode: "bearer",
-    ...(sessionId === undefined ? {} : { sessionId }),
   };
 }
 

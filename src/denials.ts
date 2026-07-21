@@ -5,7 +5,6 @@ import type { GatewayConfig } from "./types.js";
 export interface DenialRecord {
   request_id: string;
   subject: string;
-  session_id?: string;
   reason: string;
   matched_rule?: string;
   policy_mode: "allow" | "deny";
@@ -31,7 +30,6 @@ export class DenialStore {
     const record: DenialRecord & { expiresAt: number } = {
       request_id: requestId,
       subject: input.subject,
-      ...(input.session_id === undefined ? {} : { session_id: input.session_id }),
       reason: input.reason,
       policy_mode: input.policy_mode,
       ...(input.matched_rule === undefined ? {} : { matched_rule: input.matched_rule }),
@@ -80,11 +78,10 @@ export interface DenialExplanation {
   suggestion?: string;
 }
 
-export function explainDenial(config: GatewayConfig, auth: { subject: string; sessionId?: string }, requestId: string): DenialExplanation | undefined {
+export function explainDenial(config: GatewayConfig, auth: { subject: string }, requestId: string): DenialExplanation | undefined {
   const record = getDenialStore(config).get(requestId);
   if (!record) return undefined;
   if (record.subject !== auth.subject) return undefined;
-  if (record.session_id !== undefined && record.session_id !== auth.sessionId) return undefined;
   return {
     request_id: record.request_id,
     reason: record.reason,

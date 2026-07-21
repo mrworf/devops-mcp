@@ -50,11 +50,10 @@ export function registryConfig(): GatewayConfig {
   });
 }
 
-export function auth(subject: string, sessionId?: string): AuthContext {
+export function auth(subject: string): AuthContext {
   return {
     subject,
     scopes: ["gateway.read", "gateway.request"],
     mode: "bearer",
-    ...(sessionId === undefined ? {} : { sessionId }),
   };
 }

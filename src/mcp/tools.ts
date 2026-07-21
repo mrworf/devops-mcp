@@ -225,7 +225,6 @@ function auditTool(
   audit({
     type: "tool_invocation",
     subject: auth.subject,
-    ...(auth.sessionId === undefined ? {} : { session_id: auth.sessionId }),
     tool,
     outcome,
     ...fields,

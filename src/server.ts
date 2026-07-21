@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { authenticateRequest, buildAuthenticateChallenge, requireScopes } from "./auth.js";
 import { handleBuiltinOAuthRequest, initializeBuiltinOAuthState, isBuiltinOAuthRequest } from "./builtinOAuth.js";
 import { loadConfig } from "./config.js";
-import { handleMcpRequest, isMcpGet, isMcpPost, readJsonBody } from "./mcp/server.js";
+import { handleMcpRequest, isMcpDelete, isMcpGet, isMcpPost, readJsonBody } from "./mcp/server.js";
 import { handleOAuthMetadataRequest, isOAuthMetadataRequest } from "./oauthMetadata.js";
 import { createLogger } from "./logger.js";
 import type { GatewayConfig } from "./types.js";
@@ -59,7 +59,6 @@ export function createGatewayServer(config: GatewayConfig) {
           rpc: summarizeMcpBody(body),
           required_scopes: requiredScopes,
           subject: auth.subject,
-          session_present: auth.sessionId !== undefined,
           auth_mode: auth.mode,
         });
         await handleMcpRequest(config, request, response, body);
@@ -91,7 +90,7 @@ export function createGatewayServer(config: GatewayConfig) {
       return;
     }
 
-    if (isMcpGet(request, config.server.mcpPath)) {
+    if (isMcpGet(request, config.server.mcpPath) || isMcpDelete(request, config.server.mcpPath)) {
       try {
         const auth = await authenticateRequest(request, config);
         (request as AuthenticatedRequest).auth = auth;
@@ -100,7 +99,6 @@ export function createGatewayServer(config: GatewayConfig) {
           path: config.server.mcpPath,
           required_scopes: [],
           subject: auth.subject,
-          session_present: auth.sessionId !== undefined,
           auth_mode: auth.mode,
         });
       } catch (error) {
@@ -123,10 +121,10 @@ export function createGatewayServer(config: GatewayConfig) {
         });
         return;
       }
-      writeJson(response, 400, {
+      writeJson(response, 405, {
         error: {
-          code: "invalid_request",
-          message: "MCP session streaming is not available before initialization.",
+          code: "method_not_allowed",
+          message: "Stateless MCP supports POST requests only.",
         },
       });
       return;

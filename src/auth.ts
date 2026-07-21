@@ -21,12 +21,10 @@ export async function authenticateRequest(
     if (!safeEqual(bearer, config.auth.bearer.token)) {
       throw new GatewayError("unauthenticated", "Invalid bearer token.");
     }
-    const sessionId = readHeader(request, "mcp-session-id");
     return {
       subject: "bearer-dev",
       scopes: requiredScopes,
       mode: "bearer",
-      ...(sessionId === undefined ? {} : { sessionId }),
     };
   }
 
@@ -49,12 +47,10 @@ export async function authenticateRequest(
       throw new GatewayError("unauthenticated", "OAuth token does not include required scopes.");
     }
 
-    const sessionId = readHeader(request, "mcp-session-id");
     return {
       subject: subjectFromPayload(payload, "sub"),
       scopes,
       mode: "builtin_oauth",
-      ...(sessionId === undefined ? {} : { sessionId }),
     };
   }
 
@@ -82,12 +78,10 @@ export async function authenticateRequest(
     throw new GatewayError("unauthenticated", "OAuth token does not include required scopes.");
   }
 
-  const sessionId = readHeader(request, "mcp-session-id");
   return {
     subject: subjectFromPayload(payload, oauth.principalClaim),
     scopes,
     mode: "oauth",
-    ...(sessionId === undefined ? {} : { sessionId }),
   };
 }
 
