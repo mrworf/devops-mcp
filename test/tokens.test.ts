@@ -124,6 +124,65 @@ describe("reference broker", () => {
     }, token), "reference_invalid");
   });
 
+  it("issues bound gateway access references without protected values", () => {
+    let now = 1_000;
+    const broker = new TokenBroker(tokenConfig(), () => now);
+    const issued = broker.issueTokens(auth("henric@example.com"), {
+      service: "frigate-local", destination: "primary", access_ids: ["gateway_access"], reason: "Inspect cameras.",
+    });
+    const token = issued.tokens[0]?.token ?? "";
+
+    expect(issued.tokens).toMatchObject([{
+      credential_id: "gateway_access",
+      usage_hint: "Pass reference as service_reference",
+    }]);
+    expect(token).toMatch(/^gref_/);
+    expect(JSON.stringify(issued.audit)).not.toContain(token);
+    expect(broker.validateServiceReferenceUse(auth("henric@example.com"), {
+      service: "frigate-local", destination: "primary",
+    }, token)).toMatchObject({ kind: "service", accessId: "gateway_access" });
+
+    expectGatewayError(() => broker.validateServiceReferenceUse(auth("ada@example.com"), {
+      service: "frigate-local", destination: "primary",
+    }, token), "reference_invalid");
+    expectGatewayError(() => broker.validateServiceReferenceUse(auth("henric@example.com"), {
+      service: "opnsense-home", destination: "primary",
+    }, token), "reference_invalid");
+    expectGatewayError(() => broker.validateServiceReferenceUse(auth("henric@example.com"), {
+      service: "frigate-local", destination: "secondary",
+    }, token), "reference_invalid");
+
+    const credentialToken = broker.issueTokens(auth("henric@example.com"), {
+      service: "portainer-prod", destination: "primary", access_ids: ["api_key"], reason: "Inspect stacks.",
+    }).tokens[0]?.token ?? "";
+    expectGatewayError(() => broker.validateServiceReferenceUse(auth("henric@example.com"), {
+      service: "portainer-prod", destination: "primary",
+    }, credentialToken), "reference_invalid");
+
+    now += 101;
+    expectGatewayError(() => broker.validateServiceReferenceUse(auth("henric@example.com"), {
+      service: "frigate-local", destination: "primary",
+    }, token), "reference_expired");
+  });
+
+  it("rejects unknown access ids for credential-free services", () => {
+    const broker = new TokenBroker(tokenConfig());
+    expectGatewayError(() => broker.issueTokens(auth("henric@example.com"), {
+      service: "frigate-local", destination: "primary", access_ids: ["api_key"], reason: "Inspect cameras.",
+    }), "unknown_access");
+  });
+
+  it("counts gateway access references against token capacity", () => {
+    const broker = new TokenBroker(tokenConfig({ maxTokenRecords: 1, maxTokenRecordsPerSubject: 1 }));
+    broker.issueTokens(auth("henric@example.com"), {
+      service: "frigate-local", destination: "primary", access_ids: ["gateway_access"], reason: "Inspect cameras.",
+    });
+    expectGatewayError(() => broker.issueTokens(auth("henric@example.com"), {
+      service: "frigate-local", destination: "primary", access_ids: ["gateway_access"], reason: "Inspect cameras again.",
+    }), "capacity_exceeded");
+    expect(broker.stats()).toEqual({ configured: 1, responseSecrets: 0, tokenValues: 1 });
+  });
+
   it("issues and reuses service-scoped response secret references", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);
@@ -260,6 +319,16 @@ function tokenConfig(options: { maxTokenRecords?: number; maxTokenRecordsPerSubj
           usage: { kind: "header", name: "X-API-Key" },
           source: { kind: "env", name: "OPNSENSE_API_KEY" },
         }],
+        access: { users: ["henric@example.com"] },
+      },
+      "frigate-local": {
+        type: "http",
+        name: "Frigate Local",
+        no_auth: true,
+        destinations: [
+          { name: "primary", base_url: "https://frigate.internal" },
+          { name: "secondary", base_url: "https://frigate-secondary.internal" },
+        ],
         access: { users: ["henric@example.com"] },
       },
     },

@@ -131,6 +131,32 @@ source:
   path: /run/secrets/service_api_key
 ```
 
+Services whose downstream API intentionally requires no authentication must opt in explicitly with `no_auth: true` and omit `credentials`:
+
+```yaml
+services:
+  camera-api:
+    type: http
+    name: Camera API
+    no_auth: true
+    destinations:
+      - name: primary
+        base_url: http://camera.example.org
+    access:
+      users:
+        - operator@example.org
+    policy:
+      mode: deny
+      rules:
+        - id: allow-status
+          effect: allow
+          priority: 100
+          methods: [GET]
+          paths: ["/api/status"]
+```
+
+Omitting credentials without `no_auth: true` fails startup, as does combining the flag with credentials. SecretSauce still exposes `gateway_access` for this service: clients obtain a normal `gref_` and pass it as `service_request.service_reference`. The gateway validates and consumes that field without forwarding it downstream. `no_auth` disables only downstream credential substitution; gateway authentication, user access controls, destination validation, request policy, TLS settings, auditing, and response protection remain enforced.
+
 `policy.mode` defaults to `deny`. Rules use regex path patterns in MVP.
 
 Endpoint rules may selectively disable response scanning:

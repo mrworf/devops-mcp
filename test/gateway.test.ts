@@ -3,12 +3,89 @@ import { createServer as createHttpsServer } from "node:https";
 import { once } from "node:events";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config.js";
+import { getAuditEvents } from "../src/audit.js";
 import { GatewayError } from "../src/errors.js";
 import { executeServiceRequest } from "../src/gateway.js";
 import { TokenBroker, defaultTokenBrokers } from "../src/tokens.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
 
 describe("HTTP gateway", () => {
+  it("requires and consumes a bound gateway access reference for credential-free services", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl, { noAuth: true });
+      const broker = installBroker(config);
+      const auth = actor();
+      const token = broker.issueTokens(auth, {
+        service: "demo-service", destination: "primary", access_ids: ["gateway_access"], reason: "Inspect cameras.",
+      }).tokens[0]?.token ?? "";
+
+      const response = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        service_reference: token, reason: "Inspect cameras.",
+      });
+
+      expect(response.status_code).toBe(200);
+      expect(downstream.requests).toHaveLength(1);
+      expect(JSON.stringify(downstream.requests[0])).not.toContain(token);
+      const event = getAuditEvents(config).find((item) => item.type === "service_request");
+      expect(event).toMatchObject({ access_ids: ["gateway_access"] });
+      expect(JSON.stringify(event)).not.toContain(token);
+    } finally {
+      await downstream.close();
+    }
+  });
+
+  it("rejects missing, wrong-subject, wrong-destination, and expired service references before downstream I/O", async () => {
+    const downstream = await startDownstream();
+    try {
+      let now = 1_000;
+      const config = gatewayConfig(downstream.baseUrl, { noAuth: true, includeSecondary: true });
+      const broker = new TokenBroker(config, () => now);
+      defaultTokenBrokers.set(config, broker);
+      const token = broker.issueTokens(actor(), {
+        service: "demo-service", destination: "primary", access_ids: ["gateway_access"], reason: "Inspect cameras.",
+      }).tokens[0]?.token ?? "";
+      const request = {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo", reason: "Inspect cameras.",
+      } as const;
+
+      await expectGatewayError(() => executeServiceRequest(config, actor(), request), "reference_invalid");
+      await expectGatewayError(() => executeServiceRequest(config, { ...actor(), subject: "ada@example.com" }, {
+        ...request, service_reference: token,
+      }), "reference_invalid");
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        ...request, destination: "secondary", service_reference: token,
+      }), "reference_invalid");
+      now += 3_600_001;
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        ...request, service_reference: token,
+      }), "reference_expired");
+      expect(downstream.requests).toHaveLength(0);
+    } finally {
+      await downstream.close();
+    }
+  });
+
+  it("rejects service_reference for credential-backed services before downstream I/O", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl);
+      const broker = installBroker(config);
+      const token = broker.issueTokens(actor(), {
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Inspect service.",
+      }).tokens[0]?.token ?? "";
+
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        service_reference: token, reason: "Inspect service.",
+      }), "reference_invalid");
+      expect(downstream.requests).toHaveLength(0);
+    } finally {
+      await downstream.close();
+    }
+  });
+
   it("substitutes tokens in headers, query, and body after policy allows the request", async () => {
     const downstream = await startDownstream();
     try {
@@ -660,6 +737,7 @@ describe("HTTP gateway", () => {
 
 function gatewayConfig(baseUrl: string, options: {
   includeSecondary?: boolean;
+  noAuth?: boolean;
   timeout?: string;
   maxRequestBody?: string;
   maxResponseBody?: string;
@@ -686,12 +764,14 @@ function gatewayConfig(baseUrl: string, options: {
         name: "Demo Service",
         destinations,
         tls: { verify: options.tlsVerify ?? false },
-        credentials: [{
-          id: "api_key",
-          usage: { kind: "header", name: "X-API-Key" },
-          source: { kind: "env", name: "DEMO_API_KEY" },
-        }],
-        access: { users: ["henric@example.com"] },
+        ...(options.noAuth ? { no_auth: true } : {
+          credentials: [{
+            id: "api_key",
+            usage: { kind: "header", name: "X-API-Key" },
+            source: { kind: "env", name: "DEMO_API_KEY" },
+          }],
+        }),
+        access: { users: ["henric@example.com", "ada@example.com"] },
         policy: {
           mode: "deny",
           rules: [

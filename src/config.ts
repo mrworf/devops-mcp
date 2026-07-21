@@ -40,6 +40,58 @@ const credentialSourceSchema = z.union([
   z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
 ]);
 
+const serviceSchema = z.object({
+  type: z.literal("http").default("http"),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  api_docs_url: z.string().url().optional(),
+  destinations: z.array(z.object({
+    id: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+    base_url: z.string().url(),
+    schemes: z.array(z.string().min(1)).optional(),
+    hosts: z.array(hostMatcherSchema).optional(),
+    ports: z.array(z.number().int().min(1).max(65535)).optional(),
+    tls: z.object({ verify: z.boolean().default(true) }).optional(),
+  }).strict()).min(1),
+  tls: z.object({ verify: z.boolean().default(true) }).default({ verify: true }),
+  no_auth: z.boolean().default(false),
+  credentials: z.array(z.object({
+    id: z.string().min(1),
+    usage: z.object({
+      kind: z.string().min(1),
+      name: z.string().min(1).optional(),
+    }).strict(),
+    source: credentialSourceSchema,
+  }).strict()).default([]),
+  access: z.object({
+    users: z.array(z.string().min(1)).default([]),
+  }).default({ users: [] }),
+  policy: z.object({
+    mode: z.enum(["allow", "deny"]).default("deny"),
+    rules: z.array(z.object({
+      id: z.string().min(1),
+      effect: z.enum(["allow", "deny"]),
+      priority: z.number().int(),
+      methods: z.array(z.string().min(1)).default([]),
+      hosts: z.array(z.string().min(1)).default([]),
+      paths: z.array(z.string().min(1)).default([]),
+      reason: z.string().optional(),
+      secretlint: z.union([
+        z.object({ enabled: z.literal(false) }).strict(),
+        z.object({ disabled_rules: z.array(z.enum(SECRET_RULE_IDS)).min(1) }).strict(),
+      ]).optional(),
+    }).strict()).default([]),
+  }).default({ mode: "deny", rules: [] }),
+}).strict().superRefine((service, context) => {
+  if (service.no_auth && service.credentials.length > 0) {
+    context.addIssue({ code: "custom", path: ["credentials"], message: "credentials must be empty when no_auth is true" });
+  }
+  if (!service.no_auth && service.credentials.length === 0) {
+    context.addIssue({ code: "custom", path: ["credentials"], message: "at least one credential is required unless no_auth is true" });
+  }
+});
+
 const rawConfigSchema = z.object({
   server: z.object({
     listen: z.string().default("0.0.0.0:8080"),
@@ -135,49 +187,8 @@ const rawConfigSchema = z.object({
     file: z.string().min(1).optional(),
     memory_events: z.number().int().positive().default(1000),
   }).default({ memory_events: 1000 }),
-  services: z.record(z.string().min(1), z.object({
-    type: z.literal("http").default("http"),
-    name: z.string().min(1),
-    description: z.string().optional(),
-    api_docs_url: z.string().url().optional(),
-    destinations: z.array(z.object({
-      id: z.string().min(1).optional(),
-      name: z.string().min(1).optional(),
-      base_url: z.string().url(),
-      schemes: z.array(z.string().min(1)).optional(),
-      hosts: z.array(hostMatcherSchema).optional(),
-      ports: z.array(z.number().int().min(1).max(65535)).optional(),
-      tls: z.object({ verify: z.boolean().default(true) }).optional(),
-    }).strict()).min(1),
-    tls: z.object({ verify: z.boolean().default(true) }).default({ verify: true }),
-    credentials: z.array(z.object({
-      id: z.string().min(1),
-      usage: z.object({
-        kind: z.string().min(1),
-        name: z.string().min(1).optional(),
-      }).strict(),
-      source: credentialSourceSchema,
-    }).strict()).min(1),
-    access: z.object({
-      users: z.array(z.string().min(1)).default([]),
-    }).default({ users: [] }),
-    policy: z.object({
-      mode: z.enum(["allow", "deny"]).default("deny"),
-      rules: z.array(z.object({
-        id: z.string().min(1),
-        effect: z.enum(["allow", "deny"]),
-        priority: z.number().int(),
-        methods: z.array(z.string().min(1)).default([]),
-        hosts: z.array(z.string().min(1)).default([]),
-        paths: z.array(z.string().min(1)).default([]),
-        reason: z.string().optional(),
-        secretlint: z.union([
-          z.object({ enabled: z.literal(false) }).strict(),
-          z.object({ disabled_rules: z.array(z.enum(SECRET_RULE_IDS)).min(1) }).strict(),
-        ]).optional(),
-      }).strict()).default([]),
-    }).default({ mode: "deny", rules: [] }),
-  }).strict()).refine((services) => Object.keys(services).length > 0, "at least one service is required"),
+  services: z.record(z.string().min(1), serviceSchema)
+    .refine((services) => Object.keys(services).length > 0, "at least one service is required"),
 }).strict();
 
 type RawConfig = z.infer<typeof rawConfigSchema>;

@@ -111,7 +111,7 @@ export const toolDescriptors: ToolDescriptor[] = [
   {
     name: "service_request",
     title: "Send service HTTP request",
-    description: "Send an HTTP request through the gateway. The backend resolves gateway references only after authorization, destination, reference-binding, and policy checks. Before the response reaches the agent, the backend scans it and replaces detected secrets with subject- and service-bound sec_ references. Cookie headers are not supported.",
+    description: "Send an HTTP request through the gateway. The backend resolves gateway references only after authorization, destination, reference-binding, and policy checks. Pass a gateway_access reference in service_reference; that gateway-only field is never forwarded downstream. Before the response reaches the agent, the backend scans it and replaces detected secrets with subject- and service-bound sec_ references. Cookie headers are not supported.",
     inputSchema: serviceRequestInputSchema,
     outputSchema: serviceRequestOutputSchema,
     securitySchemes: requestSecurity,
@@ -269,6 +269,7 @@ function parseServiceRequest(args: Record<string, unknown> | undefined): Service
   const method = readString(args, "method");
   const path = readOptionalString(args, "path");
   const url = readOptionalString(args, "url");
+  const serviceReference = readOptionalString(args, "service_reference");
   const reason = readString(args, "reason");
   const headers = readOptionalStringMap(args, "headers");
   const query = readOptionalRecord(args, "query");
@@ -278,6 +279,7 @@ function parseServiceRequest(args: Record<string, unknown> | undefined): Service
     method,
     ...(path === undefined ? {} : { path }),
     ...(url === undefined ? {} : { url }),
+    ...(serviceReference === undefined ? {} : { service_reference: serviceReference }),
     ...(headers === undefined ? {} : { headers }),
     ...(query === undefined ? {} : { query }),
     ...(args["body"] === undefined ? {} : { body: args["body"] }),

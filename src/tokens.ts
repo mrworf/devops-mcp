@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { GatewayError } from "./errors.js";
-import { getCredential, getService } from "./registry.js";
+import { GATEWAY_ACCESS_ID, GATEWAY_ACCESS_USAGE_HINT, getCredential, getService } from "./registry.js";
 import type { ReferenceIssuedAuditEvent } from "./audit.js";
 import { referenceIssuedAuditEvent } from "./audit.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
@@ -34,7 +34,9 @@ export interface TokenRecord {
   subject: string;
   service: string;
   destination: string;
-  credentialId: string;
+  accessId: string;
+  kind: "credential" | "service";
+  credentialId?: string;
   reason: string;
   issuedAt: number;
   lastUsedAt: number;
@@ -92,14 +94,25 @@ export class TokenBroker {
 
     const service = getService(this.config, input.service, auth);
     const destination = resolveTokenDestination(service.destinations.map((item) => item.id), input.destination);
-    const credentials = input.access_ids.map((credentialId) => getCredential(service, credentialId));
-    this.ensureCapacity(auth.subject, credentials.length);
+    const accesses = input.access_ids.map((accessId) => {
+      if (service.credentials.length === 0) {
+        if (accessId !== GATEWAY_ACCESS_ID) throw new GatewayError("unknown_access", `Unknown access id: ${accessId}`);
+        return { id: accessId, kind: "service" as const, usageHint: GATEWAY_ACCESS_USAGE_HINT };
+      }
+      const credential = getCredential(service, accessId);
+      return {
+        id: accessId,
+        kind: "credential" as const,
+        credentialId: credential.id,
+        usageHint: usageHint(credential.usage.kind, credential.usage.name),
+      };
+    });
+    this.ensureCapacity(auth.subject, accesses.length);
     const now = this.now();
     const issued: TokenIssueResult["tokens"] = [];
     const internalReferenceIds: string[] = [];
 
-    for (const credential of credentials) {
-      const credentialId = credential.id;
+    for (const access of accesses) {
       const token = generateTokenValue();
       const id = `grefrec_${randomUUID()}`;
       const record: TokenRecord = {
@@ -108,7 +121,9 @@ export class TokenBroker {
         subject: auth.subject,
         service: service.id,
         destination,
-        credentialId,
+        accessId: access.id,
+        kind: access.kind,
+        ...(access.kind === "credential" ? { credentialId: access.credentialId } : {}),
         reason: input.reason,
         issuedAt: now,
         lastUsedAt: now,
@@ -119,9 +134,9 @@ export class TokenBroker {
       this.tokenValuesById.set(record.id, token);
       internalReferenceIds.push(id);
       issued.push({
-        credential_id: credentialId,
+        credential_id: access.id,
         token,
-        usage_hint: usageHint(credential.usage.kind, credential.usage.name),
+        usage_hint: access.usageHint,
         expires_at: new Date(record.maxExpiresAt).toISOString(),
       });
     }
@@ -157,6 +172,14 @@ export class TokenBroker {
 
     record.lastUsedAt = now;
     record.idleExpiresAt = Math.min(now + this.config.tokens.idleTtlMs, record.maxExpiresAt);
+    return record;
+  }
+
+  validateServiceReferenceUse(auth: AuthContext, target: TokenUseTarget, tokenValue: string): TokenRecord {
+    const record = this.validateTokenUse(auth, target, tokenValue);
+    if (record.kind !== "service") {
+      throw new GatewayError("reference_invalid", "Gateway reference is not a service reference.");
+    }
     return record;
   }
 
@@ -221,7 +244,8 @@ export class TokenBroker {
         this.tokenValuesById.delete(record.id);
         continue;
       }
-      if (record.subject === auth.subject && record.service === service && credentialIds.has(record.credentialId)) matches.push(record);
+      if (record.subject === auth.subject && record.service === service
+        && record.kind === "credential" && record.credentialId !== undefined && credentialIds.has(record.credentialId)) matches.push(record);
     }
     matches.sort((left, right) => right.lastUsedAt - left.lastUsedAt || right.issuedAt - left.issuedAt);
     const record = matches[0];

@@ -29,6 +29,9 @@ export function substituteTokens<T>(
       return record.secret;
     }
     const record = broker.validateTokenUse(auth, target, token);
+    if (record.kind !== "credential" || record.credentialId === undefined) {
+      throw new GatewayError("reference_invalid", "Service references cannot be substituted into downstream requests.");
+    }
     records.push(record);
     return getCredential(service, record.credentialId).secret;
   });
@@ -109,6 +112,9 @@ function redeemToken(
     return record.secret;
   }
   const record = broker.validateTokenUse(auth, target, token);
+  if (record.kind !== "credential" || record.credentialId === undefined) {
+    throw new GatewayError("reference_invalid", "Service references cannot be substituted into downstream requests.");
+  }
   records.push(record);
   return getCredential(service, record.credentialId).secret;
 }

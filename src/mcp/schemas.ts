@@ -137,6 +137,7 @@ export const serviceRequestInputSchema = {
     method: { type: "string" },
     path: { type: "string" },
     url: { type: "string" },
+    service_reference: { type: "string" },
     headers: { type: "object", additionalProperties: { type: "string" } },
     query: { type: "object" },
     body: {},

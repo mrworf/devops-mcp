@@ -73,7 +73,10 @@ describe("MCP surface", () => {
     expect(referenceTool?.description).toContain("does not contact or modify the downstream service");
 
     const serviceRequestDescription = toolDescriptors.find((tool) => tool.name === "service_request")?.description ?? "";
+    expect(toolDescriptors.find((tool) => tool.name === "service_request")?.inputSchema)
+      .toMatchObject({ properties: { service_reference: { type: "string" } } });
     expect(serviceRequestDescription).toContain("backend resolves gateway references only after authorization");
+    expect(serviceRequestDescription).toContain("never forwarded downstream");
     expect(serviceRequestDescription).toContain("Before the response reaches the agent");
     expect(serviceRequestDescription).toContain("replaces detected secrets with subject- and service-bound sec_ references");
   });
@@ -243,10 +246,14 @@ describe("MCP surface", () => {
       reason: "test empty access ids",
     }, config, auth);
     const removed = await callTool("request_tokens", {}, config, auth);
+    const malformedServiceReference = await callTool("service_request", {
+      service: "demo-service", method: "GET", path: "/api/echo", service_reference: 7, reason: "test malformed reference",
+    }, config, auth);
 
     expect(malformed).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_access" } } });
     expect(empty).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_access" } } });
     expect(removed).toMatchObject({ isError: true, structuredContent: { error: { code: "not_implemented" } } });
+    expect(malformedServiceReference).toMatchObject({ isError: true, structuredContent: { error: { code: "reference_invalid" } } });
   });
 
   it("uses gateway service references across independent stateless requests", async () => {
@@ -346,6 +353,32 @@ describe("MCP surface", () => {
     } finally {
       await fixture.close();
     }
+  });
+
+  it("presents credential-free services as referenced gateway access", async () => {
+    const config = fixtureConfig({ noAuth: true });
+    const auth = { subject: "bearer-dev", scopes: ["gateway.read", "gateway.references"], mode: "bearer" as const };
+
+    const listed = await callTool("list_services", {}, config, auth);
+    expect(listed.structuredContent?.services).toMatchObject([{
+      id: "demo-service",
+      access_methods: [{ id: "gateway_access", usage_hint: "Pass reference as service_reference" }],
+    }]);
+
+    const described = await callTool("describe_service_policy", { service: "demo-service" }, config, auth);
+    expect(described.structuredContent?.access_methods).toEqual([
+      { id: "gateway_access", usage_hint: "Pass reference as service_reference" },
+    ]);
+
+    const referenced = await callTool("get_gateway_service_references", {
+      service: "demo-service", destination: "primary", access_ids: ["gateway_access"], reason: "Inspect cameras.",
+    }, config, auth);
+    expect(referenced.structuredContent?.references).toMatchObject([{
+      access_id: "gateway_access",
+      reference: expect.stringMatching(/^gref_/),
+      usage_hint: "Pass reference as service_reference",
+    }]);
+    expect(JSON.stringify({ listed, described, referenced })).not.toContain('"no_auth"');
   });
 
   it("describes service policy for authorized users without raw credentials", async () => {
@@ -453,7 +486,7 @@ describe("MCP surface", () => {
 });
 
 async function startFixtureServer(options: {
-  destinationBaseUrl?: string; maxInboundBody?: string; publicResource?: string;
+  destinationBaseUrl?: string; maxInboundBody?: string; publicResource?: string; noAuth?: boolean;
 } = {}) {
   const config = fixtureConfig(options);
   const server = createGatewayServer(config);
@@ -472,7 +505,7 @@ async function startFixtureServer(options: {
 }
 
 function fixtureConfig(options: {
-  destinationBaseUrl?: string; maxInboundBody?: string; publicResource?: string;
+  destinationBaseUrl?: string; maxInboundBody?: string; publicResource?: string; noAuth?: boolean;
 } = {}) {
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp", ...(options.publicResource === undefined ? {} : { resource: options.publicResource }) },
@@ -492,11 +525,13 @@ function fixtureConfig(options: {
           ...(options.destinationBaseUrl === undefined ? {} : { schemes: ["http"], hosts: [{ exact: "127.0.0.1" }] }),
         }],
         tls: { verify: options.destinationBaseUrl === undefined },
-        credentials: [{
-          id: "api_key",
-          usage: { kind: "header", name: "X-API-Key" },
-          source: { kind: "env", name: "DEMO_API_KEY" },
-        }],
+        ...(options.noAuth ? { no_auth: true } : {
+          credentials: [{
+            id: "api_key",
+            usage: { kind: "header", name: "X-API-Key" },
+            source: { kind: "env", name: "DEMO_API_KEY" },
+          }],
+        }),
         access: { users: ["bearer-dev"] },
         policy: {
           mode: "deny",

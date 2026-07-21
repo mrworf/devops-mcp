@@ -10,7 +10,7 @@ import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
 import { getResponseTokenizer, getResponseTokenizerRuleIds, getSecretScannerPoolStats } from "./secretRuntime.js";
 import { decodeUtf8 } from "./secretScanner.js";
 import { substituteRequestBodyTokens, substituteTokens } from "./substitution.js";
-import { getTokenBroker } from "./tokens.js";
+import { getTokenBroker, type TokenRecord } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
 
 export interface ServiceRequestInput {
@@ -22,6 +22,7 @@ export interface ServiceRequestInput {
   headers?: Record<string, string>;
   query?: Record<string, unknown>;
   body?: unknown;
+  service_reference?: string;
   reason: string;
 }
 
@@ -105,6 +106,15 @@ export async function executeServiceRequest(
 
   const broker = getTokenBroker(config);
   const tokenTarget = { service: service.id, destination: target.destination.id };
+  let serviceReferenceRecord: TokenRecord | undefined;
+  if (service.credentials.length === 0) {
+    if (typeof input.service_reference !== "string" || input.service_reference.length === 0) {
+      throw new GatewayError("reference_invalid", "service_reference is required for this service.");
+    }
+    serviceReferenceRecord = broker.validateServiceReferenceUse(auth, tokenTarget, input.service_reference);
+  } else if (input.service_reference !== undefined) {
+    throw new GatewayError("reference_invalid", "service_reference is only valid for gateway access references.");
+  }
   const headers = input.headers ?? {};
   rejectCallerControlledHeaders(headers);
   const requestCookieHeaders = prohibitedCookieHeaderNames(headers);
@@ -120,7 +130,12 @@ export async function executeServiceRequest(
   const substitutedHeaders = headerSubstitution.value;
   const substitutedQuery = querySubstitution.value;
   const substitutedBody = bodySubstitution.value;
-  const tokenRecords = [...headerSubstitution.records, ...querySubstitution.records, ...bodySubstitution.records];
+  const tokenRecords = [
+    ...(serviceReferenceRecord === undefined ? [] : [serviceReferenceRecord]),
+    ...headerSubstitution.records,
+    ...querySubstitution.records,
+    ...bodySubstitution.records,
+  ];
 
   const downstream = buildDownstreamRequest(config, target.url, input.method, substitutedHeaders, substitutedQuery, substitutedBody, target.tls.verify);
   logger.debug("service_request.downstream_ready", {
@@ -134,7 +149,7 @@ export async function executeServiceRequest(
     target_path: target.methodPath,
     tls_verify: target.tls.verify,
     matched_policy_rule: policy.matchedRule,
-    credential_count: new Set(tokenRecords.map((record) => record.credentialId)).size,
+    credential_count: new Set(tokenRecords.filter((record) => record.kind === "credential").map((record) => record.credentialId)).size,
     placeholder_count: new Set(tokenRecords.map((record) => record.id)).size,
     request_shape: {
       header_names: headerNames(headers),
@@ -171,7 +186,7 @@ export async function executeServiceRequest(
     subject: auth.subject,
     service: service.id,
     destination: target.destination.id,
-    access_ids: [...new Set(tokenRecords.map((record) => record.credentialId))],
+    access_ids: [...new Set(tokenRecords.map((record) => record.accessId))],
     internal_reference_ids: [...new Set(tokenRecords.map((record) => record.id))],
     method: input.method.toUpperCase(),
     target_host: target.url.host,

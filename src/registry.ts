@@ -2,6 +2,9 @@ import { GatewayError } from "./errors.js";
 import type { AuthContext, CredentialConfig, GatewayConfig, PolicyRuleConfig, ServiceConfig } from "./types.js";
 import { resolveDestinationTarget, type ResolvedTarget, type TargetInput } from "./urlValidation.js";
 
+export const GATEWAY_ACCESS_ID = "gateway_access";
+export const GATEWAY_ACCESS_USAGE_HINT = "Pass reference as service_reference";
+
 export interface ServiceSummary {
   id: string;
   name: string;
@@ -65,10 +68,7 @@ export function describeServicePolicy(config: GatewayConfig, auth: AuthContext, 
       base_url_hint: destination.baseUrl,
       tls_verify: destination.tls.verify,
     })),
-    access_methods: service.credentials.map((credential) => ({
-      id: credential.id,
-      usage_hint: usageHint(credential),
-    })),
+    access_methods: accessMethods(service),
     policy: {
       mode: service.policy.mode,
       rules: orderedRules(service.policy.rules).map((rule) => ({
@@ -123,10 +123,7 @@ function serviceSummary(service: ServiceConfig): ServiceSummary {
       base_url_hint: destination.baseUrl,
       tls_verify: destination.tls.verify,
     })),
-    access_methods: service.credentials.map((credential) => ({
-      id: credential.id,
-      usage_hint: usageHint(credential),
-    })),
+    access_methods: accessMethods(service),
     policy_summary: `mode=${service.policy.mode}`,
   };
   return {
@@ -139,6 +136,13 @@ function serviceSummary(service: ServiceConfig): ServiceSummary {
 function usageHint(credential: CredentialConfig): string {
   if (credential.usage.name) return `Use reference as ${credential.usage.name} ${credential.usage.kind}`;
   return `Use reference as ${credential.usage.kind}`;
+}
+
+function accessMethods(service: ServiceConfig): ServiceSummary["access_methods"] {
+  if (service.credentials.length === 0) {
+    return [{ id: GATEWAY_ACCESS_ID, usage_hint: GATEWAY_ACCESS_USAGE_HINT }];
+  }
+  return service.credentials.map((credential) => ({ id: credential.id, usage_hint: usageHint(credential) }));
 }
 
 function orderedRules(rules: PolicyRuleConfig[]): PolicyRuleConfig[] {

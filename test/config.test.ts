@@ -389,6 +389,36 @@ describe("config validation", () => {
     expect(config.services["portainer-prod"]?.apiDocsUrl).toBe("https://api.example.org/openapi.json");
   });
 
+  it("accepts explicitly credential-free services with omitted or empty credentials", () => {
+    for (const credentials of [undefined, []]) {
+      const raw = validRaw();
+      raw.services["portainer-prod"].no_auth = true;
+      if (credentials === undefined) delete raw.services["portainer-prod"].credentials;
+      else raw.services["portainer-prod"].credentials = credentials;
+
+      expect(validateConfig(raw, validEnv).services["portainer-prod"]?.credentials).toEqual([]);
+    }
+  });
+
+  it("rejects missing, false, conflicting, and invalid no_auth declarations", () => {
+    for (const noAuth of [undefined, false]) {
+      const raw = validRaw();
+      delete raw.services["portainer-prod"].credentials;
+      if (noAuth === undefined) delete raw.services["portainer-prod"].no_auth;
+      else raw.services["portainer-prod"].no_auth = noAuth;
+      expectConfigError(() => validateConfig(raw, validEnv), "at least one credential is required unless no_auth is true");
+    }
+
+    const conflicting = validRaw();
+    conflicting.services["portainer-prod"].no_auth = true;
+    expectConfigError(() => validateConfig(conflicting, validEnv), "credentials must be empty when no_auth is true");
+
+    const invalid = validRaw();
+    invalid.services["portainer-prod"].no_auth = "true";
+    delete invalid.services["portainer-prod"].credentials;
+    expectConfigError(() => validateConfig(invalid, validEnv), "Invalid config");
+  });
+
   it("resolves file credential sources", () => {
     const dir = mkdtempSync(join(tmpdir(), "gateway-config-"));
     const secretPath = join(dir, "api-key");

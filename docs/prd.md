@@ -216,7 +216,7 @@ The first 512 characters must be self-contained and explain the core safety mode
 Required opening text:
 
 ```text
-This MCP server lets agents call configured HTTP services without exposing protected backend values. Always call list_services first, then get_gateway_service_references with a clear reason, then use service_request with service, destination, method, path or allowed URL, headers/body containing gateway references, and a request reason. References have no meaning outside this MCP server. Requests may be denied by service policy.
+This MCP server lets agents call configured HTTP services without exposing protected backend values. Always call list_services first, then get_gateway_service_references with a clear reason, then use service_request with service, destination, method, path or allowed URL, and a request reason. Place credential references according to their usage hints, and pass `gateway_access` references in `service_reference`. References have no meaning outside this MCP server. Requests may be denied by service policy.
 ```
 
 Full instructions should also include:
@@ -623,6 +623,7 @@ Required fields:
 Optional fields:
 
 * `destination`
+* `service_reference` (required for services exposing `gateway_access`; consumed by the gateway and never forwarded downstream)
 * `headers`
 * `query`
 * `body`
