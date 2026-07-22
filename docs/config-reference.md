@@ -182,6 +182,32 @@ policy:
 
 Use `secretlint: { enabled: false }` to disable all Secretlint rules for a matched endpoint. These settings never disable sensitive-name protection, exact configured-credential protection, forged opaque-prefix protection, cookie handling, Base64 validation, or framing normalization.
 
+Binary safeguards can be changed for a matched endpoint independently:
+
+```yaml
+policy:
+  rules:
+    - id: allow-download
+      effect: allow
+      priority: 100
+      methods: [GET]
+      paths: ["/api/download"]
+      binary_response:
+        scan: true
+        max_size: 100kb
+```
+
+Both fields are optional and default to `scan: true` and `max_size: 100kb`. A positive size uses the same `b`, `kb`, and `mb` syntax as other size limits; `max_size: unlimited` removes only this binary-specific guard.
+
+| `scan` | `max_size` | Binary-body behavior |
+| --- | --- | --- |
+| `true` | a size | Reject above the size; scan at or below it. |
+| `false` | a size | Reject above the size; otherwise pass the body unscanned. |
+| `true` | `unlimited` | Scan regardless of binary size. |
+| `false` | `unlimited` | Pass binary bodies without body scanning or the binary-specific size guard. |
+
+`scan: false` explicitly accepts the risk that secrets may be exfiltrated in binary response bodies. Every bypass is logged and audited without response content. Response headers and likely-text bodies remain scanned for every setting, and `limits.max_response_body` always remains enforced. Effective settings are visible through `describe_service_policy`; `max_size_bytes: null` means unlimited.
+
 ## Secretlint Rules
 
 `SECRETLINT_CONFIG_PATH` defaults to `/config/secretlint.yaml`. The file uses:

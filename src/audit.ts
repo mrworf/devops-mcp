@@ -34,6 +34,7 @@ export interface ServiceRequestAuditEvent {
   secret_tokenization_count: number;
   secret_rule_ids?: string[];
   response_internal_reference_ids?: string[];
+  binary_scan_bypassed?: boolean;
   error_code?: string;
   error_message?: string;
 }

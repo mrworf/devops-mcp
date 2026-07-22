@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { classifyResponseBody, DEFAULT_BINARY_RESPONSE_MAX_BYTES, inspectBinaryBody } from "../src/binaryResponse.js";
+import { getAuditEvents } from "../src/audit.js";
 import { validateConfig } from "../src/config.js";
 import { GatewayError } from "../src/errors.js";
 import { executeServiceRequest } from "../src/gateway.js";
@@ -50,7 +51,7 @@ describe("binary gateway responses", () => {
   });
 
   afterAll(async () => {
-    await downstream.close();
+    await downstream?.close();
   });
 
   it("fully scans textual octet-stream bodies while preserving surrounding bytes", async () => {
@@ -106,12 +107,85 @@ describe("binary gateway responses", () => {
     await expect(executeServiceRequest(config, actor(), request("/binary-over-limit")))
       .rejects.toMatchObject({ code: "response_too_large" } satisfies Partial<GatewayError>);
   });
+
+  it("can bypass binary scanning without bypassing the default size limit or header protection", async () => {
+    const bypassConfig = gatewayConfig(downstream.baseUrl, { binaryResponse: { scan: false } });
+    defaultTokenBrokers.set(bypassConfig, new TokenBroker(bypassConfig));
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((line) => lines.push(String(line)));
+    let response;
+    try {
+      response = await executeServiceRequest(bypassConfig, actor(), request("/binary-secret"));
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(response?.binaryBody?.includes(Buffer.from("demo-secret"))).toBe(true);
+    expect(response?.headers["x-api-key"]).toMatch(/^sec_/);
+    expect(lines.join("\n")).toContain("binary_scan_bypassed");
+    expect(lines.join("\n")).not.toContain("demo-secret");
+    expect(getAuditEvents(bypassConfig)).toContainEqual(expect.objectContaining({
+      type: "service_request",
+      binary_scan_bypassed: true,
+    }));
+    await expect(executeServiceRequest(bypassConfig, actor(), request("/binary-over-limit")))
+      .rejects.toMatchObject({ code: "response_too_large" } satisfies Partial<GatewayError>);
+  });
+
+  it("continues scanning likely-text bodies when binary scanning is disabled", async () => {
+    const bypassConfig = gatewayConfig(downstream.baseUrl, { binaryResponse: { scan: false } });
+    defaultTokenBrokers.set(bypassConfig, new TokenBroker(bypassConfig));
+
+    const response = await executeServiceRequest(bypassConfig, actor(), request("/text-octet"));
+    expect(response.binaryBody?.toString("utf8")).toMatch(/^prefix-雪-sec_[A-Za-z0-9_-]+-suffix$/);
+    expect(response.binaryBody?.toString("utf8")).not.toContain("demo-secret");
+    expect(getAuditEvents(bypassConfig)).not.toContainEqual(expect.objectContaining({ binary_scan_bypassed: true }));
+  });
+
+  it("can remove the binary size guard while retaining scanning", async () => {
+    const unlimitedConfig = gatewayConfig(downstream.baseUrl, { binaryResponse: { max_size: "unlimited" } });
+    defaultTokenBrokers.set(unlimitedConfig, new TokenBroker(unlimitedConfig));
+
+    const clean = await executeServiceRequest(unlimitedConfig, actor(), request("/binary-over-limit"));
+    expect(clean.binaryBody).toHaveLength(DEFAULT_BINARY_RESPONSE_MAX_BYTES + 1);
+    await expect(executeServiceRequest(unlimitedConfig, actor(), request("/binary-over-limit-secret")))
+      .rejects.toMatchObject({ code: "secret_scan_failed" } satisfies Partial<GatewayError>);
+  });
+
+  it("can remove both binary safeguards while preserving the global response cap", async () => {
+    const unrestrictedConfig = gatewayConfig(downstream.baseUrl, {
+      binaryResponse: { scan: false, max_size: "unlimited" },
+    });
+    defaultTokenBrokers.set(unrestrictedConfig, new TokenBroker(unrestrictedConfig));
+
+    const response = await executeServiceRequest(unrestrictedConfig, actor(), request("/binary-over-limit-secret"));
+    expect(response.binaryBody?.includes(Buffer.from("demo-secret"))).toBe(true);
+
+    const globallyBoundedConfig = gatewayConfig(downstream.baseUrl, {
+      binaryResponse: { scan: false, max_size: "unlimited" },
+      maxResponseBody: "100kb",
+    });
+    defaultTokenBrokers.set(globallyBoundedConfig, new TokenBroker(globallyBoundedConfig));
+    await expect(executeServiceRequest(globallyBoundedConfig, actor(), request("/binary-over-limit")))
+      .rejects.toMatchObject({ code: "response_too_large" } satisfies Partial<GatewayError>);
+  });
+
+  it("honors a custom binary size boundary", async () => {
+    const customConfig = gatewayConfig(downstream.baseUrl, { binaryResponse: { max_size: "101kb" } });
+    defaultTokenBrokers.set(customConfig, new TokenBroker(customConfig));
+
+    const response = await executeServiceRequest(customConfig, actor(), request("/binary-over-limit"));
+    expect(response.binaryBody).toHaveLength(DEFAULT_BINARY_RESPONSE_MAX_BYTES + 1);
+  });
 });
 
-function gatewayConfig(baseUrl: string): GatewayConfig {
+function gatewayConfig(baseUrl: string, options: {
+  binaryResponse?: { scan?: boolean; max_size?: string };
+  maxResponseBody?: string;
+} = {}): GatewayConfig {
   return validateConfig({
     auth: { mode: "bearer", bearer: { token_env: "AUTH" } },
-    limits: { max_response_body: "1mb" },
+    limits: { max_response_body: options.maxResponseBody ?? "1mb" },
     services: {
       "demo-service": {
         name: "Demo",
@@ -120,7 +194,14 @@ function gatewayConfig(baseUrl: string): GatewayConfig {
         access: { users: ["alice"] },
         policy: {
           mode: "deny",
-          rules: [{ id: "allow-binary", effect: "allow", priority: 1, methods: ["GET"], paths: ["^/"] }],
+          rules: [{
+            id: "allow-binary",
+            effect: "allow",
+            priority: 1,
+            methods: ["GET"],
+            paths: ["^/"],
+            ...(options.binaryResponse === undefined ? {} : { binary_response: options.binaryResponse }),
+          }],
         },
       },
     },
@@ -151,6 +232,7 @@ async function startDownstream() {
       return;
     }
     if (request.url === "/binary-secret") {
+      response.setHeader("x-api-key", "demo-secret");
       response.end(Buffer.concat([pngPrefix(), Buffer.from("demo-secret", "ascii")]));
       return;
     }
@@ -160,6 +242,14 @@ async function startDownstream() {
     }
     if (request.url === "/binary-over-limit") {
       response.end(Buffer.concat([pngPrefix(), Buffer.alloc(DEFAULT_BINARY_RESPONSE_MAX_BYTES + 1 - pngPrefix().length, 0xff)]));
+      return;
+    }
+    if (request.url === "/binary-over-limit-secret") {
+      response.end(Buffer.concat([
+        pngPrefix(),
+        Buffer.from("demo-secret", "ascii"),
+        Buffer.alloc(DEFAULT_BINARY_RESPONSE_MAX_BYTES + 1 - pngPrefix().length - "demo-secret".length, 0xff),
+      ]));
       return;
     }
     response.setHeader("x-api-key", "demo-secret");

@@ -81,6 +81,10 @@ const serviceSchema = z.object({
         z.object({ enabled: z.literal(false) }).strict(),
         z.object({ disabled_rules: z.array(z.enum(SECRET_RULE_IDS)).min(1) }).strict(),
       ]).optional(),
+      binary_response: z.object({
+        scan: z.boolean().default(true),
+        max_size: z.string().min(1).default("100kb"),
+      }).strict().optional(),
     }).strict()).default([]),
   }).default({ mode: "deny", rules: [] }),
 }).strict().superRefine((service, context) => {
@@ -623,6 +627,16 @@ function normalizePolicy(raw: RawService["policy"], servicePath: ConfigPath): Po
       methods: rule.methods.map((method) => method.toUpperCase()),
       hosts: rule.hosts,
       paths: rule.paths,
+      binaryResponse: {
+        scan: rule.binary_response?.scan ?? true,
+        maxBytes: rule.binary_response?.max_size === "unlimited"
+          ? null
+          : parseSize(
+            rule.binary_response?.max_size ?? "100kb",
+            "binary_response.max_size",
+            [...rulePath, "binary_response", "max_size"],
+          ),
+      },
       ...(rule.secretlint === undefined ? {} : {
         secretlint: "enabled" in rule.secretlint
           ? { enabled: false as const }
@@ -673,14 +687,14 @@ function parseDuration(value: string, label: string): number {
   return amount * multiplier;
 }
 
-function parseSize(value: string, label: string): number {
+function parseSize(value: string, label: string, path: ConfigPath = label.split(".")): number {
   const match = sizePattern.exec(value);
-  if (!match) throw configValidationError(`${label} must be a size like 512b, 128kb, or 1mb`, label.split("."));
+  if (!match) throw configValidationError(`${label} must be a size like 512b, 128kb, or 1mb`, path);
   const amount = Number(match[1] ?? 0);
-  if (amount === 0) throw configValidationError(`${label} must be positive`, label.split("."));
+  if (amount === 0) throw configValidationError(`${label} must be positive`, path);
   const unit = (match[2] ?? "").toLowerCase();
   const multipliers: Record<string, number> = { b: 1, kb: 1024, mb: 1024 * 1024 };
   const multiplier = multipliers[unit];
-  if (multiplier === undefined) throw configValidationError(`${label} has unsupported size unit`, label.split("."));
+  if (multiplier === undefined) throw configValidationError(`${label} has unsupported size unit`, path);
   return amount * multiplier;
 }

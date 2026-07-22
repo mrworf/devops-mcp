@@ -175,4 +175,8 @@ export interface PolicyRuleConfig {
   paths: string[];
   reason?: string;
   secretlint?: { enabled: false } | { disabledRuleIds: string[] };
+  binaryResponse: {
+    scan: boolean;
+    maxBytes: number | null;
+  };
 }

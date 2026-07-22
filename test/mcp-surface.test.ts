@@ -403,14 +403,36 @@ describe("MCP surface", () => {
       policy: {
         mode: "deny",
         rules: [
-          { id: "deny-delete", effect: "deny", priority: 200, methods: ["DELETE"], paths: ["/.*"] },
-          { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/echo"] },
+          {
+            id: "deny-delete", effect: "deny", priority: 200, methods: ["DELETE"], paths: ["/.*"],
+            binary_response: { scan: true, max_size_bytes: 102_400 },
+          },
+          {
+            id: "allow-echo", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/echo"],
+            binary_response: { scan: true, max_size_bytes: 102_400 },
+          },
         ],
       },
     });
     expect(serialized).not.toContain("super-secret-api-key");
     expect(serialized).not.toContain("dev-token");
     expect(serialized).not.toContain('"credentials"');
+  });
+
+  it("describes effective binary response policy overrides", async () => {
+    const config = fixtureConfig({ binaryResponse: { scan: false, max_size: "unlimited" } });
+    const call = await callTool("describe_service_policy", { service: "demo-service" }, config, {
+      subject: "bearer-dev",
+      scopes: ["gateway.read"],
+      mode: "bearer",
+    });
+
+    expect(call.structuredContent?.policy.rules).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "allow-echo",
+        binary_response: { scan: false, max_size_bytes: null },
+      }),
+    ]));
   });
 
   it("does not let unauthorized users inspect service policy", async () => {
@@ -505,7 +527,11 @@ async function startFixtureServer(options: {
 }
 
 function fixtureConfig(options: {
-  destinationBaseUrl?: string; maxInboundBody?: string; publicResource?: string; noAuth?: boolean;
+  destinationBaseUrl?: string;
+  maxInboundBody?: string;
+  publicResource?: string;
+  noAuth?: boolean;
+  binaryResponse?: { scan?: boolean; max_size?: string };
 } = {}) {
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp", ...(options.publicResource === undefined ? {} : { resource: options.publicResource }) },
@@ -536,7 +562,14 @@ function fixtureConfig(options: {
         policy: {
           mode: "deny",
           rules: [
-            { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/echo"] },
+            {
+              id: "allow-echo",
+              effect: "allow",
+              priority: 100,
+              methods: ["GET"],
+              paths: ["/api/echo"],
+              ...(options.binaryResponse === undefined ? {} : { binary_response: options.binaryResponse }),
+            },
             { id: "deny-delete", effect: "deny", priority: 200, methods: ["DELETE"], paths: ["/.*"] },
           ],
         },

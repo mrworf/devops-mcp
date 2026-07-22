@@ -191,10 +191,12 @@ export async function executeServiceRequest(
     : "enabled" in matchedPolicyRule.secretlint
       ? new Set<string>(getResponseTokenizerRuleIds(config))
       : new Set(matchedPolicyRule.secretlint.disabledRuleIds);
+  const binaryPolicy = matchedPolicyRule?.binaryResponse ?? { scan: true, maxBytes: DEFAULT_BINARY_RESPONSE_MAX_BYTES };
   const tokenizer = getResponseTokenizer(config);
+  let binaryScanBypassed = false;
   let tokenized: Awaited<ReturnType<typeof tokenizer.tokenizeBytes>>;
   if (classification.kind === "binary") {
-    if (entityBody.byteLength > DEFAULT_BINARY_RESPONSE_MAX_BYTES) {
+    if (binaryPolicy.maxBytes !== null && entityBody.byteLength > binaryPolicy.maxBytes) {
       logger.warn("service_request.binary_response_rejected", {
         request_id: requestId,
         service: service.id,
@@ -202,23 +204,37 @@ export async function executeServiceRequest(
         matched_policy_rule: policy.matchedRule,
         content_type: responseMimeType(responseHeaders),
         response_bytes: entityBody.byteLength,
+        binary_max_bytes: binaryPolicy.maxBytes,
         reason: "size_limit",
       });
-      throw new GatewayError("response_too_large", "Binary response exceeds the 100 KiB safety limit.", requestId);
+      throw new GatewayError("response_too_large", "Binary response exceeds its policy size limit.", requestId);
     }
-    const inspection = inspectBinaryBody(entityBody, broker, auth, service);
-    if (inspection.ruleIds.length > 0) {
-      logger.warn("service_request.binary_response_rejected", {
+    if (binaryPolicy.scan) {
+      const inspection = inspectBinaryBody(entityBody, broker, auth, service);
+      if (inspection.ruleIds.length > 0) {
+        logger.warn("service_request.binary_response_rejected", {
+          request_id: requestId,
+          service: service.id,
+          destination: target.destination.id,
+          matched_policy_rule: policy.matchedRule,
+          content_type: responseMimeType(responseHeaders),
+          response_bytes: entityBody.byteLength,
+          reason: "protected_data",
+          rule_ids: inspection.ruleIds,
+        });
+        assertSafeBinaryBody(inspection, requestId);
+      }
+    } else {
+      binaryScanBypassed = true;
+      logger.warn("service_request.binary_scan_bypassed", {
         request_id: requestId,
         service: service.id,
         destination: target.destination.id,
         matched_policy_rule: policy.matchedRule,
         content_type: responseMimeType(responseHeaders),
         response_bytes: entityBody.byteLength,
-        reason: "protected_data",
-        rule_ids: inspection.ruleIds,
+        reason: "policy_override",
       });
-      assertSafeBinaryBody(inspection, requestId);
     }
     const headersOnly = await tokenizer.tokenizeHeaders(responseHeaders, auth, service, disabledSecretlintRules);
     tokenized = { ...headersOnly, body: entityBody };
@@ -253,6 +269,7 @@ export async function executeServiceRequest(
     secret_tokenization_count: tokenized.secretTokenizationCount,
     secret_rule_ids: tokenized.ruleIds,
     response_internal_reference_ids: tokenized.internalRecordIds,
+    ...(binaryScanBypassed ? { binary_scan_bypassed: true } : {}),
   }, config);
   if (tokenized.warnings.length > 0) {
     audit({

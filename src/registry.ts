@@ -46,6 +46,7 @@ export interface ServicePolicyDescription {
       hosts: string[];
       paths: string[];
       reason?: string;
+      binary_response: { scan: boolean; max_size_bytes: number | null };
     }>;
   };
 }
@@ -78,6 +79,7 @@ export function describeServicePolicy(config: GatewayConfig, auth: AuthContext, 
         methods: rule.methods,
         hosts: rule.hosts,
         paths: rule.paths,
+        binary_response: { scan: rule.binaryResponse.scan, max_size_bytes: rule.binaryResponse.maxBytes },
         ...(rule.reason === undefined ? {} : { reason: rule.reason }),
       })),
     },

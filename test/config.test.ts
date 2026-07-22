@@ -528,6 +528,37 @@ describe("config validation", () => {
       .toEqual({ disabledRuleIds: ["@secretlint/secretlint-rule-github"] });
   });
 
+  it("defaults and normalizes binary response policy controls", () => {
+    const defaults = validateConfig(validRaw(), validEnv);
+    expect(defaults.services["portainer-prod"]?.policy.rules[0]?.binaryResponse)
+      .toEqual({ scan: true, maxBytes: 102_400 });
+
+    const configured = validRaw();
+    configured.services["portainer-prod"].policy.rules[0].binary_response = {
+      scan: false,
+      max_size: "unlimited",
+    };
+    expect(validateConfig(configured, validEnv).services["portainer-prod"]?.policy.rules[0]?.binaryResponse)
+      .toEqual({ scan: false, maxBytes: null });
+
+    configured.services["portainer-prod"].policy.rules[0].binary_response = { max_size: "128kb" };
+    expect(validateConfig(configured, validEnv).services["portainer-prod"]?.policy.rules[0]?.binaryResponse)
+      .toEqual({ scan: true, maxBytes: 131_072 });
+  });
+
+  it("rejects invalid binary response policy controls", () => {
+    for (const [binaryResponse, message] of [
+      [{ scan: "no" }, "Invalid config"],
+      [{ max_size: "0kb" }, "must be positive"],
+      [{ max_size: "forever" }, "must be a size"],
+      [{ scan: true, unknown: true }, "Invalid config"],
+    ]) {
+      const raw = validRaw();
+      raw.services["portainer-prod"].policy.rules[0].binary_response = binaryResponse;
+      expectConfigError(() => validateConfig(raw, validEnv), message as string);
+    }
+  });
+
   it("rejects conflicting or unknown endpoint Secretlint controls", () => {
     const conflicting = validRaw();
     conflicting.services["portainer-prod"].policy.rules[0].secretlint = {
