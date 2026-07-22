@@ -2,19 +2,24 @@ import type { GatewayErrorCode } from "../errors.js";
 
 export interface ToolResult {
   structuredContent: Record<string, unknown>;
-  content: Array<{ type: "text"; text: string }>;
+  content: ToolContent[];
   _meta?: Record<string, unknown>;
   isError?: boolean;
 }
+
+export type ToolContent =
+  | { type: "text"; text: string }
+  | { type: "resource"; resource: { uri: string; mimeType: string; blob: string } };
 
 export function toolSuccess(
   structuredContent: Record<string, unknown>,
   summary: string,
   meta?: Record<string, unknown>,
+  additionalContent: ToolContent[] = [],
 ): ToolResult {
   const result: ToolResult = {
     structuredContent,
-    content: [{ type: "text", text: summary }],
+    content: [{ type: "text", text: summary }, ...additionalContent],
   };
   return meta === undefined ? result : { ...result, _meta: meta };
 }

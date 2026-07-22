@@ -1,5 +1,6 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { createHash } from "node:crypto";
 import { GatewayError } from "./errors.js";
 import { evaluatePolicy } from "./policy.js";
 import { getService, resolveDestination } from "./registry.js";
@@ -8,10 +9,18 @@ import { getDenialStore } from "./denials.js";
 import { bodySummary, createLogger, headerNames } from "./logger.js";
 import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
 import { getResponseTokenizer, getResponseTokenizerRuleIds, getSecretScannerPoolStats } from "./secretRuntime.js";
-import { decodeUtf8 } from "./secretScanner.js";
 import { substituteRequestBodyTokens, substituteTokens } from "./substitution.js";
 import { getTokenBroker, type TokenRecord } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
+import {
+  assertSafeBinaryBody,
+  classifyResponseBody,
+  DEFAULT_BINARY_RESPONSE_MAX_BYTES,
+  inspectBinaryBody,
+  isBinaryMediaType,
+  responseMimeType,
+} from "./binaryResponse.js";
+import { decodeDeclaredBase64Bytes, encodeBase64Bytes } from "./base64Body.js";
 
 export interface ServiceRequestInput {
   service: string;
@@ -38,13 +47,18 @@ export interface ServiceResponse {
   request_id: string;
   status_code: number;
   headers: Record<string, string>;
-  body: string;
+  body: string | null;
+  body_encoding: "utf8" | "mcp_blob";
+  body_size_bytes: number;
+  body_sha256: string;
   secret_tokenized: boolean;
   secret_tokenization_count: number;
   tls: {
     verify: boolean;
   };
   truncated: boolean;
+  binaryBody?: Buffer;
+  binaryMimeType?: string;
 }
 
 export async function executeServiceRequest(
@@ -158,6 +172,7 @@ export async function executeServiceRequest(
     },
   });
   const started = Date.now();
+  const requestId = `req_${started}`;
   const response = await fetchWithTimeout(downstream, config.limits.timeoutMs, config.limits.maxResponseBodyBytes);
   const cookieFiltered = stripCookieHeaders(Object.fromEntries(response.headers.entries()));
   if (cookieFiltered.removed.length > 0) {
@@ -166,20 +181,58 @@ export async function executeServiceRequest(
     });
   }
   const responseHeaders = cookieFiltered.headers;
-  const rawBody = await limitedResponseText(response);
+  const rawBody = await limitedResponseBytes(response);
+  const decodedBody = decodeDeclaredBase64Bytes(responseHeaders, rawBody.body);
+  const entityBody = decodedBody ?? rawBody.body;
+  const classification = classifyResponseBody(entityBody);
   const matchedPolicyRule = policy.matchedRule === undefined ? undefined : service.policy.rules.find((rule) => rule.id === policy.matchedRule);
   const disabledSecretlintRules = matchedPolicyRule?.secretlint === undefined
     ? new Set<string>()
     : "enabled" in matchedPolicyRule.secretlint
       ? new Set<string>(getResponseTokenizerRuleIds(config))
       : new Set(matchedPolicyRule.secretlint.disabledRuleIds);
-  const tokenized = await getResponseTokenizer(config).tokenizeWithTransferEncoding(
-    { body: rawBody.body, headers: responseHeaders }, auth, service, disabledSecretlintRules,
-  );
-  const returnedHeaders = bodyChanged(rawBody.body, tokenized.body, rawBody.truncated)
-    ? withContentLength(tokenized.headers, Buffer.byteLength(tokenized.body))
+  const tokenizer = getResponseTokenizer(config);
+  let tokenized: Awaited<ReturnType<typeof tokenizer.tokenizeBytes>>;
+  if (classification.kind === "binary") {
+    if (entityBody.byteLength > DEFAULT_BINARY_RESPONSE_MAX_BYTES) {
+      logger.warn("service_request.binary_response_rejected", {
+        request_id: requestId,
+        service: service.id,
+        destination: target.destination.id,
+        matched_policy_rule: policy.matchedRule,
+        content_type: responseMimeType(responseHeaders),
+        response_bytes: entityBody.byteLength,
+        reason: "size_limit",
+      });
+      throw new GatewayError("response_too_large", "Binary response exceeds the 100 KiB safety limit.", requestId);
+    }
+    const inspection = inspectBinaryBody(entityBody, broker, auth, service);
+    if (inspection.ruleIds.length > 0) {
+      logger.warn("service_request.binary_response_rejected", {
+        request_id: requestId,
+        service: service.id,
+        destination: target.destination.id,
+        matched_policy_rule: policy.matchedRule,
+        content_type: responseMimeType(responseHeaders),
+        response_bytes: entityBody.byteLength,
+        reason: "protected_data",
+        rule_ids: inspection.ruleIds,
+      });
+      assertSafeBinaryBody(inspection, requestId);
+    }
+    const headersOnly = await tokenizer.tokenizeHeaders(responseHeaders, auth, service, disabledSecretlintRules);
+    tokenized = { ...headersOnly, body: entityBody };
+  } else {
+    tokenized = await tokenizer.tokenizeBytes(
+      { body: entityBody, headers: responseHeaders }, auth, service, disabledSecretlintRules,
+    );
+  }
+  const returnedBody = decodedBody === undefined ? tokenized.body : encodeBase64Bytes(tokenized.body);
+  const returnedHeaders = bodyChanged(rawBody.body, returnedBody, rawBody.truncated)
+    ? withContentLength(tokenized.headers, returnedBody.byteLength)
     : tokenized.headers;
-  const requestId = `req_${started}`;
+  const blobResponse = classification.kind === "binary" || isBinaryMediaType(responseHeaders);
+  const bodySha256 = createHash("sha256").update(returnedBody).digest("hex");
   audit({
     type: "service_request",
     request_id: requestId,
@@ -227,6 +280,8 @@ export async function executeServiceRequest(
     secret_tokenization_count: tokenized.secretTokenizationCount,
     secret_rule_ids: tokenized.ruleIds,
     secret_scan_pool: getSecretScannerPoolStats(config),
+    response_kind: classification.kind,
+    response_bytes: returnedBody.byteLength,
     truncated: rawBody.truncated,
   });
 
@@ -234,11 +289,15 @@ export async function executeServiceRequest(
     request_id: requestId,
     status_code: response.status,
     headers: returnedHeaders,
-    body: tokenized.body,
+    body: blobResponse ? null : returnedBody.toString("utf8"),
+    body_encoding: blobResponse ? "mcp_blob" : "utf8",
+    body_size_bytes: returnedBody.byteLength,
+    body_sha256: bodySha256,
     secret_tokenized: tokenized.secretTokenized,
     secret_tokenization_count: tokenized.secretTokenizationCount,
     tls: { verify: target.tls.verify },
     truncated: rawBody.truncated,
+    ...(blobResponse ? { binaryBody: returnedBody, binaryMimeType: responseMimeType(responseHeaders) } : {}),
   };
 }
 
@@ -439,13 +498,8 @@ function readErrorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-async function limitedResponseText(response: Response): Promise<{ body: string; truncated: false }> {
-  const bytes = Buffer.from(await response.arrayBuffer());
-  try {
-    return { body: decodeUtf8(bytes), truncated: false };
-  } catch {
-    throw new GatewayError("secret_scan_failed", "Downstream response is not valid UTF-8.");
-  }
+async function limitedResponseBytes(response: Response): Promise<{ body: Buffer; truncated: false }> {
+  return { body: Buffer.from(await response.arrayBuffer()), truncated: false };
 }
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {
@@ -467,8 +521,8 @@ function withContentLength(headers: Record<string, string>, length: number): Rec
   return normalized;
 }
 
-function bodyChanged(before: string, after: string, truncated: boolean): boolean {
-  return truncated || before !== after;
+function bodyChanged(before: Buffer, after: Buffer, truncated: boolean): boolean {
+  return truncated || !before.equals(after);
 }
 
 function defaultPort(protocol: string): string {

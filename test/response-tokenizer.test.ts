@@ -22,6 +22,21 @@ describe("plain-text response tokenizer", () => {
     } finally { await fixture.pool.close(); }
   });
 
+  it("applies text findings to original UTF-8 byte ranges", async () => {
+    const fixture = setup();
+    try {
+      const secret = `ghp_${"a".repeat(36)}`;
+      const prefix = Buffer.from("\ufeffsnow=雪; secret=", "utf8");
+      const suffix = Buffer.from("; done\n", "utf8");
+      const original = Buffer.concat([prefix, Buffer.from(secret), suffix]);
+      const result = await fixture.tokenizer.tokenizeBytes({ headers: {}, body: original }, fixture.auth, fixture.service);
+
+      expect(result.body.subarray(0, prefix.length)).toEqual(prefix);
+      expect(result.body.subarray(-suffix.length)).toEqual(suffix);
+      expect(result.body.toString("utf8")).toMatch(/secret=sec_[A-Za-z0-9_-]+; done/);
+    } finally { await fixture.pool.close(); }
+  });
+
   it("reuses configured tokens and merges forged-prefix overlaps so no secret fragment survives", async () => {
     const fixture = setup();
     try {

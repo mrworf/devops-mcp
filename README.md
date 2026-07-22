@@ -45,6 +45,8 @@ Both reference types work only when submitted back through this gateway and expi
 
 The proxied HTTP surface is deliberately cookie-free: caller-supplied cookie headers are rejected and downstream cookie headers are discarded. APIs that require browser-style cookie sessions are not supported. Response JSON is scanned as source text without deserialization or reserialization. A tolerant lexical scanner uses configurable, case-insensitive name patterns to protect complete string values in direct fields and common environment shapes, including recoverable JSON with comments, duplicate keys, missing commas, or a truncated outer container. A whole response body is decoded and scanned as Base64 only when it declares `Content-Transfer-Encoding: base64`. A string request body with the same declaration is decoded, has opaque references substituted with JSON-safe source edits when applicable, and is canonically re-encoded before delivery; undeclared Base64-looking content and application-specific transformations remain opaque.
 
+Downstream response bodies remain byte-oriented. Likely text is fully scanned even when labeled `application/octet-stream`; clean likely-binary responses up to 100 KiB are returned losslessly as MCP embedded blobs, while protected-data findings and larger binary bodies fail closed by default.
+
 For every downstream request, the gateway validates the authenticated client, requested service, destination, URL, method, reference binding, and configured policy before replacing opaque references with real credentials. If a request is denied, the client can ask for an explanation instead of guessing around policy boundaries.
 
 ## Documentation

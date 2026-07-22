@@ -189,7 +189,23 @@ export async function callTool(
       const input = parseServiceRequest(args);
       const result = await executeServiceRequest(config, auth, input);
       auditTool(config, auth, name, "allow", { service: input.service, request_id: result.request_id });
-      return toolSuccess(result as unknown as Record<string, unknown>, `Request ${result.request_id} completed with HTTP ${result.status_code}.`);
+      const { binaryBody, binaryMimeType, ...structured } = result;
+      const binaryContent = binaryBody === undefined || binaryMimeType === undefined
+        ? []
+        : [{
+          type: "resource" as const,
+          resource: {
+            uri: `secretsauce://response/${result.request_id}`,
+            mimeType: binaryMimeType,
+            blob: binaryBody.toString("base64"),
+          },
+        }];
+      return toolSuccess(
+        structured as unknown as Record<string, unknown>,
+        `Request ${result.request_id} completed with HTTP ${result.status_code}.`,
+        undefined,
+        binaryContent,
+      );
     }
     if (name === "explain_denial") {
       const requestId = readString(args ?? {}, "request_id");

@@ -7,6 +7,7 @@ import type { AuthContext, ServiceConfig } from "./types.js";
 import type { TokenBroker, TokenInspectionReason } from "./tokens.js";
 import { findSensitiveJsonValues, isJsonLikeText } from "./sensitiveJson.js";
 import type { SensitiveNameMatcher } from "./sensitiveNames.js";
+import { decodeUtf8Bytes } from "./binaryResponse.js";
 
 const tokenCandidatePattern = /\b(?:gref|sec)_[^\s"'<>()[\]{},;]+/g;
 const httpBasicCredentialPattern = /\bBasic +(?<encoded>(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)(?![A-Za-z0-9+/=])/gi;
@@ -26,6 +27,17 @@ interface CollectedText {
   warnings: Map<string, { prefix: "gref" | "sec"; reason: TokenInspectionReason; count: number }>;
 }
 
+interface TextReplacement {
+  start: number;
+  end: number;
+  value: string;
+}
+
+interface AppliedText {
+  value: string;
+  replacements: TextReplacement[];
+}
+
 export interface TokenizedResponseText {
   headers: Record<string, string>;
   body: string;
@@ -34,6 +46,10 @@ export interface TokenizedResponseText {
   ruleIds: string[];
   internalRecordIds: string[];
   warnings: Array<{ prefix: "gref" | "sec"; reason: TokenInspectionReason; count: number }>;
+}
+
+export interface TokenizedResponseBytes extends Omit<TokenizedResponseText, "body"> {
+  body: Buffer;
 }
 
 export class ResponseTokenizer {
@@ -52,6 +68,44 @@ export class ResponseTokenizer {
     service: ServiceConfig,
     disabledRuleIds: ReadonlySet<string> = new Set(),
   ): Promise<TokenizedResponseText> {
+    const result = await this.tokenizeText(response, auth, service, disabledRuleIds);
+    const { bodyReplacements: _bodyReplacements, ...tokenized } = result;
+    return tokenized;
+  }
+
+  async tokenizeBytes(
+    response: { headers: Record<string, string>; body: Buffer },
+    auth: AuthContext,
+    service: ServiceConfig,
+    disabledRuleIds: ReadonlySet<string> = new Set(),
+  ): Promise<TokenizedResponseBytes> {
+    const decoded = decodeUtf8Bytes(response.body);
+    const hasBom = decoded.startsWith("\ufeff");
+    const text = hasBom ? decoded.slice(1) : decoded;
+    const originalBody = hasBom ? response.body.subarray(3) : response.body;
+    const result = await this.tokenizeText({ headers: response.headers, body: text }, auth, service, disabledRuleIds);
+    const { bodyReplacements, body: _body, ...tokenized } = result;
+    const transformed = applyByteReplacements(originalBody, text, bodyReplacements);
+    return { ...tokenized, body: hasBom ? Buffer.concat([response.body.subarray(0, 3), transformed]) : transformed };
+  }
+
+  async tokenizeHeaders(
+    headers: Record<string, string>,
+    auth: AuthContext,
+    service: ServiceConfig,
+    disabledRuleIds: ReadonlySet<string> = new Set(),
+  ): Promise<Omit<TokenizedResponseText, "body">> {
+    const result = await this.tokenize({ headers, body: "" }, auth, service, disabledRuleIds);
+    const { body: _body, ...tokenized } = result;
+    return tokenized;
+  }
+
+  private async tokenizeText(
+    response: { headers: Record<string, string>; body: string },
+    auth: AuthContext,
+    service: ServiceConfig,
+    disabledRuleIds: ReadonlySet<string>,
+  ): Promise<TokenizedResponseText & { bodyReplacements: TextReplacement[] }> {
     const headerEntries: Array<readonly [string, CollectedText]> = [];
     for (const [name, value] of Object.entries(response.headers)) {
       const ruleIds = this.sensitiveNames.match(name);
@@ -76,8 +130,9 @@ export class ResponseTokenizer {
     const internalRecordIds = new Set<string>();
     const ruleIds = new Set<string>();
     let count = 0;
-    const transform = (collected: CollectedText): string => {
+    const transform = (collected: CollectedText): AppliedText => {
       let value = collected.original;
+      const replacements: TextReplacement[] = [];
       for (const range of [...collected.ranges].sort((left, right) => right.start - left.start)) {
         const raw = collected.original.slice(range.start, range.end);
         const secret = range.configuredSecret ?? range.secretValue ?? raw;
@@ -86,9 +141,10 @@ export class ResponseTokenizer {
         internalRecordIds.add(issued.record.id);
         for (const ruleId of range.ruleIds) ruleIds.add(ruleId);
         value = value.slice(0, range.start) + issued.token + value.slice(range.end);
+        replacements.push({ start: range.start, end: range.end, value: issued.token });
         count += 1;
       }
-      return value;
+      return { value, replacements };
     };
     const warnings = new Map<string, { prefix: "gref" | "sec"; reason: TokenInspectionReason; count: number }>();
     for (const collected of all) {
@@ -98,9 +154,12 @@ export class ResponseTokenizer {
         else warnings.set(key, { ...warning });
       }
     }
+    const appliedHeaders = headerEntries.map(([name, collected]) => [name, transform(collected).value] as const);
+    const appliedBody = transform(body);
     return {
-      headers: Object.fromEntries(headerEntries.map(([name, collected]) => [name, transform(collected)])),
-      body: transform(body),
+      headers: Object.fromEntries(appliedHeaders),
+      body: appliedBody.value,
+      bodyReplacements: appliedBody.replacements,
       secretTokenized: count > 0,
       secretTokenizationCount: count,
       ruleIds: [...ruleIds].sort(),
@@ -168,6 +227,20 @@ export class ResponseTokenizer {
     const withoutValidCandidates = ranges.filter((range) => !validCandidates.some((valid) => overlaps(range, valid)));
     return { original: text, ranges: mergeRanges(withoutValidCandidates), warnings };
   }
+}
+
+function applyByteReplacements(original: Buffer, text: string, replacements: TextReplacement[]): Buffer {
+  if (replacements.length === 0) return original;
+  const chunks: Buffer[] = [];
+  let byteOffset = 0;
+  for (const replacement of [...replacements].sort((left, right) => left.start - right.start)) {
+    const start = Buffer.byteLength(text.slice(0, replacement.start), "utf8");
+    const end = Buffer.byteLength(text.slice(0, replacement.end), "utf8");
+    chunks.push(original.subarray(byteOffset, start), Buffer.from(replacement.value, "utf8"));
+    byteOffset = end;
+  }
+  chunks.push(original.subarray(byteOffset));
+  return Buffer.concat(chunks);
 }
 
 function addHttpBasicCredentialRanges(ranges: Range[], text: string): void {

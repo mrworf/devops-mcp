@@ -230,6 +230,10 @@ Independently of Secretlint and sensitive-name matching, response headers and bo
 
 ## Proxied HTTP Constraints
 
+Downstream bodies are retained as bytes. UTF-8 text receives full response scanning even when labeled `application/octet-stream`; replacements are applied to byte ranges so all surrounding bytes remain unchanged. Content that has a binary signature, invalid UTF-8, NUL bytes, or a significant control-byte ratio is treated as binary. Binary bodies are limited to 100 KiB by default and receive exact configured-credential, HTTP Basic, and forged opaque-prefix checks. A finding rejects the response rather than corrupting the file.
+
+Clean binary responses are returned as MCP embedded blobs with their original media type. The MCP protocol uses lossless Base64 framing for blobs; `body_size_bytes` and `body_sha256` describe the protected bytes, while `body_encoding` is `mcp_blob` and structured `body` is `null`. Text responses use `body_encoding: utf8` and retain their string body.
+
 - `limits.max_inbound_body` defaults to `1mb` and is enforced while reading authenticated MCP POST bodies and both built-in OAuth form endpoints, including chunked requests and inaccurate `Content-Length` values. Oversize requests receive `413` before JSON or form parsing and cannot consume an authorization code.
 - `limits.inbound_body_timeout` defaults to `10s`. Incomplete MCP or OAuth bodies receive `408`, and their connections are closed without parsing partial input.
 - Built-in OAuth permits at most `limits.max_unauthenticated_inflight` body readers globally (default `32`) and `limits.max_unauthenticated_inflight_per_source` per direct socket address (default `4`). Excess work receives `429`; forwarding headers never select the limiter identity.
@@ -243,4 +247,4 @@ Independently of Secretlint and sensitive-name matching, response headers and bo
 - Caller-supplied `Content-Length` is discarded and recomputed after request substitution and response transformation.
 - `Content-Transfer-Encoding: base64` declares a whole Base64 response or string request body. Declared bodies are decoded before sensitive-name scanning or opaque-token substitution and canonically re-encoded afterward; field-level Base64/PEM values are not decoded. Undeclared Base64-looking content remains opaque. Other or conflicting transfer encodings fail closed.
 - `limits.max_response_body` is enforced during the downstream network read. Declared or streamed oversize responses are aborted and return `response_too_large`; partial bodies are never scanned or returned.
-- Ordinary and decoded Base64 response bodies, and decoded Base64 request bodies, must be valid UTF-8.
+- Decoded Base64 request bodies must be valid UTF-8. Response bodies are classified from their decoded bytes: likely text is UTF-8 scanned, while likely binary follows the binary safeguards and blob-delivery rules above.

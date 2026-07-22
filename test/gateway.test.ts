@@ -723,14 +723,16 @@ describe("HTTP gateway", () => {
     } finally { await downstream.close(); }
   });
 
-  it("fails closed for invalid UTF-8 response bytes", async () => {
+  it("returns clean invalid UTF-8 response bytes as a binary body", async () => {
     const downstream = await startDownstream();
     try {
       const config = gatewayConfig(downstream.baseUrl);
       installBroker(config);
-      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+      const response = await executeServiceRequest(config, actor(), {
         service: "demo-service", destination: "primary", method: "GET", path: "/api/invalid-utf8", reason: "Reject invalid text.",
-      }), "secret_scan_failed");
+      });
+      expect(response.body_encoding).toBe("mcp_blob");
+      expect(response.binaryBody).toEqual(Buffer.from([0xff, 0xfe]));
     } finally { await downstream.close(); }
   });
 });

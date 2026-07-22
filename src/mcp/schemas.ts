@@ -154,12 +154,18 @@ export const serviceRequestOutputSchema = {
     status_code: { type: "number" },
     headers: { type: "object" },
     body: {},
+    body_encoding: { type: "string", enum: ["utf8", "mcp_blob"] },
+    body_size_bytes: { type: "number" },
+    body_sha256: { type: "string" },
     secret_tokenized: { type: "boolean" },
     secret_tokenization_count: { type: "number" },
     tls: { type: "object" },
     truncated: { type: "boolean" },
   },
-  required: ["request_id", "status_code", "headers", "body", "secret_tokenized", "secret_tokenization_count", "tls", "truncated"],
+  required: [
+    "request_id", "status_code", "headers", "body", "body_encoding", "body_size_bytes", "body_sha256",
+    "secret_tokenized", "secret_tokenization_count", "tls", "truncated",
+  ],
   additionalProperties: false,
 } as const;
 
