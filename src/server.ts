@@ -11,6 +11,7 @@ import { initializeSecretRuntime } from "./secretRuntime.js";
 import { RequestBodyError } from "./httpBody.js";
 import { startMaintenance } from "./maintenance.js";
 import { handleBrandAssetRequest, isBrandAssetRequest } from "./brandAssets.js";
+import { GatewayError, type ConfigDiagnostic } from "./errors.js";
 
 type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
@@ -215,6 +216,26 @@ export function requestBody(_request: IncomingMessage): never {
   throw new Error("Request body handling is not implemented in milestone 01.");
 }
 
+export function startupErrorPayload(error: unknown): Record<string, unknown> {
+  const gatewayError = error instanceof GatewayError ? error : undefined;
+  const message = error instanceof Error ? error.message : "Unknown startup error.";
+  return {
+    level: "error",
+    error: {
+      code: gatewayError?.code ?? "config_error",
+      message,
+      ...(gatewayError?.diagnostics === undefined ? {} : {
+        diagnostics: gatewayError.diagnostics.map(publicConfigDiagnostic),
+      }),
+    },
+  };
+}
+
+function publicConfigDiagnostic(diagnostic: ConfigDiagnostic): Omit<ConfigDiagnostic, "configPath"> {
+  const { configPath: _configPath, ...publicDiagnostic } = diagnostic;
+  return publicDiagnostic;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const configPath = process.env.CONFIG_PATH;
   if (!configPath) {
@@ -233,14 +254,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     initializeSecretRuntime(config);
     await startServer(config);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown startup error.";
-    console.error(JSON.stringify({
-      level: "error",
-      error: {
-        code: "config_error",
-        message,
-      },
-    }));
+    console.error(JSON.stringify(startupErrorPayload(error)));
     process.exit(1);
   }
 }

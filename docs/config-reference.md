@@ -1,6 +1,12 @@
 # SecretSauce Configuration Reference
 
-The gateway uses a primary YAML file plus a Secretlint rules YAML, both mounted read-only in Docker. Secrets are not stored in either file; use environment variables or mounted files.
+The gateway uses a primary YAML file, a Secretlint rules YAML, and a sensitive-name rules YAML, all mounted read-only in Docker. Secrets are not stored in these files; use environment variables or mounted files.
+
+## Startup diagnostics
+
+Invalid gateway, Secretlint, and sensitive-name YAML stops startup with a structured `config_error`. Each actionable diagnostic includes the configuration file, dotted field path when known, 1-based line and column, a detailed reason, a sanitized source excerpt, and a caret. Missing fields point to the nearest existing parent node; unreadable files have no fabricated source position.
+
+Source excerpts preserve indentation, field names, and YAML punctuation, but mask all scalar characters. This makes the failing structure recognizable without writing an accidentally inlined credential or other configuration value to logs.
 
 ## Server
 - `server.listen`: bind address in `host:port` form, for example `0.0.0.0:8080`.

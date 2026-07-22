@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { configError } from "./errors.js";
+import { configError, configValidationError } from "./errors.js";
+import { loadYamlConfig, validationDiagnostics } from "./yamlConfig.js";
 
 export const SECRET_RULE_IDS = [
   "@secretlint/secretlint-rule-aws",
@@ -72,23 +71,18 @@ const schema = z.object({
 export const DEFAULT_SECRETLINT_CONFIG_PATH = "/config/secretlint.yaml";
 
 export function loadSecretlintConfig(path = process.env.SECRETLINT_CONFIG_PATH ?? DEFAULT_SECRETLINT_CONFIG_PATH): SecretlintConfig {
-  let raw: unknown;
-  try {
-    raw = parseYaml(readFileSync(path, "utf8"));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw configError(`Failed to read or parse Secretlint config: ${detail}`);
-  }
-  return validateSecretlintConfig(raw);
+  return loadYamlConfig(path, "Secretlint config", validateSecretlintConfig);
 }
 
 export function validateSecretlintConfig(raw: unknown): SecretlintConfig {
   const result = schema.safeParse(raw);
   if (!result.success) {
-    throw configError(`Invalid Secretlint config: ${result.error.issues.map((issue) => issue.message).join("; ")}`);
+    const diagnostics = validationDiagnostics(result.error.issues);
+    throw configError(`Invalid Secretlint config: ${diagnostics.map((issue) => issue.detail).join("; ")}`, diagnostics);
   }
   const ids = result.data.rules.map((rule) => rule.id);
-  if (new Set(ids).size !== ids.length) throw configError("Invalid Secretlint config: rule ids must be unique");
+  const duplicateIndex = ids.findIndex((id, index) => ids.indexOf(id) !== index);
+  if (duplicateIndex >= 0) throw configValidationError("Invalid Secretlint config: rule ids must be unique", ["rules", duplicateIndex, "id"]);
   return {
     version: 1,
     mode: result.data.mode,
@@ -112,7 +106,7 @@ export function resolveSecretlintRules(
 
 function parseDuration(value: string): number {
   const match = durationPattern.exec(value);
-  if (!match) throw configError("Invalid Secretlint timeout");
+  if (!match) throw configValidationError("Invalid Secretlint timeout", ["limits", "timeout"]);
   const amount = Number(match[1]);
   return amount * (match[2] === "s" ? 1000 : 1);
 }

@@ -22,18 +22,45 @@ export type GatewayErrorCode =
   | "capacity_exceeded"
   | "config_error";
 
+export type ConfigPath = Array<string | number>;
+
+export interface ConfigDiagnostic {
+  detail: string;
+  file?: string;
+  path?: string;
+  line?: number;
+  column?: number;
+  source?: string;
+  pointer?: string;
+  /** Used only while mapping a validation error back to its YAML node. */
+  configPath?: ConfigPath;
+}
+
 export class GatewayError extends Error {
   readonly code: GatewayErrorCode;
   readonly requestId?: string;
+  readonly diagnostics?: ConfigDiagnostic[];
 
-  constructor(code: GatewayErrorCode, message: string, requestId?: string) {
+  constructor(code: GatewayErrorCode, message: string, requestId?: string, diagnostics?: ConfigDiagnostic[]) {
     super(message);
     this.name = "GatewayError";
     this.code = code;
     if (requestId !== undefined) this.requestId = requestId;
+    if (diagnostics !== undefined) this.diagnostics = diagnostics;
   }
 }
 
-export function configError(message: string): GatewayError {
-  return new GatewayError("config_error", message);
+export function formatConfigPath(path: ConfigPath): string {
+  return path.reduce<string>((formatted, segment) => {
+    if (typeof segment === "number") return `${formatted}[${segment}]`;
+    return formatted.length === 0 ? segment : `${formatted}.${segment}`;
+  }, "");
+}
+
+export function configError(message: string, diagnostics?: ConfigDiagnostic[]): GatewayError {
+  return new GatewayError("config_error", message, undefined, diagnostics);
+}
+
+export function configValidationError(message: string, path: ConfigPath, detail = message): GatewayError {
+  return configError(message, [{ detail, path: formatConfigPath(path), configPath: path }]);
 }

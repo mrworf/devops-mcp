@@ -2,9 +2,8 @@ import { createHash, createPublicKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { configError } from "./errors.js";
+import { configError, configValidationError, type ConfigPath } from "./errors.js";
 import type {
   AccessConfig,
   AuditConfig,
@@ -24,6 +23,7 @@ import type {
   TokenConfig,
 } from "./types.js";
 import { SECRET_RULE_IDS } from "./secretlintConfig.js";
+import { loadYamlConfig, validationDiagnostics } from "./yamlConfig.js";
 
 const durationPattern = /^(\d+)(ms|s|m|h|d)$/;
 const sizePattern = /^(\d+)(b|kb|mb)$/i;
@@ -98,7 +98,7 @@ const rawConfigSchema = z.object({
     mcp_path: z.string().default("/mcp"),
     resource: z.string().url().optional(),
   }).default({ listen: "0.0.0.0:8080", mcp_path: "/mcp" }),
-  auth: z.union([
+  auth: z.discriminatedUnion("mode", [
     z.object({
       mode: z.literal("oauth").default("oauth"),
       oauth: z.object({
@@ -196,14 +196,7 @@ type RawService = RawConfig["services"][string];
 type RawDestination = RawService["destinations"][number];
 
 export function loadConfig(path: string): GatewayConfig {
-  let raw: unknown;
-  try {
-    raw = parseYaml(readFileSync(path, "utf8"));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw configError(`Failed to read or parse config: ${detail}`);
-  }
-  return validateConfig(raw);
+  return loadYamlConfig(path, "config", (raw) => validateConfig(raw));
 }
 
 export function validateConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env): GatewayConfig {
@@ -228,7 +221,8 @@ function parseRawConfig(raw: unknown): RawConfig {
   rejectRemovedMcpTransportLimits(raw);
   const result = rawConfigSchema.safeParse(raw);
   if (!result.success) {
-    throw configError(`Invalid config: ${result.error.issues.map((issue) => issue.message).join("; ")}`);
+    const diagnostics = validationDiagnostics(result.error.issues);
+    throw configError(`Invalid config: ${diagnostics.map((issue) => issue.detail).join("; ")}`, diagnostics);
   }
   return result.data;
 }
@@ -246,24 +240,27 @@ function rejectRemovedMcpTransportLimits(raw: unknown): void {
     "mcp_transport_idle_ttl",
   ].filter((name) => Object.prototype.hasOwnProperty.call(limits, name));
   if (removed.length > 0) {
-    throw configError(`Removed stateful MCP limits: ${removed.join(", ")}. MCP transport is now stateless; remove these fields.`);
+    throw configValidationError(
+      `Removed stateful MCP limits: ${removed.join(", ")}. MCP transport is now stateless; remove these fields.`,
+      ["limits", removed[0] ?? "max_mcp_transports"],
+    );
   }
 }
 
 function normalizeServer(raw: RawConfig["server"]): ServerConfig {
   if (!raw.mcp_path.startsWith("/")) {
-    throw configError("server.mcp_path must start with /");
+    throw configValidationError("server.mcp_path must start with /", ["server", "mcp_path"]);
   }
 
   const lastColon = raw.listen.lastIndexOf(":");
   if (lastColon <= 0) {
-    throw configError("server.listen must use host:port format");
+    throw configValidationError("server.listen must use host:port format", ["server", "listen"]);
   }
   const host = raw.listen.slice(0, lastColon);
   const portText = raw.listen.slice(lastColon + 1);
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw configError("server.listen port must be between 1 and 65535");
+    throw configValidationError("server.listen port must be between 1 and 65535", ["server", "listen"]);
   }
 
   const base = {
@@ -278,7 +275,7 @@ function normalizeServer(raw: RawConfig["server"]): ServerConfig {
 function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConfig {
   if (raw.mode === "oauth") {
     if (!raw.oauth.audience && !raw.oauth.resource) {
-      throw configError("auth.oauth must include audience or resource");
+      throw configValidationError("auth.oauth must include audience or resource", ["auth", "oauth"]);
     }
     return {
       mode: "oauth",
@@ -295,22 +292,36 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
 
   if (raw.mode === "builtin_oauth") {
     const username = env[raw.builtin_oauth.admin_username_env];
-    if (!username) throw configError(`Missing built-in OAuth admin username environment variable: ${raw.builtin_oauth.admin_username_env}`);
+    if (!username) throw configValidationError(
+      `Missing built-in OAuth admin username environment variable: ${raw.builtin_oauth.admin_username_env}`,
+      ["auth", "builtin_oauth", "admin_username_env"],
+    );
 
     const hashEnv = raw.builtin_oauth.admin_password_hash_env;
     const hashFile = raw.builtin_oauth.admin_password_hash_file;
     if ((hashEnv === undefined && hashFile === undefined) || (hashEnv !== undefined && hashFile !== undefined)) {
-      throw configError("auth.builtin_oauth must include exactly one of admin_password_hash_env or admin_password_hash_file");
+      throw configValidationError(
+        "auth.builtin_oauth must include exactly one of admin_password_hash_env or admin_password_hash_file",
+        ["auth", "builtin_oauth"],
+      );
     }
-    const adminPasswordHash = hashEnv === undefined ? readSecretFile(hashFile) : env[hashEnv];
-    if (!adminPasswordHash) throw configError(`Missing built-in OAuth admin password hash environment variable: ${hashEnv}`);
+    const adminPasswordHash = hashEnv === undefined
+      ? readSecretFile(hashFile, ["auth", "builtin_oauth", "admin_password_hash_file"])
+      : env[hashEnv];
+    if (!adminPasswordHash) throw configValidationError(
+      `Missing built-in OAuth admin password hash environment variable: ${hashEnv}`,
+      ["auth", "builtin_oauth", "admin_password_hash_env"],
+    );
 
-    const signingPrivateKeyPem = readSecretFile(raw.builtin_oauth.signing_key_file);
+    const signingPrivateKeyPem = readSecretFile(raw.builtin_oauth.signing_key_file, ["auth", "builtin_oauth", "signing_key_file"]);
     let signingPublicKeyPem: string;
     try {
       signingPublicKeyPem = createPublicKey(signingPrivateKeyPem).export({ type: "spki", format: "pem" }).toString();
     } catch {
-      throw configError("auth.builtin_oauth.signing_key_file must contain a valid private key");
+      throw configValidationError(
+        "auth.builtin_oauth.signing_key_file must contain a valid private key",
+        ["auth", "builtin_oauth", "signing_key_file"],
+      );
     }
 
     const accessTokenTtlMs = parseDuration(raw.builtin_oauth.access_token_ttl, "auth.builtin_oauth.access_token_ttl");
@@ -318,10 +329,13 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
     const refreshTokenIdleTtlMs = parseDuration(raw.builtin_oauth.refresh_token_idle_ttl, "auth.builtin_oauth.refresh_token_idle_ttl");
     const refreshTokenMaxTtlMs = parseDuration(raw.builtin_oauth.refresh_token_max_ttl, "auth.builtin_oauth.refresh_token_max_ttl");
     if (accessTokenTtlMs <= 0 || authorizationCodeTtlMs <= 0 || refreshTokenIdleTtlMs <= 0 || refreshTokenMaxTtlMs <= 0) {
-      throw configError("auth.builtin_oauth token TTL values must be positive");
+      throw configValidationError("auth.builtin_oauth token TTL values must be positive", ["auth", "builtin_oauth", "access_token_ttl"]);
     }
     if (refreshTokenIdleTtlMs > refreshTokenMaxTtlMs) {
-      throw configError("auth.builtin_oauth.refresh_token_idle_ttl must not exceed refresh_token_max_ttl");
+      throw configValidationError(
+        "auth.builtin_oauth.refresh_token_idle_ttl must not exceed refresh_token_max_ttl",
+        ["auth", "builtin_oauth", "refresh_token_idle_ttl"],
+      );
     }
 
     return {
@@ -348,15 +362,15 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
   const tokenEnv = raw.bearer.token_env;
   const tokenFile = raw.bearer.token_file;
   if ((tokenEnv === undefined && tokenFile === undefined) || (tokenEnv !== undefined && tokenFile !== undefined)) {
-    throw configError("auth.bearer must include exactly one of token_env or token_file");
+    throw configValidationError("auth.bearer must include exactly one of token_env or token_file", ["auth", "bearer"]);
   }
   if (tokenEnv !== undefined) {
     const token = env[tokenEnv];
-    if (!token) throw configError(`Missing bearer token environment variable: ${tokenEnv}`);
+    if (!token) throw configValidationError(`Missing bearer token environment variable: ${tokenEnv}`, ["auth", "bearer", "token_env"]);
     return { mode: "bearer", bearer: { token, source: "env" } };
   }
 
-  return { mode: "bearer", bearer: { token: readSecretFile(tokenFile), source: "file" } };
+  return { mode: "bearer", bearer: { token: readSecretFile(tokenFile, ["auth", "bearer", "token_file"]), source: "file" } };
 }
 
 function appendPublicHttpsWarnings(server: ServerConfig, auth: AuthConfig, warnings: string[]): void {
@@ -399,7 +413,10 @@ function normalizeLoginRateLimit(raw: {
   const initialLockoutMs = parseDuration(raw.initial_lockout, "auth.builtin_oauth.login_rate_limit.initial_lockout");
   const maxLockoutMs = parseDuration(raw.max_lockout, "auth.builtin_oauth.login_rate_limit.max_lockout");
   if (windowMs <= 0 || initialLockoutMs <= 0 || maxLockoutMs < initialLockoutMs) {
-    throw configError("auth.builtin_oauth.login_rate_limit durations must be positive and max_lockout must not be shorter than initial_lockout");
+    throw configValidationError(
+      "auth.builtin_oauth.login_rate_limit durations must be positive and max_lockout must not be shorter than initial_lockout",
+      ["auth", "builtin_oauth", "login_rate_limit", "max_lockout"],
+    );
   }
   return {
     windowMs, perSource: raw.per_source, perAccount: raw.per_account, global: raw.global,
@@ -414,8 +431,8 @@ function keyIdForPublicKey(publicKeyPem: string): string {
 function normalizeTokens(raw: RawConfig["tokens"]): TokenConfig {
   const idleTtlMs = parseDuration(raw.idle_ttl, "tokens.idle_ttl");
   const maxTtlMs = parseDuration(raw.max_ttl, "tokens.max_ttl");
-  if (idleTtlMs <= 0 || maxTtlMs <= 0) throw configError("token TTL values must be positive");
-  if (idleTtlMs > maxTtlMs) throw configError("tokens.idle_ttl must not exceed tokens.max_ttl");
+  if (idleTtlMs <= 0 || maxTtlMs <= 0) throw configValidationError("token TTL values must be positive", ["tokens", "idle_ttl"]);
+  if (idleTtlMs > maxTtlMs) throw configValidationError("tokens.idle_ttl must not exceed tokens.max_ttl", ["tokens", "idle_ttl"]);
   return { idleTtlMs, maxTtlMs };
 }
 
@@ -428,19 +445,19 @@ function normalizeLimits(raw: RawConfig["limits"]): LimitsConfig {
   const denialTtlMs = parseDuration(raw.denial_ttl, "limits.denial_ttl");
   const stateSweepIntervalMs = parseDuration(raw.state_sweep_interval, "limits.state_sweep_interval");
   if (maxInboundBodyBytes <= 0 || inboundBodyTimeoutMs <= 0 || maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || timeoutMs <= 0 || denialTtlMs <= 0 || stateSweepIntervalMs <= 0) {
-    throw configError("limits values must be positive");
+    throw configValidationError("limits values must be positive", ["limits"]);
   }
   if (raw.max_unauthenticated_inflight_per_source > raw.max_unauthenticated_inflight) {
-    throw configError("limits.max_unauthenticated_inflight_per_source must not exceed limits.max_unauthenticated_inflight");
+    throw configValidationError("limits.max_unauthenticated_inflight_per_source must not exceed limits.max_unauthenticated_inflight", ["limits", "max_unauthenticated_inflight_per_source"]);
   }
   if (raw.max_password_verifications_per_source > raw.max_password_verifications) {
-    throw configError("limits.max_password_verifications_per_source must not exceed limits.max_password_verifications");
+    throw configValidationError("limits.max_password_verifications_per_source must not exceed limits.max_password_verifications", ["limits", "max_password_verifications_per_source"]);
   }
   if (raw.max_token_records_per_subject > raw.max_token_records) {
-    throw configError("limits.max_token_records_per_subject must not exceed limits.max_token_records");
+    throw configValidationError("limits.max_token_records_per_subject must not exceed limits.max_token_records", ["limits", "max_token_records_per_subject"]);
   }
   if (raw.max_oauth_client_metadata_inflight_per_origin > raw.max_oauth_client_metadata_inflight) {
-    throw configError("limits.max_oauth_client_metadata_inflight_per_origin must not exceed limits.max_oauth_client_metadata_inflight");
+    throw configValidationError("limits.max_oauth_client_metadata_inflight_per_origin must not exceed limits.max_oauth_client_metadata_inflight", ["limits", "max_oauth_client_metadata_inflight_per_origin"]);
   }
   return {
     maxInboundBodyBytes,
@@ -470,11 +487,12 @@ function normalizeServices(
   warnings: string[],
 ): Record<string, ServiceConfig> {
   return Object.fromEntries(Object.entries(rawServices).map(([id, raw]) => {
+    const servicePath: ConfigPath = ["services", id];
     const tls = normalizeTls(raw.tls);
-    const destinations = normalizeDestinations(raw.destinations, tls, warnings);
-    const credentials = normalizeCredentials(raw.credentials, env);
+    const destinations = normalizeDestinations(raw.destinations, tls, warnings, servicePath);
+    const credentials = normalizeCredentials(raw.credentials, env, servicePath);
     const access: AccessConfig = { users: raw.access.users };
-    const policy = normalizePolicy(raw.policy);
+    const policy = normalizePolicy(raw.policy, servicePath);
 
     return [id, {
       id,
@@ -491,30 +509,41 @@ function normalizeServices(
   }));
 }
 
-function normalizeDestinations(rawDestinations: RawDestination[], serviceTls: TlsConfig, warnings: string[]): DestinationConfig[] {
+function normalizeDestinations(
+  rawDestinations: RawDestination[],
+  serviceTls: TlsConfig,
+  warnings: string[],
+  servicePath: ConfigPath,
+): DestinationConfig[] {
   const seen = new Set<string>();
-  return rawDestinations.map((raw) => {
+  return rawDestinations.map((raw, index) => {
+    const destinationPath = [...servicePath, "destinations", index];
     const id = raw.id ?? raw.name;
-    if (!id) throw configError("destination must include id or name");
-    ensureUnique(seen, id, "destination");
+    if (!id) throw configValidationError("destination must include id or name", destinationPath);
+    ensureUnique(seen, id, "destination", [...destinationPath, raw.id === undefined ? "name" : "id"]);
 
     const base = new URL(raw.base_url);
     const schemes = raw.schemes ?? [base.protocol.replace(/:$/, "")];
-    const hosts = normalizeHosts(raw.hosts, base.hostname, warnings);
-    const ports = raw.ports ?? [Number(base.port || defaultPortForScheme(base.protocol))];
+    const hosts = normalizeHosts(raw.hosts, base.hostname, warnings, [...destinationPath, "hosts"]);
+    const ports = raw.ports ?? [Number(base.port || defaultPortForScheme(base.protocol, [...destinationPath, "base_url"]))];
     const tls = raw.tls === undefined ? serviceTls : normalizeTls(raw.tls);
 
     return { id, baseUrl: raw.base_url, schemes, hosts, ports, tls };
   });
 }
 
-function normalizeHosts(rawHosts: RawDestination["hosts"], baseHost: string, warnings: string[]): HostMatcherConfig[] {
+function normalizeHosts(
+  rawHosts: RawDestination["hosts"],
+  baseHost: string,
+  warnings: string[],
+  hostsPath: ConfigPath,
+): HostMatcherConfig[] {
   const hosts = rawHosts ?? [{ exact: baseHost }];
-  return hosts.map((matcher) => {
+  return hosts.map((matcher, index) => {
     if ("exact" in matcher) return { type: "exact", value: normalizeHost(matcher.exact) };
-    if ("suffix" in matcher) return { type: "suffix", value: normalizeHostSuffix(matcher.suffix) };
+    if ("suffix" in matcher) return { type: "suffix", value: normalizeHostSuffix(matcher.suffix, [...hostsPath, index, "suffix"]) };
 
-    validateRegex(matcher.regex, "host regex");
+    validateRegex(matcher.regex, "host regex", [...hostsPath, index, "regex"]);
     if (broadHostRegexes.has(matcher.regex)) {
       warnings.push(`Broad host regex warning: ${matcher.regex}`);
     }
@@ -522,7 +551,7 @@ function normalizeHosts(rawHosts: RawDestination["hosts"], baseHost: string, war
   });
 }
 
-function normalizeHostSuffix(raw: string): string {
+function normalizeHostSuffix(raw: string, path: ConfigPath): string {
   const withoutLeadingDot = raw.startsWith(".") ? raw.slice(1) : raw;
   const withoutTrailingDot = withoutLeadingDot.endsWith(".") ? withoutLeadingDot.slice(0, -1) : withoutLeadingDot;
   const ascii = domainToASCII(withoutTrailingDot);
@@ -533,17 +562,18 @@ function normalizeHostSuffix(raw: string): string {
     || ascii.split(".").some((label) => label === "")
     || isIP(ascii) !== 0
   ) {
-    throw configError("destination host suffix must be a valid DNS name, not an IP address");
+    throw configValidationError("destination host suffix must be a valid DNS name, not an IP address", path);
   }
   return normalizeHost(ascii);
 }
 
-function normalizeCredentials(rawCredentials: RawService["credentials"], env: NodeJS.ProcessEnv): CredentialConfig[] {
+function normalizeCredentials(rawCredentials: RawService["credentials"], env: NodeJS.ProcessEnv, servicePath: ConfigPath): CredentialConfig[] {
   const seen = new Set<string>();
-  return rawCredentials.map((raw) => {
-    ensureUnique(seen, raw.id, "credential");
+  return rawCredentials.map((raw, index) => {
+    const credentialPath = [...servicePath, "credentials", index];
+    ensureUnique(seen, raw.id, "credential", [...credentialPath, "id"]);
     const source = normalizeSource(raw.source);
-    const secret = resolveSecret(source, env);
+    const secret = resolveSecret(source, env, [...credentialPath, "source"]);
     const credential: CredentialConfig = {
       id: raw.id,
       usage: raw.usage.name === undefined ? { kind: raw.usage.kind } : { kind: raw.usage.kind, name: raw.usage.name },
@@ -558,33 +588,34 @@ function normalizeSource(source: z.infer<typeof credentialSourceSchema>): Creden
   return source.kind === "env" ? { kind: "env", name: source.name } : { kind: "file", path: source.path };
 }
 
-function resolveSecret(source: CredentialSourceConfig, env: NodeJS.ProcessEnv): string {
+function resolveSecret(source: CredentialSourceConfig, env: NodeJS.ProcessEnv, sourcePath: ConfigPath): string {
   if (source.kind === "env") {
     const value = env[source.name];
-    if (!value) throw configError(`Missing credential environment variable: ${source.name}`);
+    if (!value) throw configValidationError(`Missing credential environment variable: ${source.name}`, [...sourcePath, "name"]);
     return value;
   }
-  return readSecretFile(source.path);
+  return readSecretFile(source.path, [...sourcePath, "path"]);
 }
 
-function readSecretFile(path: string | undefined): string {
-  if (!path) throw configError("secret file path is required");
+function readSecretFile(path: string | undefined, configPath: ConfigPath): string {
+  if (!path) throw configValidationError("secret file path is required", configPath);
   try {
     const value = readFileSync(path, "utf8").trim();
-    if (!value) throw configError(`Secret file is empty: ${path}`);
+    if (!value) throw configValidationError(`Secret file is empty: ${path}`, configPath);
     return value;
   } catch (error) {
     if (error instanceof Error && error.name === "GatewayError") throw error;
-    throw configError(`Unable to read secret file: ${path}`);
+    throw configValidationError(`Unable to read secret file: ${path}`, configPath);
   }
 }
 
-function normalizePolicy(raw: RawService["policy"]): PolicyConfig {
+function normalizePolicy(raw: RawService["policy"], servicePath: ConfigPath): PolicyConfig {
   const seen = new Set<string>();
-  const rules = raw.rules.map((rule) => {
-    ensureUnique(seen, rule.id, "policy rule");
-    rule.paths.forEach((path) => validateRegex(path, "policy path regex"));
-    rule.hosts.forEach((host) => validateRegex(host, "policy host regex"));
+  const rules = raw.rules.map((rule, index) => {
+    const rulePath = [...servicePath, "policy", "rules", index];
+    ensureUnique(seen, rule.id, "policy rule", [...rulePath, "id"]);
+    rule.paths.forEach((path, pathIndex) => validateRegex(path, "policy path regex", [...rulePath, "paths", pathIndex]));
+    rule.hosts.forEach((host, hostIndex) => validateRegex(host, "policy host regex", [...rulePath, "hosts", hostIndex]));
     const normalized: PolicyRuleConfig = {
       id: rule.id,
       effect: rule.effect,
@@ -607,16 +638,16 @@ function normalizeTls(raw: { verify?: boolean }): TlsConfig {
   return { verify: raw.verify ?? true };
 }
 
-function ensureUnique(seen: Set<string>, id: string, label: string): void {
-  if (seen.has(id)) throw configError(`Duplicate ${label} id: ${id}`);
+function ensureUnique(seen: Set<string>, id: string, label: string, path: ConfigPath): void {
+  if (seen.has(id)) throw configValidationError(`Duplicate ${label} id`, path);
   seen.add(id);
 }
 
-function validateRegex(pattern: string, label: string): void {
+function validateRegex(pattern: string, label: string, path: ConfigPath): void {
   try {
     new RegExp(pattern);
   } catch {
-    throw configError(`Invalid ${label}: ${pattern}`);
+    throw configValidationError(`Invalid ${label}`, path);
   }
 }
 
@@ -624,30 +655,32 @@ function normalizeHost(host: string): string {
   return host.toLowerCase().replace(/\.$/, "");
 }
 
-function defaultPortForScheme(protocol: string): string {
+function defaultPortForScheme(protocol: string, path: ConfigPath): string {
   if (protocol === "https:") return "443";
   if (protocol === "http:") return "80";
-  throw configError(`Unsupported URL scheme: ${protocol.replace(/:$/, "")}`);
+  throw configValidationError("Unsupported URL scheme", path);
 }
 
 function parseDuration(value: string, label: string): number {
   const match = durationPattern.exec(value);
-  if (!match) throw configError(`${label} must be a duration like 500ms, 30s, 10m, 1h, or 1d`);
+  if (!match) throw configValidationError(`${label} must be a duration like 500ms, 30s, 10m, 1h, or 1d`, label.split("."));
   const amount = Number(match[1] ?? 0);
+  if (amount === 0) throw configValidationError(`${label} must be positive`, label.split("."));
   const unit = match[2] ?? "";
   const multipliers: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
   const multiplier = multipliers[unit];
-  if (multiplier === undefined) throw configError(`${label} has unsupported duration unit`);
+  if (multiplier === undefined) throw configValidationError(`${label} has unsupported duration unit`, label.split("."));
   return amount * multiplier;
 }
 
 function parseSize(value: string, label: string): number {
   const match = sizePattern.exec(value);
-  if (!match) throw configError(`${label} must be a size like 512b, 128kb, or 1mb`);
+  if (!match) throw configValidationError(`${label} must be a size like 512b, 128kb, or 1mb`, label.split("."));
   const amount = Number(match[1] ?? 0);
+  if (amount === 0) throw configValidationError(`${label} must be positive`, label.split("."));
   const unit = (match[2] ?? "").toLowerCase();
   const multipliers: Record<string, number> = { b: 1, kb: 1024, mb: 1024 * 1024 };
   const multiplier = multipliers[unit];
-  if (multiplier === undefined) throw configError(`${label} has unsupported size unit`);
+  if (multiplier === undefined) throw configValidationError(`${label} has unsupported size unit`, label.split("."));
   return amount * multiplier;
 }

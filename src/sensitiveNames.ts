@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { configError } from "./errors.js";
+import { configError, configValidationError, type ConfigPath } from "./errors.js";
+import { loadYamlConfig, validationDiagnostics } from "./yamlConfig.js";
 
 const MAX_PATTERNS = 256;
 const MAX_PATTERN_LENGTH = 512;
@@ -36,26 +35,20 @@ export const DEFAULT_SENSITIVE_NAMES_CONFIG_PATH = "/config/sensitive-names.yaml
 export function loadSensitiveNameConfig(
   path = process.env.SENSITIVE_NAMES_CONFIG_PATH ?? DEFAULT_SENSITIVE_NAMES_CONFIG_PATH,
 ): SensitiveNameConfig {
-  let raw: unknown;
-  try {
-    raw = parseYaml(readFileSync(path, "utf8"));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw configError(`Failed to read or parse sensitive-name config: ${detail}`);
-  }
-  return validateSensitiveNameConfig(raw);
+  return loadYamlConfig(path, "sensitive-name config", validateSensitiveNameConfig);
 }
 
 export function validateSensitiveNameConfig(raw: unknown): SensitiveNameConfig {
   const result = schema.safeParse(raw);
   if (!result.success) {
-    throw configError(`Invalid sensitive-name config: ${result.error.issues.map((issue) => issue.message).join("; ")}`);
+    const diagnostics = validationDiagnostics(result.error.issues);
+    throw configError(`Invalid sensitive-name config: ${diagnostics.map((issue) => issue.detail).join("; ")}`, diagnostics);
   }
   const ids = result.data.patterns.map((pattern) => pattern.id);
-  if (new Set(ids).size !== ids.length) throw configError("Invalid sensitive-name config: pattern ids must be unique");
-  for (const source of [...result.data.allow_patterns, ...result.data.patterns.map((pattern) => pattern.regex)]) {
-    compileRegex(source);
-  }
+  const duplicateIndex = ids.findIndex((id, index) => ids.indexOf(id) !== index);
+  if (duplicateIndex >= 0) throw configValidationError("Invalid sensitive-name config: pattern ids must be unique", ["patterns", duplicateIndex, "id"]);
+  result.data.allow_patterns.forEach((source, index) => compileRegex(source, ["allow_patterns", index]));
+  result.data.patterns.forEach((pattern, index) => compileRegex(pattern.regex, ["patterns", index, "regex"]));
   return {
     version: 1,
     mode: result.data.mode,
@@ -84,7 +77,7 @@ export class SensitiveNameMatcher {
   private readonly patterns: Array<{ id: string; regex: RegExp }>;
 
   constructor(config: SensitiveNameConfig) {
-    this.allows = config.allowPatterns.map(compileRegex);
+    this.allows = config.allowPatterns.map((source) => compileRegex(source));
     this.patterns = config.patterns.map((pattern) => ({ id: pattern.id, regex: compileRegex(pattern.regex) }));
   }
 
@@ -104,10 +97,11 @@ export function normalizeSensitiveName(name: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
-function compileRegex(source: string): RegExp {
+function compileRegex(source: string, path?: ConfigPath): RegExp {
   try {
     return new RegExp(source, "i");
   } catch {
+    if (path !== undefined) throw configValidationError("Invalid sensitive-name config: regex must compile", path);
     throw configError("Invalid sensitive-name config: regex must compile");
   }
 }
