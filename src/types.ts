@@ -22,6 +22,7 @@ export interface ServerConfig {
   port: number;
   mcpPath: string;
   resource?: string;
+  allowInsecureOAuthHttp: boolean;
 }
 
 export type AuthConfig = OAuthAuthConfig | BuiltinOAuthAuthConfig | BearerAuthConfig;

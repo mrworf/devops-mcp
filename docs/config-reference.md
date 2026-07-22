@@ -12,8 +12,10 @@ Source excerpts preserve indentation, field names, and YAML punctuation, but mas
 - `server.listen`: bind address in `host:port` form, for example `0.0.0.0:8080`.
 - `server.mcp_path`: Streamable HTTP MCP path, usually `/mcp`.
 - `server.resource`: public resource URL used in OAuth metadata and challenges.
+- `server.allow_insecure_oauth_http`: explicit acceptance of non-loopback cleartext OAuth trust URLs; defaults to `false` and should be used only on an explicitly trusted development network.
 
 OAuth trust URLs (`server.resource`, external OAuth issuer and JWKS URL, and the built-in OAuth issuer) must not contain URL userinfo or fragments. Invalid values stop startup with a field-specific diagnostic that does not echo the configured URL.
+HTTPS is required for non-loopback OAuth trust URLs by default. Exact `localhost`, `127.0.0.0/8`, and `::1` HTTP URLs remain available for local development. Setting `server.allow_insecure_oauth_http: true` permits non-loopback HTTP resource, issuer, and JWKS URLs and emits one sanitized startup warning.
 
 ## Auth
 Production OAuth mode:

@@ -122,7 +122,8 @@ const rawConfigSchema = z.object({
     listen: z.string().default("0.0.0.0:8080"),
     mcp_path: z.string().default("/mcp"),
     resource: z.string().url().optional(),
-  }).default({ listen: "0.0.0.0:8080", mcp_path: "/mcp" }),
+    allow_insecure_oauth_http: z.boolean().default(false),
+  }).default({ listen: "0.0.0.0:8080", mcp_path: "/mcp", allow_insecure_oauth_http: false }),
   auth: z.discriminatedUnion("mode", [
     z.object({
       mode: z.literal("oauth").default("oauth"),
@@ -228,7 +229,7 @@ export function validateConfig(raw: unknown, env: NodeJS.ProcessEnv = process.en
   const warnings: string[] = [];
   const debugDiagnostics: ConfigDebugDiagnostic[] = [];
   const parsed = parseRawConfig(raw);
-  validateOAuthTrustUrls(parsed);
+  validateOAuthTrustUrls(parsed, warnings);
   const server = normalizeServer(parsed.server);
   const auth = normalizeAuth(parsed.auth, env);
   const tokens = normalizeTokens(parsed.tokens);
@@ -238,7 +239,7 @@ export function validateConfig(raw: unknown, env: NodeJS.ProcessEnv = process.en
     memoryEvents: parsed.audit.memory_events,
     ...(parsed.audit.file === undefined ? {} : { file: parsed.audit.file }),
   };
-  appendPublicHttpsWarnings(server, auth, warnings);
+  appendPublicOAuthWarnings(server, auth, warnings);
   const services = normalizeServices(parsed.services, env, warnings, debugDiagnostics);
 
   return { server, auth, tokens, limits, logging, audit, services, warnings, debugDiagnostics };
@@ -254,18 +255,35 @@ function parseRawConfig(raw: unknown): RawConfig {
   return result.data;
 }
 
-function validateOAuthTrustUrls(raw: RawConfig): void {
+function validateOAuthTrustUrls(raw: RawConfig, warnings: string[]): void {
+  const insecurePaths: ConfigPath[] = [];
   if (raw.server.resource !== undefined) {
     validateOAuthTrustUrl(raw.server.resource, ["server", "resource"]);
+    if (isNonLoopbackHttpUrl(raw.server.resource)) insecurePaths.push(["server", "resource"]);
   }
   if (raw.auth.mode === "oauth") {
     validateOAuthTrustUrl(raw.auth.oauth.issuer, ["auth", "oauth", "issuer"]);
+    if (isNonLoopbackHttpUrl(raw.auth.oauth.issuer)) insecurePaths.push(["auth", "oauth", "issuer"]);
     if (raw.auth.oauth.jwks_uri !== undefined) {
       validateOAuthTrustUrl(raw.auth.oauth.jwks_uri, ["auth", "oauth", "jwks_uri"]);
+      if (isNonLoopbackHttpUrl(raw.auth.oauth.jwks_uri)) insecurePaths.push(["auth", "oauth", "jwks_uri"]);
+    } else {
+      const effectiveJwksUrl = `${raw.auth.oauth.issuer.replace(/\/$/, "")}/.well-known/jwks.json`;
+      if (isNonLoopbackHttpUrl(effectiveJwksUrl)) insecurePaths.push(["auth", "oauth", "issuer"]);
     }
   } else if (raw.auth.mode === "builtin_oauth") {
     validateOAuthTrustUrl(raw.auth.builtin_oauth.issuer, ["auth", "builtin_oauth", "issuer"]);
+    if (isNonLoopbackHttpUrl(raw.auth.builtin_oauth.issuer)) insecurePaths.push(["auth", "builtin_oauth", "issuer"]);
   }
+  if (insecurePaths.length === 0) return;
+  const firstPath = insecurePaths[0] ?? ["server", "resource"];
+  if (!raw.server.allow_insecure_oauth_http) {
+    throw configValidationError(
+      `${firstPath.join(".")} must use HTTPS for non-loopback OAuth trust; set server.allow_insecure_oauth_http only when explicitly accepting trusted-network development risk`,
+      firstPath,
+    );
+  }
+  warnings.push("server.allow_insecure_oauth_http permits non-loopback cleartext OAuth trust URLs; use only on an explicitly trusted development network.");
 }
 
 function validateOAuthTrustUrl(value: string, path: ConfigPath): void {
@@ -319,6 +337,7 @@ function normalizeServer(raw: RawConfig["server"]): ServerConfig {
     host,
     port,
     mcpPath: raw.mcp_path,
+    allowInsecureOAuthHttp: raw.allow_insecure_oauth_http,
   };
   return raw.resource === undefined ? base : { ...base, resource: raw.resource };
 }
@@ -424,23 +443,9 @@ function normalizeAuth(raw: RawConfig["auth"], env: NodeJS.ProcessEnv): AuthConf
   return { mode: "bearer", bearer: { token: readSecretFile(tokenFile, ["auth", "bearer", "token_file"]), source: "file" } };
 }
 
-function appendPublicHttpsWarnings(server: ServerConfig, auth: AuthConfig, warnings: string[]): void {
+function appendPublicOAuthWarnings(server: ServerConfig, auth: AuthConfig, warnings: string[]): void {
   if (auth.mode !== "bearer" && server.resource === undefined) {
     warnings.push("server.resource is missing in OAuth mode; configure the public HTTPS origin explicitly when using a reverse proxy.");
-  } else if (server.resource !== undefined && isNonLoopbackHttpUrl(server.resource)) {
-    warnings.push("server.resource uses HTTP for a non-loopback URL; use HTTPS for production deployments.");
-  }
-
-  if (auth.mode === "oauth") {
-    if (isNonLoopbackHttpUrl(auth.oauth.issuer)) {
-      warnings.push("auth.oauth.issuer uses HTTP for a non-loopback URL; use HTTPS for production deployments.");
-    }
-    const jwksUri = auth.oauth.jwksUri ?? `${auth.oauth.issuer.replace(/\/$/, "")}/.well-known/jwks.json`;
-    if (isNonLoopbackHttpUrl(jwksUri)) {
-      warnings.push("The effective auth.oauth JWKS URL uses HTTP for a non-loopback URL; use HTTPS to protect OAuth signing-key retrieval.");
-    }
-  } else if (auth.mode === "builtin_oauth" && isNonLoopbackHttpUrl(auth.builtinOAuth.issuer)) {
-    warnings.push("auth.builtin_oauth.issuer uses HTTP for a non-loopback URL; use HTTPS for production deployments.");
   }
 }
 

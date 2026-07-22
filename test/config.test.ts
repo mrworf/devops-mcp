@@ -235,9 +235,74 @@ describe("config validation", () => {
     }
   });
 
-  it("warns for non-loopback HTTP OAuth resource, issuer, and JWKS URLs", () => {
+  it("rejects non-loopback HTTP OAuth trust URLs without explicit acceptance", () => {
+    const cases: Array<{ path: string; configure: (raw: any) => void }> = [
+      {
+        path: "server.resource",
+        configure: (raw) => {
+          raw.server.resource = "http://mcp.example.org";
+          raw.auth = { mode: "oauth", oauth: { issuer: "https://auth.example.org", audience: "gateway" } };
+        },
+      },
+      {
+        path: "auth.oauth.issuer",
+        configure: (raw) => {
+          raw.server.resource = "https://mcp.example.org";
+          raw.auth = { mode: "oauth", oauth: { issuer: "http://auth.example.org", audience: "gateway" } };
+        },
+      },
+      {
+        path: "auth.oauth.jwks_uri",
+        configure: (raw) => {
+          raw.server.resource = "https://mcp.example.org";
+          raw.auth = {
+            mode: "oauth",
+            oauth: {
+              issuer: "https://auth.example.org",
+              audience: "gateway",
+              jwks_uri: "http://keys.example.org/jwks.json",
+            },
+          };
+        },
+      },
+      {
+        path: "auth.builtin_oauth.issuer",
+        configure: (raw) => {
+          raw.server.resource = "https://mcp.example.org";
+          raw.auth = {
+            mode: "builtin_oauth",
+            builtin_oauth: {
+              issuer: "http://mcp.example.org",
+              admin_username_env: "ADMIN_USERNAME",
+              admin_password_hash_env: "ADMIN_HASH",
+              signing_key_file: "/not-read-before-trust-validation.pem",
+              allowed_clients: ["https://chatgpt.com"],
+            },
+          };
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const raw = validRaw();
+      testCase.configure(raw);
+      try {
+        validateConfig(raw, { ...validEnv, ADMIN_USERNAME: "admin", ADMIN_HASH: "unused" });
+        throw new Error("Expected config error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(GatewayError);
+        const gatewayError = error as GatewayError;
+        expect(gatewayError.diagnostics?.[0]?.path).toBe(testCase.path);
+        expect(gatewayError.message).toContain("must use HTTPS for non-loopback OAuth trust");
+        expect(JSON.stringify(gatewayError)).not.toContain("example.org");
+      }
+    }
+  });
+
+  it("allows explicitly accepted non-loopback HTTP OAuth trust with one sanitized warning", () => {
     const raw = validRaw();
     raw.server.resource = "http://mcp.example.org";
+    raw.server.allow_insecure_oauth_http = true;
     raw.auth = {
       mode: "oauth",
       oauth: {
@@ -250,31 +315,30 @@ describe("config validation", () => {
     const warnings = validateConfig(raw, validEnv).warnings;
 
     expect(warnings).toEqual([
-      "server.resource uses HTTP for a non-loopback URL; use HTTPS for production deployments.",
-      "auth.oauth.issuer uses HTTP for a non-loopback URL; use HTTPS for production deployments.",
-      "The effective auth.oauth JWKS URL uses HTTP for a non-loopback URL; use HTTPS to protect OAuth signing-key retrieval.",
+      "server.allow_insecure_oauth_http permits non-loopback cleartext OAuth trust URLs; use only on an explicitly trusted development network.",
     ]);
     expect(warnings.join("\n")).not.toContain("mcp.example.org");
     expect(warnings.join("\n")).not.toContain("auth.example.org");
     expect(warnings.join("\n")).not.toContain("keys.example.org");
   });
 
-  it("warns when OAuth omits server.resource and checks an issuer-derived HTTP JWKS URL", () => {
+  it("warns once for explicitly accepted issuer-derived HTTP JWKS trust", () => {
     const raw = validRaw();
+    raw.server.allow_insecure_oauth_http = true;
     raw.auth = { mode: "oauth", oauth: { issuer: "http://auth.example.org", audience: "gateway" } };
 
     expect(validateConfig(raw, validEnv).warnings).toEqual([
+      "server.allow_insecure_oauth_http permits non-loopback cleartext OAuth trust URLs; use only on an explicitly trusted development network.",
       "server.resource is missing in OAuth mode; configure the public HTTPS origin explicitly when using a reverse proxy.",
-      "auth.oauth.issuer uses HTTP for a non-loopback URL; use HTTPS for production deployments.",
-      "The effective auth.oauth JWKS URL uses HTTP for a non-loopback URL; use HTTPS to protect OAuth signing-key retrieval.",
     ]);
   });
 
-  it("warns for a non-loopback HTTP built-in OAuth issuer", () => {
+  it("warns once for an explicitly accepted non-loopback HTTP built-in OAuth issuer", () => {
     const keyPath = join(mkdtempSync(join(tmpdir(), "gateway-http-warning-")), "key.pem");
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     writeFileSync(keyPath, privateKey.export({ type: "pkcs8", format: "pem" }));
     const raw = validRaw();
+    raw.server.allow_insecure_oauth_http = true;
     raw.auth = {
       mode: "builtin_oauth",
       builtin_oauth: {
@@ -291,9 +355,16 @@ describe("config validation", () => {
       ADMIN_USERNAME: "admin@example.com",
       ADMIN_HASH: "pbkdf2-sha256$1000$salt$hash",
     }).warnings).toEqual([
+      "server.allow_insecure_oauth_http permits non-loopback cleartext OAuth trust URLs; use only on an explicitly trusted development network.",
       "server.resource is missing in OAuth mode; configure the public HTTPS origin explicitly when using a reverse proxy.",
-      "auth.builtin_oauth.issuer uses HTTP for a non-loopback URL; use HTTPS for production deployments.",
     ]);
+  });
+
+  it("defaults and validates the insecure OAuth HTTP override", () => {
+    const raw = validRaw();
+    expect(validateConfig(raw, validEnv).server.allowInsecureOAuthHttp).toBe(false);
+    raw.server.allow_insecure_oauth_http = "yes";
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
   });
 
   it("does not warn for HTTPS or explicit loopback HTTP OAuth URLs", () => {

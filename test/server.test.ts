@@ -59,7 +59,7 @@ describe("health server", () => {
     config.server.resource = "http://mcp.example.org/private?access_token=do-not-log";
     config.services["demo-service"]!.destinations[0]!.hosts = [{ type: "regex", value: ".*", regex: /.*/ }];
     config.warnings.push(
-      "server.resource uses HTTP for a non-loopback URL; use HTTPS for production deployments.",
+      "server.allow_insecure_oauth_http permits non-loopback cleartext OAuth trust URLs; use only on an explicitly trusted development network.",
       "Broad host regex warning: .*",
     );
     const lines: string[] = [];
@@ -81,7 +81,7 @@ describe("health server", () => {
       expect.objectContaining({
         level: "warn",
         event: "config.warning",
-        message: "server.resource uses HTTP for a non-loopback URL; use HTTPS for production deployments.",
+        message: "server.allow_insecure_oauth_http permits non-loopback cleartext OAuth trust URLs; use only on an explicitly trusted development network.",
       }),
       expect.objectContaining({
         level: "warn",

@@ -118,7 +118,7 @@ auth:
 
 For built-in OAuth, set `auth.builtin_oauth.issuer` to the same public HTTPS origin as `server.resource`. The origin values do not include the MCP path; ChatGPT and other remote clients use the full MCP Server URL `https://mcp.example.org/mcp`.
 
-At startup, SecretSauce logs `config.warning` events when public OAuth configuration is missing `server.resource` or uses non-loopback HTTP resource, issuer, or JWKS URLs. These warnings do not block startup so local development and trusted proxy backends remain supported.
+SecretSauce rejects non-loopback HTTP resource, issuer, and JWKS URLs by default. Exact loopback HTTP URLs remain supported for local development. A trusted development network can explicitly accept cleartext OAuth trust with `server.allow_insecure_oauth_http: true`; this emits one sanitized startup warning. Missing `server.resource` in OAuth mode also remains a startup warning.
 
 ## Local Docker Example
 
