@@ -1117,6 +1117,8 @@ The agent may place opaque references in:
 
 The server must replace recognized opaque references with the corresponding raw credential value before sending the downstream request.
 
+Credential usage may include non-secret prefix and suffix text used to generate an exact reference-placement hint. Named header credentials may opt into enforcement; enforcement defaults off. When enabled, the gateway owns that header, canonicalizes safely repairable duplicate or malformed variants with sanitized warnings, and rejects missing, ambiguous, or wrongly placed references before downstream I/O.
+
 ## 19.2 Substitution restrictions
 
 The server must reject:
@@ -1322,6 +1324,8 @@ services:
         usage:
           kind: header
           name: X-API-Key
+          prefix: "Bearer "
+          enforce: true
         source:
           kind: env
           name: PORTAINER_API_KEY

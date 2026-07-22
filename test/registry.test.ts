@@ -37,6 +37,17 @@ describe("service registry", () => {
     expect(getCredential(service, "api_key").secret).toBe("portainer-secret");
     expectGatewayError(() => getCredential(service, "missing"), "unknown_access");
   });
+
+  it("renders an explicit reference template in usage hints", () => {
+    const config = registryConfig();
+    const credential = config.services["portainer-prod"]!.credentials[0]!;
+    credential.usage.prefix = "Bearer ";
+    credential.usage.suffix = ":signed";
+
+    expect(listVisibleServices(config, auth("henric@example.com"))[0]?.access_methods).toEqual([{
+      id: "api_key", usage_hint: 'Set the X-API-Key header value to "Bearer <reference>:signed".',
+    }]);
+  });
 });
 
 function expectGatewayError(fn: () => unknown, code: GatewayError["code"]) {

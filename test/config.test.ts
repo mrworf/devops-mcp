@@ -86,6 +86,46 @@ describe("config validation", () => {
     expect(config.logging.level).toBe("debug");
   });
 
+  it("defaults usage enforcement off and accepts sanitized header reference templates", () => {
+    const raw = validRaw();
+    raw.services["portainer-prod"].credentials[0].usage = {
+      kind: "header", name: "X-API-Key", prefix: "Bearer ", suffix: ":signed", enforce: true,
+    };
+
+    const credential = validateConfig(raw, validEnv).services["portainer-prod"]!.credentials[0]!;
+
+    expect(credential.usage).toEqual({
+      kind: "header", name: "X-API-Key", prefix: "Bearer ", suffix: ":signed", enforce: true,
+    });
+    raw.services["portainer-prod"].credentials[0].usage = { kind: "header", name: "X-API-Key" };
+    expect(validateConfig(raw, validEnv).services["portainer-prod"]!.credentials[0]!.usage.enforce).toBe(false);
+  });
+
+  it("rejects invalid header reference template inputs", () => {
+    for (const usage of [
+      { kind: "header", name: "X-API-Key", prefix: 1 },
+      { kind: "header", name: "X-API-Key", suffix: "bad\r\nvalue" },
+      { kind: "header", name: "X-API-Key", suffix: "-ambiguous" },
+      { kind: "body", name: "token", enforce: true },
+      { kind: "header", enforce: true },
+      { kind: "header", name: "X-API-Key", enforce: true, unexpected: true },
+    ]) {
+      const raw = validRaw();
+      raw.services["portainer-prod"].credentials[0].usage = usage;
+      expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+    }
+  });
+
+  it("creates a value-free debug diagnostic for credential sources containing whitespace", () => {
+    const config = validateConfig(validRaw(), { ...validEnv, PORTAINER_API_KEY: "Bearer private-value" });
+
+    expect(config.debugDiagnostics).toEqual([{
+      code: "credential_source_contains_whitespace", serviceId: "portainer-prod", credentialId: "api_key",
+    }]);
+    expect(JSON.stringify(config.debugDiagnostics)).not.toContain("private-value");
+    expect(validateConfig(validRaw(), validEnv).debugDiagnostics).toEqual([]);
+  });
+
   it("canonicalizes DNS suffix matchers and rejects malformed or IP suffixes", () => {
     const raw = validRaw();
     raw.services["portainer-prod"].destinations[0].hosts = [{ suffix: ".BÜCHER.Example." }];

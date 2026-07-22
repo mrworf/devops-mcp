@@ -21,6 +21,7 @@ import {
   responseMimeType,
 } from "./binaryResponse.js";
 import { decodeDeclaredBase64Bytes, encodeBase64Bytes } from "./base64Body.js";
+import { enforceCredentialHeaderUsage } from "./headerEnforcement.js";
 
 export interface ServiceRequestInput {
   service: string;
@@ -129,17 +130,21 @@ export async function executeServiceRequest(
   } else if (input.service_reference !== undefined) {
     throw new GatewayError("reference_invalid", "service_reference is only valid for gateway access references.");
   }
-  const headers = input.headers ?? {};
-  rejectCallerControlledHeaders(headers);
-  const requestCookieHeaders = prohibitedCookieHeaderNames(headers);
+  const callerHeaders = input.headers ?? {};
+  rejectCallerControlledHeaders(callerHeaders);
+  const requestCookieHeaders = prohibitedCookieHeaderNames(callerHeaders);
   if (requestCookieHeaders.length > 0) {
     logger.warn("service_request.cookie_rejected", {
       direction: "request", service: service.id, destination: target.destination.id, header_types: requestCookieHeaders,
     });
     throw new GatewayError("cookie_not_allowed", "Cookie headers are not allowed in service requests.");
   }
+  const query = input.query ?? {};
+  const headers = enforceCredentialHeaderUsage(
+    { headers: callerHeaders, query, body: input.body }, broker, auth, tokenTarget, service, logger,
+  );
   const headerSubstitution = substituteTokens(headers, broker, auth, tokenTarget, service);
-  const querySubstitution = substituteTokens(input.query ?? {}, broker, auth, tokenTarget, service);
+  const querySubstitution = substituteTokens(query, broker, auth, tokenTarget, service);
   const bodySubstitution = substituteRequestBodyTokens(input.body, headerSubstitution.value, broker, auth, tokenTarget, service);
   const substitutedHeaders = headerSubstitution.value;
   const substitutedQuery = querySubstitution.value;
@@ -166,8 +171,8 @@ export async function executeServiceRequest(
     credential_count: new Set(tokenRecords.filter((record) => record.kind === "credential").map((record) => record.credentialId)).size,
     placeholder_count: new Set(tokenRecords.map((record) => record.id)).size,
     request_shape: {
-      header_names: headerNames(headers),
-      query_keys: Object.keys(input.query ?? {}).sort(),
+      header_names: headerNames(callerHeaders),
+      query_keys: Object.keys(query).sort(),
       body: bodySummary(input.body),
     },
   });

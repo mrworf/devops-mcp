@@ -10,6 +10,7 @@ import type {
   AuthConfig,
   CredentialConfig,
   CredentialSourceConfig,
+  ConfigDebugDiagnostic,
   DestinationConfig,
   GatewayConfig,
   HostMatcherConfig,
@@ -40,6 +41,29 @@ const credentialSourceSchema = z.union([
   z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
 ]);
 
+const credentialUsageSchema = z.object({
+  kind: z.string().min(1),
+  name: z.string().min(1).optional(),
+  prefix: z.string().optional(),
+  suffix: z.string().optional(),
+  enforce: z.boolean().default(false),
+}).strict().superRefine((usage, context) => {
+  for (const field of ["prefix", "suffix"] as const) {
+    if (usage[field] !== undefined && /[\r\n\0]/.test(usage[field])) {
+      context.addIssue({ code: "custom", path: [field], message: `${field} must not contain CR, LF, or NUL` });
+    }
+  }
+  if (usage.suffix !== undefined && usage.suffix.length > 0 && /^[A-Za-z0-9_-]/.test(usage.suffix)) {
+    context.addIssue({
+      code: "custom", path: ["suffix"],
+      message: "suffix must begin with a delimiter outside the opaque-reference alphabet",
+    });
+  }
+  if (usage.enforce && (usage.kind.toLowerCase() !== "header" || usage.name === undefined)) {
+    context.addIssue({ code: "custom", path: ["enforce"], message: "enforce requires usage.kind header and a header name" });
+  }
+});
+
 const serviceSchema = z.object({
   type: z.literal("http").default("http"),
   name: z.string().min(1),
@@ -58,10 +82,7 @@ const serviceSchema = z.object({
   no_auth: z.boolean().default(false),
   credentials: z.array(z.object({
     id: z.string().min(1),
-    usage: z.object({
-      kind: z.string().min(1),
-      name: z.string().min(1).optional(),
-    }).strict(),
+    usage: credentialUsageSchema,
     source: credentialSourceSchema,
   }).strict()).default([]),
   access: z.object({
@@ -205,6 +226,7 @@ export function loadConfig(path: string): GatewayConfig {
 
 export function validateConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const warnings: string[] = [];
+  const debugDiagnostics: ConfigDebugDiagnostic[] = [];
   const parsed = parseRawConfig(raw);
   const server = normalizeServer(parsed.server);
   const auth = normalizeAuth(parsed.auth, env);
@@ -216,9 +238,9 @@ export function validateConfig(raw: unknown, env: NodeJS.ProcessEnv = process.en
     ...(parsed.audit.file === undefined ? {} : { file: parsed.audit.file }),
   };
   appendPublicHttpsWarnings(server, auth, warnings);
-  const services = normalizeServices(parsed.services, env, warnings);
+  const services = normalizeServices(parsed.services, env, warnings, debugDiagnostics);
 
-  return { server, auth, tokens, limits, logging, audit, services, warnings };
+  return { server, auth, tokens, limits, logging, audit, services, warnings, debugDiagnostics };
 }
 
 function parseRawConfig(raw: unknown): RawConfig {
@@ -489,12 +511,13 @@ function normalizeServices(
   rawServices: RawConfig["services"],
   env: NodeJS.ProcessEnv,
   warnings: string[],
+  debugDiagnostics: ConfigDebugDiagnostic[],
 ): Record<string, ServiceConfig> {
   return Object.fromEntries(Object.entries(rawServices).map(([id, raw]) => {
     const servicePath: ConfigPath = ["services", id];
     const tls = normalizeTls(raw.tls);
     const destinations = normalizeDestinations(raw.destinations, tls, warnings, servicePath);
-    const credentials = normalizeCredentials(raw.credentials, env, servicePath);
+    const credentials = normalizeCredentials(raw.credentials, env, servicePath, id, debugDiagnostics);
     const access: AccessConfig = { users: raw.access.users };
     const policy = normalizePolicy(raw.policy, servicePath);
 
@@ -571,16 +594,31 @@ function normalizeHostSuffix(raw: string, path: ConfigPath): string {
   return normalizeHost(ascii);
 }
 
-function normalizeCredentials(rawCredentials: RawService["credentials"], env: NodeJS.ProcessEnv, servicePath: ConfigPath): CredentialConfig[] {
+function normalizeCredentials(
+  rawCredentials: RawService["credentials"],
+  env: NodeJS.ProcessEnv,
+  servicePath: ConfigPath,
+  serviceId: string,
+  debugDiagnostics: ConfigDebugDiagnostic[],
+): CredentialConfig[] {
   const seen = new Set<string>();
   return rawCredentials.map((raw, index) => {
     const credentialPath = [...servicePath, "credentials", index];
     ensureUnique(seen, raw.id, "credential", [...credentialPath, "id"]);
     const source = normalizeSource(raw.source);
     const secret = resolveSecret(source, env, [...credentialPath, "source"]);
+    if (/\s/.test(secret)) {
+      debugDiagnostics.push({ code: "credential_source_contains_whitespace", serviceId, credentialId: raw.id });
+    }
     const credential: CredentialConfig = {
       id: raw.id,
-      usage: raw.usage.name === undefined ? { kind: raw.usage.kind } : { kind: raw.usage.kind, name: raw.usage.name },
+      usage: {
+        kind: raw.usage.kind,
+        ...(raw.usage.name === undefined ? {} : { name: raw.usage.name }),
+        ...(raw.usage.prefix === undefined ? {} : { prefix: raw.usage.prefix }),
+        ...(raw.usage.suffix === undefined ? {} : { suffix: raw.usage.suffix }),
+        enforce: raw.usage.enforce,
+      },
       source,
       secret,
     };

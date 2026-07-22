@@ -7,6 +7,13 @@ export interface GatewayConfig {
   audit: AuditConfig;
   services: Record<string, ServiceConfig>;
   warnings: string[];
+  debugDiagnostics: ConfigDebugDiagnostic[];
+}
+
+export interface ConfigDebugDiagnostic {
+  code: "credential_source_contains_whitespace";
+  serviceId: string;
+  credentialId: string;
 }
 
 export interface ServerConfig {
@@ -151,6 +158,9 @@ export interface CredentialConfig {
 export interface CredentialUsageConfig {
   kind: string;
   name?: string;
+  prefix?: string;
+  suffix?: string;
+  enforce: boolean;
 }
 
 export type CredentialSourceConfig =

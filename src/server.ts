@@ -20,6 +20,13 @@ export function createGatewayServer(config: GatewayConfig) {
   for (const message of config.warnings) {
     logger.warn("config.warning", { message });
   }
+  for (const diagnostic of config.debugDiagnostics) {
+    logger.debug("config.credential_source_contains_whitespace", {
+      service: diagnostic.serviceId,
+      access_id: diagnostic.credentialId,
+      suggestion: "Store only the credential value and describe static request syntax with usage prefix or suffix.",
+    });
+  }
   initializeBuiltinOAuthState(config);
   const stopMaintenance = startMaintenance(config);
   const server = createServer(async (request, response) => {

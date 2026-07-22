@@ -57,6 +57,20 @@ describe("reference broker", () => {
     }), "unknown_access");
   });
 
+  it("issues a precise reference-placement hint for configured affixes", () => {
+    const config = tokenConfig();
+    const credential = config.services["portainer-prod"]!.credentials[0]!;
+    credential.usage.prefix = "Bearer ";
+    const broker = new TokenBroker(config);
+
+    const issued = broker.issueTokens(auth("henric@example.com"), {
+      service: "portainer-prod", destination: "primary", access_ids: ["api_key"], reason: "Use the API.",
+    });
+
+    expect(issued.tokens[0]?.usage_hint).toBe('Set the X-API-Key header value to "Bearer <reference>".');
+    expect(issued.tokens[0]?.usage_hint).not.toContain("portainer-secret");
+  });
+
   it("rejects expired references", () => {
     let now = 1_000;
     const broker = new TokenBroker(tokenConfig(), () => now);

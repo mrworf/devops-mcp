@@ -5,6 +5,7 @@ import type { ReferenceIssuedAuditEvent } from "./audit.js";
 import { referenceIssuedAuditEvent } from "./audit.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
 import { registerMaintenanceTask } from "./maintenance.js";
+import { credentialUsageHint } from "./credentialUsage.js";
 
 export interface TokenRequestInput {
   service: string;
@@ -104,7 +105,7 @@ export class TokenBroker {
         id: accessId,
         kind: "credential" as const,
         credentialId: credential.id,
-        usageHint: usageHint(credential.usage.kind, credential.usage.name),
+        usageHint: credentialUsageHint(credential.usage),
       };
     });
     this.ensureCapacity(auth.subject, accesses.length);
@@ -387,9 +388,4 @@ function generateResponseSecretTokenValue(): string {
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
-}
-
-function usageHint(kind: string, name?: string): string {
-  if (name) return `Use as ${name} ${kind}`;
-  return `Use as ${kind}`;
 }

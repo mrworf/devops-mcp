@@ -93,6 +93,28 @@ describe("health server", () => {
     expect(serialized).not.toContain("mcp.example.org");
     expect(serialized).not.toContain("do-not-log");
   });
+
+  it("emits credential-source whitespace diagnostics only at debug level without values", () => {
+    const config = serverConfig();
+    config.logging.level = "debug";
+    config.debugDiagnostics.push({
+      code: "credential_source_contains_whitespace", serviceId: "demo-service", credentialId: "api_key",
+    });
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((line) => lines.push(String(line)));
+    try {
+      const server = createGatewayServer(config);
+      server.close();
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(expect.objectContaining({
+      level: "debug", event: "config.credential_source_contains_whitespace",
+      service: "demo-service", access_id: "api_key",
+    }));
+    expect(lines.join("\n")).not.toContain("DEMO_API_KEY");
+  });
 });
 
 function serverConfig() {

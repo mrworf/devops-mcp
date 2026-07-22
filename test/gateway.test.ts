@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { once } from "node:events";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { validateConfig } from "../src/config.js";
 import { getAuditEvents } from "../src/audit.js";
 import { GatewayError } from "../src/errors.js";
@@ -128,6 +128,64 @@ describe("HTTP gateway", () => {
     } finally {
       await downstream.close();
     }
+  });
+
+  it("enforces an opted-in header template and tokenizes a clean credential under a token key", async () => {
+    const downstream = await startDownstream();
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((line) => lines.push(String(line)));
+    try {
+      const config = gatewayConfig(downstream.baseUrl, { headerTemplate: { prefix: "Bearer ", enforce: true } });
+      const broker = installBroker(config);
+      const auth = actor();
+      const reference = broker.issueTokens(auth, {
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Test enforced header.",
+      }).tokens[0]!.token;
+
+      const response = await executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/token",
+        headers: { "X-API-Key": `wrong ${reference}`, "x-api-key": "caller-controlled" },
+        reason: "Verify header ownership and response protection.",
+      });
+
+      expect(downstream.requests).toHaveLength(1);
+      expect(downstream.requests[0]?.headers["x-api-key"]).toBe("Bearer demo-secret");
+      expect(response.body).toBe(`{\n  "token": "${reference}",\n  "status": "ok"\n}`);
+      expect(response.secret_tokenized).toBe(true);
+      expect(response.secret_tokenization_count).toBe(1);
+      const serialized = lines.join("\n");
+      expect(serialized).toContain("auth_header_override_clobbered");
+      expect(serialized).not.toContain(reference);
+      expect(serialized).not.toContain("demo-secret");
+      expect(serialized).not.toContain("caller-controlled");
+
+      await expectGatewayError(() => executeServiceRequest(config, auth, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/token",
+        headers: { "X-API-Key": "caller-controlled" }, reason: "Reject an auth header override.",
+      }), "reference_invalid");
+      expect(downstream.requests).toHaveLength(1);
+    } finally {
+      log.mockRestore();
+      await downstream.close();
+    }
+  });
+
+  it("keeps header placement flexible when usage enforcement is omitted", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl, { headerTemplate: { prefix: "Bearer ", enforce: false } });
+      const broker = installBroker(config);
+      const reference = broker.issueTokens(actor(), {
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Test compatibility.",
+      }).tokens[0]!.token;
+
+      await executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "POST", path: "/api/echo",
+        headers: { "X-Other": `Bearer ${reference}` }, reason: "Keep flexible placement.",
+      });
+
+      expect(downstream.requests[0]?.headers["x-other"]).toBe("Bearer demo-secret");
+    } finally { await downstream.close(); }
   });
 
   it("rejects a suffix sibling host before credential substitution or downstream I/O", async () => {
@@ -744,6 +802,7 @@ function gatewayConfig(baseUrl: string, options: {
   maxRequestBody?: string;
   maxResponseBody?: string;
   tlsVerify?: boolean;
+  headerTemplate?: { prefix?: string; suffix?: string; enforce?: boolean };
 } = {}): GatewayConfig {
   const base = new URL(baseUrl);
   const destinations = [
@@ -769,7 +828,7 @@ function gatewayConfig(baseUrl: string, options: {
         ...(options.noAuth ? { no_auth: true } : {
           credentials: [{
             id: "api_key",
-            usage: { kind: "header", name: "X-API-Key" },
+            usage: { kind: "header", name: "X-API-Key", ...options.headerTemplate },
             source: { kind: "env", name: "DEMO_API_KEY" },
           }],
         }),
@@ -779,6 +838,7 @@ function gatewayConfig(baseUrl: string, options: {
           rules: [
             { id: "allow-echo", effect: "allow", priority: 100, methods: ["GET", "POST"], paths: ["/api/echo"] },
             { id: "allow-json", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/json"] },
+            { id: "allow-token", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/token"] },
             { id: "allow-sensitive-json", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/sensitive-json"], secretlint: { enabled: false } },
             { id: "allow-sensitive-base64", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/sensitive-base64"], secretlint: { enabled: false } },
             { id: "allow-sensitive-incomplete", effect: "allow", priority: 100, methods: ["GET"], paths: ["/api/sensitive-incomplete"], secretlint: { enabled: false } },
@@ -885,6 +945,11 @@ async function startDownstream() {
     if (request.url?.startsWith("/api/json")) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON_RESPONSE_BODY);
+      return;
+    }
+    if (request.url?.startsWith("/api/token")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{\n  "token": "demo-secret",\n  "status": "ok"\n}');
       return;
     }
     if (request.url?.startsWith("/api/sensitive-json")) {

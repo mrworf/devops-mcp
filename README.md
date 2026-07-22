@@ -24,6 +24,7 @@ The service acts as an MCP-controlled credential gateway. Agents get short-lived
 - Streamable HTTP MCP endpoint for configured clients.
 - A small generic tool surface for listing services, getting gateway service references, making service requests, and explaining denials.
 - Server-side credential substitution after auth, destination validation, and policy checks.
+- Agent-facing credential reference templates with optional, default-off ownership enforcement for configured authentication headers.
 - Default-deny request policy with explainable denials.
 - Secretlint response scanning plus configurable sensitive-name detection that replaces detected values with reversible, service-scoped `sec_…` tokens.
 - Structured audit logging designed to avoid raw credentials, opaque reference values, authorization headers, cookies, and downstream response bodies.

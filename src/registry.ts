@@ -1,6 +1,7 @@
 import { GatewayError } from "./errors.js";
 import type { AuthContext, CredentialConfig, GatewayConfig, PolicyRuleConfig, ServiceConfig } from "./types.js";
 import { resolveDestinationTarget, type ResolvedTarget, type TargetInput } from "./urlValidation.js";
+import { credentialUsageHint } from "./credentialUsage.js";
 
 export const GATEWAY_ACCESS_ID = "gateway_access";
 export const GATEWAY_ACCESS_USAGE_HINT = "Pass reference as service_reference";
@@ -135,16 +136,11 @@ function serviceSummary(service: ServiceConfig): ServiceSummary {
   };
 }
 
-function usageHint(credential: CredentialConfig): string {
-  if (credential.usage.name) return `Use reference as ${credential.usage.name} ${credential.usage.kind}`;
-  return `Use reference as ${credential.usage.kind}`;
-}
-
 function accessMethods(service: ServiceConfig): ServiceSummary["access_methods"] {
   if (service.credentials.length === 0) {
     return [{ id: GATEWAY_ACCESS_ID, usage_hint: GATEWAY_ACCESS_USAGE_HINT }];
   }
-  return service.credentials.map((credential) => ({ id: credential.id, usage_hint: usageHint(credential) }));
+  return service.credentials.map((credential) => ({ id: credential.id, usage_hint: credentialUsageHint(credential.usage) }));
 }
 
 function orderedRules(rules: PolicyRuleConfig[]): PolicyRuleConfig[] {

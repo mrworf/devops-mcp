@@ -137,6 +137,27 @@ source:
   path: /run/secrets/service_api_key
 ```
 
+Keep the source value limited to the credential itself. Static request syntax belongs in optional usage affixes so response protection can still recognize the clean credential:
+
+```yaml
+credentials:
+  - id: api_token
+    usage:
+      kind: header
+      name: X-API-Key
+      prefix: "Bearer "
+      enforce: true
+    source:
+      kind: env
+      name: SERVICE_API_TOKEN
+```
+
+This configuration produces the hint `Set the X-API-Key header value to "Bearer <reference>".` The client sends that complete value, and the gateway replaces only the reference with the clean source value. `suffix` works the same way after the reference. Because opaque references use letters, digits, `_`, and `-`, a non-empty suffix must begin with another delimiter such as `:` or `.` so its boundary is unambiguous. Header affixes cannot contain CR, LF, or NUL and must contain only non-secret static syntax.
+
+`usage.enforce` is an optional named-header security feature and defaults to `false` for compatibility. When false, affixes affect only the usage hint and references retain flexible substring substitution in headers, query values, and bodies. When true, the configured header is gateway-owned: exact placement is accepted, safely repairable wrong affixes or duplicate case variants are clobbered with a sanitized warning, and missing, ambiguous, or wrongly placed references are rejected before downstream I/O. Enforcement never auto-selects a credential. It is currently supported only for `usage.kind: header` with `name` configured.
+
+At debug log level, a source value containing whitespace produces a value-free startup diagnostic suggesting usage affixes. Existing combined values remain valid and are not parsed automatically; for example, a source containing `Bearer XYZ` is still treated as that complete secret, so a response containing only `XYZ` cannot be matched exactly.
+
 Services whose downstream API intentionally requires no authentication must opt in explicitly with `no_auth: true` and omit `credentials`:
 
 ```yaml
@@ -268,6 +289,7 @@ Clean binary responses are returned as MCP embedded blobs with their original me
 
   Deployments upgrading from the former stateful transport must remove `limits.max_mcp_transports`, `limits.max_mcp_transports_per_subject`, `limits.max_mcp_initializations_per_subject`, `limits.mcp_initialization_window`, `limits.max_mcp_initialization_records`, and `limits.mcp_transport_idle_ttl`. These fields now produce a startup error with migration guidance. Reference capacity remains controlled by `limits.max_token_records` and `limits.max_token_records_per_subject`; exhaustion is returned as a structured `capacity_exceeded` tool error, not an MCP transport `429`.
 - Caller-supplied HTTP authority, forwarding, and hop-by-hop headers are rejected before credential substitution. This includes `Host`, `:authority`, `Forwarded`, every `X-Forwarded-*` header, `Connection`, `Keep-Alive`, proxy authorization headers, `TE`, `Trailer`, `Transfer-Encoding`, and `Upgrade`. The outbound `Host` header is derived from the validated destination URL.
+- Named credential headers can opt into gateway ownership with `usage.enforce: true`. Exact reference templates are accepted; safely repairable overrides are clobbered and warned, while missing, ambiguous, or wrongly placed references fail before downstream I/O. Enforcement is off by default.
 - Destination paths are canonicalized once before policy evaluation and downstream transmission. Duplicate separators and trailing separators are removed. Percent escapes for ASCII unreserved characters, separators, backslashes, NUL, and percent itself are rejected because downstream routers may decode them differently; encoded UTF-8 data and spaces remain supported. Query parameters are not part of path-policy matching.
 - `Cookie`, `Cookie2`, `Set-Cookie`, and `Set-Cookie2` are prohibited. Request occurrences are rejected; response occurrences are removed with sanitized warnings.
 - Caller-supplied `Content-Length` is discarded and recomputed after request substitution and response transformation.
