@@ -22,6 +22,7 @@ import {
 } from "./binaryResponse.js";
 import { decodeDeclaredBase64Bytes, encodeBase64Bytes } from "./base64Body.js";
 import { enforceCredentialHeaderUsage } from "./headerEnforcement.js";
+import { acquireServiceRequest } from "./serviceRequestLimiter.js";
 
 export interface ServiceRequestInput {
   service: string;
@@ -119,6 +120,8 @@ export async function executeServiceRequest(
     throw new GatewayError("policy_denied", policy.reason, denial.request_id);
   }
 
+  const releaseCapacity = acquireServiceRequest(config, auth.subject);
+  try {
   const broker = getTokenBroker(config);
   const tokenTarget = { service: service.id, destination: target.destination.id };
   let serviceReferenceRecord: TokenRecord | undefined;
@@ -321,6 +324,9 @@ export async function executeServiceRequest(
     truncated: rawBody.truncated,
     ...(blobResponse ? { binaryBody: returnedBody, binaryMimeType: responseMimeType(responseHeaders) } : {}),
   };
+  } finally {
+    releaseCapacity();
+  }
 }
 
 function validateRequestInput(input: ServiceRequestInput): void {

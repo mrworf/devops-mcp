@@ -500,6 +500,26 @@ describe("config validation", () => {
     expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
   });
 
+  it("defaults and validates authenticated service request in-flight limits", () => {
+    const raw = validRaw();
+    const defaults = validateConfig(raw, validEnv).limits;
+    expect(defaults.maxServiceRequestsInflight).toBe(32);
+    expect(defaults.maxServiceRequestsInflightPerSubject).toBe(4);
+
+    raw.limits.max_service_requests_inflight = 2;
+    raw.limits.max_service_requests_inflight_per_subject = 2;
+    expect(validateConfig(raw, validEnv).limits).toMatchObject({
+      maxServiceRequestsInflight: 2,
+      maxServiceRequestsInflightPerSubject: 2,
+    });
+    raw.limits.max_service_requests_inflight_per_subject = 3;
+    expectConfigError(() => validateConfig(raw, validEnv), "must not exceed");
+    raw.limits.max_service_requests_inflight_per_subject = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+    raw.limits.max_service_requests_inflight = 0;
+    expectConfigError(() => validateConfig(raw, validEnv), "Invalid config");
+  });
+
   it("defaults and validates password-verification limits", () => {
     const raw = validRaw();
     const defaults = validateConfig(raw, validEnv).limits;

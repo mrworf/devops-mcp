@@ -13,6 +13,8 @@ tokens:
   max_ttl: 1h
 
 limits:
+  max_service_requests_inflight: 32
+  max_service_requests_inflight_per_subject: 4
   max_request_body: 1mb
   max_response_body: 5mb
   timeout: 30s

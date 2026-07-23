@@ -518,6 +518,68 @@ describe("HTTP gateway", () => {
     }
   });
 
+  it("rejects globally saturated work before reference validation or downstream I/O and reuses released slots", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl, {
+        maxServiceRequestsInflight: 1,
+        maxServiceRequestsInflightPerSubject: 1,
+      });
+      installBroker(config);
+      const first = executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/slow",
+        reason: "Hold the only downstream slot.",
+      });
+      await waitForRequestCount(downstream.requests, 1);
+
+      await expectGatewayError(() => executeServiceRequest(config, { ...actor(), subject: "ada@example.com" }, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        headers: { "X-API-Key": "gref_invalid" }, reason: "Reject before reference validation.",
+      }), "capacity_exceeded");
+      expect(downstream.requests.map((request) => request.path)).toEqual(["/api/slow"]);
+
+      await first;
+      await executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        reason: "Reuse the released slot.",
+      });
+      expect(downstream.requests.map((request) => request.path)).toEqual(["/api/slow", "/api/echo"]);
+    } finally {
+      await downstream.close();
+    }
+  });
+
+  it("limits one subject without blocking another subject below global capacity", async () => {
+    const downstream = await startDownstream();
+    try {
+      const config = gatewayConfig(downstream.baseUrl, {
+        maxServiceRequestsInflight: 2,
+        maxServiceRequestsInflightPerSubject: 1,
+      });
+      installBroker(config);
+      const first = executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/slow",
+        reason: "Hold this subject's slot.",
+      });
+      await waitForRequestCount(downstream.requests, 1);
+
+      await expectGatewayError(() => executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        reason: "Exceed this subject's capacity.",
+      }), "capacity_exceeded");
+      const other = await executeServiceRequest(config, { ...actor(), subject: "ada@example.com" }, {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        reason: "Use another subject's slot.",
+      });
+
+      expect(other.status_code).toBe(200);
+      await first;
+      expect(downstream.requests.map((request) => request.path)).toEqual(["/api/slow", "/api/echo"]);
+    } finally {
+      await downstream.close();
+    }
+  });
+
   it("rejects unknown and wrong-destination tokens before downstream calls", async () => {
     const downstream = await startDownstream();
     try {
@@ -576,7 +638,11 @@ describe("HTTP gateway", () => {
   it("reports downstream timeouts", async () => {
     const downstream = await startDownstream();
     try {
-      const config = gatewayConfig(downstream.baseUrl, { timeout: "10ms" });
+      const config = gatewayConfig(downstream.baseUrl, {
+        timeout: "10ms",
+        maxServiceRequestsInflight: 1,
+        maxServiceRequestsInflightPerSubject: 1,
+      });
       installBroker(config);
 
       await expectGatewayError(() => executeServiceRequest(config, actor(), {
@@ -586,6 +652,11 @@ describe("HTTP gateway", () => {
         path: "/api/slow",
         reason: "Check timeout.",
       }), "downstream_timeout");
+      const response = await executeServiceRequest(config, actor(), {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        reason: "Reuse capacity after timeout.",
+      });
+      expect(response.status_code).toBe(200);
     } finally {
       await downstream.close();
     }
@@ -801,6 +872,8 @@ function gatewayConfig(baseUrl: string, options: {
   timeout?: string;
   maxRequestBody?: string;
   maxResponseBody?: string;
+  maxServiceRequestsInflight?: number;
+  maxServiceRequestsInflightPerSubject?: number;
   tlsVerify?: boolean;
   headerTemplate?: { prefix?: string; suffix?: string; enforce?: boolean };
 } = {}): GatewayConfig {
@@ -817,6 +890,8 @@ function gatewayConfig(baseUrl: string, options: {
     limits: {
       max_request_body: options.maxRequestBody ?? "1mb",
       max_response_body: options.maxResponseBody ?? "1mb",
+      max_service_requests_inflight: options.maxServiceRequestsInflight ?? 32,
+      max_service_requests_inflight_per_subject: options.maxServiceRequestsInflightPerSubject ?? 4,
       timeout: options.timeout ?? "1s",
     },
     services: {
@@ -882,6 +957,14 @@ async function expectGatewayError(fn: () => Promise<unknown>, code: GatewayError
     expect(error).toBeInstanceOf(GatewayError);
     expect((error as GatewayError).code).toBe(code);
   }
+}
+
+async function waitForRequestCount(requests: unknown[], count: number): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (requests.length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error(`Timed out waiting for ${count} downstream request(s)`);
 }
 
 async function startDownstream() {

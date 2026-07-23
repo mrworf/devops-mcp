@@ -104,6 +104,8 @@ export interface LimitsConfig {
   maxRefreshTokenRecords: number;
   maxOAuthClientMetadataInflight: number;
   maxOAuthClientMetadataInflightPerOrigin: number;
+  maxServiceRequestsInflight: number;
+  maxServiceRequestsInflightPerSubject: number;
   maxRequestBodyBytes: number;
   maxResponseBodyBytes: number;
   timeoutMs: number;

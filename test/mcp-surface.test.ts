@@ -5,6 +5,7 @@ import { validateConfig } from "../src/config.js";
 import { MCP_INSTRUCTIONS } from "../src/mcp/instructions.js";
 import { callTool, toolDescriptors } from "../src/mcp/tools.js";
 import { createGatewayServer } from "../src/server.js";
+import { getServiceRequestLimiter } from "../src/serviceRequestLimiter.js";
 
 describe("MCP surface", () => {
   it("keeps the required safety opening in the first 512 instruction characters", () => {
@@ -254,6 +255,27 @@ describe("MCP surface", () => {
     expect(empty).toMatchObject({ isError: true, structuredContent: { error: { code: "unknown_access" } } });
     expect(removed).toMatchObject({ isError: true, structuredContent: { error: { code: "not_implemented" } } });
     expect(malformedServiceReference).toMatchObject({ isError: true, structuredContent: { error: { code: "reference_invalid" } } });
+  });
+
+  it("returns a structured capacity error for saturated authenticated service work", async () => {
+    const config = fixtureConfig({ maxServiceRequestsInflight: 1, maxServiceRequestsInflightPerSubject: 1 });
+    const auth = { subject: "bearer-dev", scopes: ["gateway.request"], mode: "bearer" as const };
+    const release = getServiceRequestLimiter(config).acquire(auth.subject);
+    if (release === undefined) throw new Error("Expected admission slot");
+
+    try {
+      const result = await callTool("service_request", {
+        service: "demo-service", destination: "primary", method: "GET", path: "/api/echo",
+        reason: "Verify structured capacity rejection.",
+      }, config, auth);
+
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: "capacity_exceeded" } },
+      });
+    } finally {
+      release();
+    }
   });
 
   it("uses gateway service references across independent stateless requests", async () => {
@@ -532,12 +554,16 @@ function fixtureConfig(options: {
   publicResource?: string;
   noAuth?: boolean;
   binaryResponse?: { scan?: boolean; max_size?: string };
+  maxServiceRequestsInflight?: number;
+  maxServiceRequestsInflightPerSubject?: number;
 } = {}) {
   return validateConfig({
     server: { listen: "127.0.0.1:8080", mcp_path: "/mcp", ...(options.publicResource === undefined ? {} : { resource: options.publicResource }) },
     auth: { mode: "bearer", bearer: { token_env: "TEST_GATEWAY_TOKEN" } },
     limits: {
       max_inbound_body: options.maxInboundBody ?? "1mb",
+      max_service_requests_inflight: options.maxServiceRequestsInflight ?? 32,
+      max_service_requests_inflight_per_subject: options.maxServiceRequestsInflightPerSubject ?? 4,
     },
     services: {
       "demo-service": {
