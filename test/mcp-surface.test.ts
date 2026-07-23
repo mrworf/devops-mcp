@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config.js";
@@ -241,6 +242,7 @@ describe("MCP surface", () => {
         },
       });
       expect(initialize.body.result.serverInfo.name).toBe("secretsauce-mcp");
+      expect(initialize.body.result.serverInfo.version).toBe(JSON.parse(readFileSync("package.json", "utf8")).version);
       expect(initialize.body.result.serverInfo.name).not.toBe(["agent", "credential", "gateway", "mcp"].join("-"));
       expect(initialize.body.result.serverInfo.icons).toEqual([{
         src: `${fixture.baseUrl}/assets/brand/secretsauce-icon.png`,

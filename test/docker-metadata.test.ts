@@ -72,6 +72,14 @@ describe("Docker CI metadata", () => {
     expect(steps.some((step) => step.uses === "actions/setup-node@v5")).toBe(true);
     expect(steps.find((step) => step.id === "meta")?.run).toBe("node scripts/docker-metadata.mjs");
   });
+
+  it("includes package metadata beside compiled server files in the runtime image", () => {
+    const source = readFileSync("Dockerfile", "utf8");
+    const runtimeStage = source.slice(source.lastIndexOf("FROM node:22-alpine"));
+
+    expect(runtimeStage).toContain("COPY --from=build /app/dist ./dist");
+    expect(runtimeStage).toContain("COPY package.json ./");
+  });
 });
 
 function runMetadata(overrides: Record<string, string>): Record<string, string[]> {

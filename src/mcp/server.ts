@@ -12,6 +12,7 @@ import type { AuthContext, GatewayConfig } from "../types.js";
 import { readBoundedBody } from "../httpBody.js";
 import { BRAND_ICON_PATH, publicBrandAssetUrl } from "../brandAssets.js";
 import type { RequestDependencies } from "../requestDependencies.js";
+import { PACKAGE_VERSION } from "../version.js";
 
 type NodeRequestWithBody = IncomingMessage & { body?: unknown };
 
@@ -19,7 +20,7 @@ export function createMcpServer(config: GatewayConfig, iconUrl: string, dependen
   const server = new Server(
     {
       name: "secretsauce-mcp",
-      version: "0.1.0",
+      version: PACKAGE_VERSION,
       icons: [{ src: iconUrl, sizes: ["512x512"], mimeType: "image/png" }],
     },
     {
