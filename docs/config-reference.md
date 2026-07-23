@@ -2,6 +2,14 @@
 
 The gateway uses a primary YAML file, a Secretlint rules YAML, and a sensitive-name rules YAML, all mounted read-only in Docker. Secrets are not stored in these files; use environment variables or mounted files.
 
+## Supported Deployment Topology
+
+The supported replica count is exactly one gateway instance per configuration and public MCP endpoint. MCP HTTP is stateless at the transport layer, but gateway references, response-secret references, denial records, limiters, and other capability state are held by the owning process. Horizontal load balancing can route a follow-up call to a replica that does not own its reference and cause intermittent `reference_invalid` failures.
+
+Sticky sessions do not provide the missing shared atomic capability store: there is no MCP transport session to pin, affinity can be lost during restart or rebalance, and per-subject/service capacities must be coordinated atomically. Do not deploy multiple replicas until a shared capability store is implemented.
+
+The single instance should mount stable read-only built-in OAuth signing keys plus writable persistent audit storage. If built-in OAuth refresh continuity is enabled, mount its hash-only refresh-state path on writable persistent storage and allow only this one process to write it. Opaque `gref_` and `sec_` state remains intentionally ephemeral and must not be placed on a shared filesystem.
+
 ## Startup diagnostics
 
 Invalid gateway, Secretlint, and sensitive-name YAML stops startup with a structured `config_error`. Each actionable diagnostic includes the configuration file, dotted field path when known, 1-based line and column, a detailed reason, a sanitized source excerpt, and a caret. Missing fields point to the nearest existing parent node; unreadable files have no fabricated source position.

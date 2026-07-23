@@ -61,6 +61,15 @@ For every downstream request, the gateway validates the authenticated client, re
 
 Codex CLI, the Codex IDE extension, and ChatGPT desktop can use shared Codex MCP configuration. ChatGPT web does not read local Codex MCP configuration; web usage requires a hosted or plugin integration path.
 
+## Supported Deployment Topology
+
+> [!IMPORTANT]
+> Run exactly one SecretSauce gateway instance for each configuration and public MCP endpoint. Stateless MCP HTTP means every POST is authenticated independently; it does not make gateway application state stateless.
+
+Gateway references, response-secret references, denial records, and other runtime capability state are instance-local and intentionally ephemeral. A load balancer distributing requests across replicas can send a follow-up request to an instance that does not own its reference, causing apparently random reference failures. Sticky sessions are not a supported substitute: MCP has no transport session to pin, rebalancing and restarts still lose affinity, and capability limits require atomic shared state. Horizontal replicas require a shared atomic capability store, which this release does not provide.
+
+For the supported single instance, mount writable persistent storage for audit JSONL and, when configured, the built-in OAuth hash-only refresh-state file. The refresh-state file has a single-process writer contract. Mount the built-in OAuth signing key from stable read-only storage so access tokens survive restarts. Do not mount or attempt to persist `gref_` or `sec_` runtime state; those references expire on restart by design.
+
 ## Container Image
 
 Images are published to GitHub Container Registry:

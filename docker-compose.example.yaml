@@ -1,5 +1,9 @@
 services:
   secretsauce:
+    # Supported topology: exactly one replica. Runtime references are instance-local;
+    # sticky sessions do not replace the unimplemented shared atomic capability store.
+    deploy:
+      replicas: 1
     build: .
     image: secretsauce-mcp:latest
     ports:
@@ -11,9 +15,13 @@ services:
       # Sensitive-name rules use the same immutable-default/custom-read-only pattern.
       - ./config/sensitive-names.yaml:/config/sensitive-names.yaml:ro
       - ./secrets:/run/secrets:ro
+      # Stable read-only signing keys keep built-in OAuth access tokens valid after restart.
       - ./oauth:/run/oauth:ro
+      # Audit and hash-only OAuth refresh state need writable persistent storage.
       - ./audit:/var/lib/secretsauce/audit
+      # This refresh-state mount has a single-process writer contract.
       - ./oauth-state:/var/lib/secretsauce/oauth
+      # gref_/sec_ capability state is intentionally ephemeral and is not mounted.
     environment:
       CONFIG_PATH: /config/config.yaml
       SECRETLINT_CONFIG_PATH: /config/secretlint.yaml
