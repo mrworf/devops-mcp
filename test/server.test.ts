@@ -1,10 +1,10 @@
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { validateConfig } from "../src/config.js";
-import { createGatewayServer } from "../src/server.js";
+import { createGatewayServer, installShutdownSignalHandlers, startServer } from "../src/server.js";
 import { BRAND_ICON_PATH, BRAND_LOCKUP_PATH } from "../src/brandAssets.js";
 import { AuditSink } from "../src/audit.js";
 import { GatewayRuntime } from "../src/runtime.js";
@@ -13,6 +13,7 @@ import { SecretScanBusyError } from "../src/secretScannerPool.js";
 import { TokenBroker } from "../src/tokens.js";
 import { explainDenial } from "../src/denials.js";
 import { GatewayError } from "../src/errors.js";
+import { createLogger } from "../src/logger.js";
 
 describe("health server", () => {
   it("returns ready health status", async () => {
@@ -312,7 +313,75 @@ describe("health server", () => {
       await Promise.all([first.close(), second.close()]);
     }
   });
+
+  it("closes the listening server before the runtime through one idempotent application path", async () => {
+    const config = serverConfig();
+    config.server.port = 0;
+    const application = await startServer(config);
+    const order: string[] = [];
+    application.server.once("close", () => order.push("server"));
+    const originalClose = application.runtime.close.bind(application.runtime);
+    const runtimeClose = vi.spyOn(application.runtime, "close").mockImplementation(async () => {
+      order.push("runtime");
+      await originalClose();
+    });
+
+    await Promise.all([application.close(), application.close()]);
+
+    expect(order).toEqual(["server", "runtime"]);
+    expect(runtimeClose).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["SIGTERM", "SIGINT"] as const)("handles %s with one sanitized graceful shutdown", async (signal) => {
+    const target = new TestSignalTarget();
+    const close = vi.fn(async () => undefined);
+    const lines: string[] = [];
+    const handlers = installShutdownSignalHandlers({ close }, createLogger({ level: "info" }, (line) => lines.push(line)), target);
+
+    target.emit(signal, signal);
+    target.emit(signal, signal);
+    await handlers.completion();
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(target.exitCode).toBe(0);
+    expect(target.listenerCount("SIGTERM")).toBe(0);
+    expect(target.listenerCount("SIGINT")).toBe(0);
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(expect.objectContaining({
+      event: "runtime.shutdown_completed", signal,
+    }));
+  });
+
+  it("does not double-close or log sensitive error text when shutdown fails", async () => {
+    const target = new TestSignalTarget();
+    const close = vi.fn(async () => { throw new Error("raw-secret /private/audit.jsonl"); });
+    const lines: string[] = [];
+    const handlers = installShutdownSignalHandlers({ close }, createLogger({ level: "info" }, (line) => lines.push(line)), target);
+
+    target.emit("SIGTERM", "SIGTERM");
+    target.emit("SIGINT", "SIGINT");
+    await handlers.completion();
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(target.exitCode).toBe(1);
+    expect(lines.join("\n")).not.toContain("raw-secret");
+    expect(lines.join("\n")).not.toContain("/private");
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(expect.objectContaining({
+      event: "runtime.shutdown_failed", error_type: "Error",
+    }));
+  });
+
+  it("does not install process signal handlers from reusable server construction", () => {
+    const before = { sigterm: process.listenerCount("SIGTERM"), sigint: process.listenerCount("SIGINT") };
+    const server = createGatewayServer(serverConfig());
+    server.close();
+    expect(process.listenerCount("SIGTERM")).toBe(before.sigterm);
+    expect(process.listenerCount("SIGINT")).toBe(before.sigint);
+  });
 });
+
+class TestSignalTarget extends EventEmitter {
+  exitCode: string | number | null | undefined;
+}
 
 async function fetchHealth(server: ReturnType<typeof createGatewayServer>) {
   const address = server.address();

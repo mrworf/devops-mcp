@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { authenticateRequest, buildAuthenticateChallenge, requireScopes } from "./auth.js";
 import { handleBuiltinOAuthRequest, isBuiltinOAuthRequest } from "./builtinOAuth.js";
 import { loadConfig } from "./config.js";
@@ -15,7 +15,10 @@ import { GatewayRuntime } from "./runtime.js";
 
 type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
-export function createGatewayServer(config: GatewayConfig, options: { auditSink?: AuditSink; runtime?: GatewayRuntime } = {}) {
+export function createGatewayServer(
+  config: GatewayConfig,
+  options: { auditSink?: AuditSink; runtime?: GatewayRuntime; closeRuntimeOnServerClose?: boolean } = {},
+) {
   const logger = createLogger(config.logging);
   for (const message of config.warnings) {
     logger.warn("config.warning", { message });
@@ -153,9 +156,11 @@ export function createGatewayServer(config: GatewayConfig, options: { auditSink?
       },
     });
   });
-  server.once("close", () => {
-    void runtime.close().catch(() => logger.error("runtime.close_failed"));
-  });
+  if (options.closeRuntimeOnServerClose !== false) {
+    server.once("close", () => {
+      void runtime.close().catch(() => logger.error("runtime.close_failed"));
+    });
+  }
   return server;
 }
 
@@ -199,12 +204,18 @@ function writeJson(response: ServerResponse, statusCode: number, body: unknown):
   response.end(`${JSON.stringify(body)}\n`);
 }
 
-export async function startServer(config: GatewayConfig): Promise<void> {
+export interface GatewayApplication {
+  server: Server;
+  runtime: GatewayRuntime;
+  close(): Promise<void>;
+}
+
+export async function startServer(config: GatewayConfig): Promise<GatewayApplication> {
   const runtime = new GatewayRuntime(config);
   let server: ReturnType<typeof createGatewayServer>;
   const logger = createLogger(config.logging);
   try {
-    server = createGatewayServer(config, { runtime });
+    server = createGatewayServer(config, { runtime, closeRuntimeOnServerClose: false });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(config.server.port, config.server.host, () => {
@@ -220,6 +231,61 @@ export async function startServer(config: GatewayConfig): Promise<void> {
     listen: config.server.listen,
     mcp_path: config.server.mcpPath,
   });
+  let closePromise: Promise<void> | undefined;
+  return {
+    server,
+    runtime,
+    close: () => {
+      closePromise ??= (async () => {
+        await closeHttpServer(server);
+        await runtime.close();
+      })();
+      return closePromise;
+    },
+  };
+}
+
+function closeHttpServer(server: Server): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+}
+
+interface SignalTarget {
+  once(event: NodeJS.Signals, listener: (signal: NodeJS.Signals) => void): unknown;
+  off(event: NodeJS.Signals, listener: (signal: NodeJS.Signals) => void): unknown;
+  exitCode: string | number | null | undefined;
+}
+
+export function installShutdownSignalHandlers(
+  application: Pick<GatewayApplication, "close">,
+  logger: ReturnType<typeof createLogger>,
+  signalTarget: SignalTarget = process,
+): { uninstall(): void; completion(): Promise<void> | undefined } {
+  let shutdown: Promise<void> | undefined;
+  const uninstall = () => {
+    signalTarget.off("SIGTERM", handleSignal);
+    signalTarget.off("SIGINT", handleSignal);
+  };
+  const handleSignal = (signal: NodeJS.Signals) => {
+    shutdown ??= application.close()
+      .then(() => {
+        logger.info("runtime.shutdown_completed", { signal });
+        signalTarget.exitCode = 0;
+      })
+      .catch((error: unknown) => {
+        logger.error("runtime.shutdown_failed", {
+          signal,
+          error_type: error instanceof Error ? error.name : "UnknownError",
+        });
+        signalTarget.exitCode = 1;
+      })
+      .finally(uninstall);
+  };
+  signalTarget.once("SIGTERM", handleSignal);
+  signalTarget.once("SIGINT", handleSignal);
+  return { uninstall, completion: () => shutdown };
 }
 
 function summarizeMcpBody(body: unknown): Record<string, unknown> {
@@ -272,7 +338,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   try {
     const config = loadConfig(configPath);
-    await startServer(config);
+    const application = await startServer(config);
+    installShutdownSignalHandlers(application, createLogger(config.logging));
   } catch (error) {
     console.error(JSON.stringify(startupErrorPayload(error)));
     process.exit(1);
