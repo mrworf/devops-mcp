@@ -1,8 +1,12 @@
 import { once } from "node:events";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { validateConfig } from "../src/config.js";
 import { createGatewayServer } from "../src/server.js";
 import { BRAND_ICON_PATH, BRAND_LOCKUP_PATH } from "../src/brandAssets.js";
+import { initializeAuditSink } from "../src/audit.js";
 
 describe("health server", () => {
   it("returns ready health status", async () => {
@@ -114,6 +118,22 @@ describe("health server", () => {
       service: "demo-service", access_id: "api_key",
     }));
     expect(lines.join("\n")).not.toContain("DEMO_API_KEY");
+  });
+
+  it("initializes and closes the durable audit sink with the server", async () => {
+    const config = serverConfig();
+    const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-server-audit-")), "nested", "audit.jsonl");
+    config.audit.file = auditFile;
+    const server = createGatewayServer(config);
+    const sink = initializeAuditSink(config);
+
+    expect(existsSync(auditFile)).toBe(true);
+    expect(sink.closed).toBe(false);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    server.close();
+    await once(server, "close");
+    expect(sink.closed).toBe(true);
   });
 });
 

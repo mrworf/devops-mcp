@@ -1,10 +1,10 @@
 import { once } from "node:events";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
-import { audit, clearAuditEvents, getAuditEvents, type AuditEvent } from "../src/audit.js";
+import { describe, expect, it, vi } from "vitest";
+import { AuditSink, audit, clearAuditEvents, closeAuditSink, getAuditEvents, type AuditEvent, type AuditFileOperations } from "../src/audit.js";
 import { validateConfig } from "../src/config.js";
 import { executeServiceRequest } from "../src/gateway.js";
 import { callTool } from "../src/mcp/tools.js";
@@ -215,8 +215,97 @@ describe("audit logging", () => {
     expect(getAuditEvents(config).map((event) => event.type)).toEqual(["tool_invocation", "tool_invocation"]);
     expect((getAuditEvents(config)[0] as { tool: string }).tool).toBe("get_gateway_service_references");
     expect(readJsonl(auditFile)).toHaveLength(3);
+    closeAuditSink(config);
+  });
+
+  it("owns one append descriptor, completes partial writes, and closes idempotently", () => {
+    const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-audit-writer-")), "nested", "audit.jsonl");
+    const config = auditConfig(auditFile, "http://127.0.0.1:1");
+    const operations = countingFileOperations();
+    const sink = new AuditSink(config, operations.api);
+
+    sink.record(toolEvent("list_services"));
+    sink.record(toolEvent("service_request"));
+    sink.close();
+    sink.close();
+
+    expect(operations.counts).toMatchObject({ ensureDirectory: 1, open: 1, close: 1 });
+    expect(operations.counts.write).toBeGreaterThan(2);
+    expect(readJsonl(auditFile)).toHaveLength(2);
+    expect(statSync(auditFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("marks open and write failures degraded without retaining sensitive diagnostics", () => {
+    const config = auditConfig("/not-used/audit.jsonl", "http://127.0.0.1:1", 1);
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((line) => lines.push(String(line)));
+    try {
+      const openFailure = new AuditSink(config, {
+        ensureDirectory: () => undefined,
+        open: () => { throw new Error("raw-secret /private/audit.jsonl"); },
+        write: () => { throw new Error("unexpected write"); },
+        close: () => undefined,
+      });
+      openFailure.record(toolEvent("list_services", "raw-secret"));
+      openFailure.record(toolEvent("service_request", "raw-secret"));
+      expect(openFailure.degraded).toBe(true);
+      expect(openFailure.events).toHaveLength(1);
+      expect(JSON.stringify(openFailure.events)).not.toContain("raw-secret");
+
+      const writeFailure = new AuditSink(config, {
+        ensureDirectory: () => undefined,
+        open: () => 42,
+        write: () => { throw new Error("raw-secret /private/audit.jsonl"); },
+        close: () => undefined,
+      });
+      expect(() => writeFailure.record(toolEvent("list_services", "raw-secret"))).not.toThrow();
+      expect(writeFailure.degraded).toBe(true);
+      expect(JSON.stringify(writeFailure.events)).not.toContain("raw-secret");
+    } finally {
+      log.mockRestore();
+    }
+    expect(lines.join("\n")).not.toContain("raw-secret");
+    expect(lines.join("\n")).not.toContain("/private/audit.jsonl");
+    expect(lines.map((line) => JSON.parse(line))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "audit.write_failed", operation: "open" }),
+      expect.objectContaining({ event: "audit.write_failed", operation: "write" }),
+    ]));
+  });
+
+  it("does not write, leak, or throw after close", () => {
+    const config = auditConfig("/not-used/audit.jsonl", "http://127.0.0.1:1");
+    let writes = 0;
+    const sink = new AuditSink(config, {
+      ensureDirectory: () => undefined,
+      open: () => 42,
+      write: (_fd, _buffer, _offset, length) => { writes += 1; return length; },
+      close: () => undefined,
+    });
+    sink.close();
+    expect(() => sink.record(toolEvent("service_request", "raw-secret"))).not.toThrow();
+    expect(writes).toBe(0);
+    expect(JSON.stringify(sink.events)).not.toContain("raw-secret");
   });
 });
+
+function toolEvent(tool: "list_services" | "service_request", subject = "actor"): AuditEvent {
+  return { type: "tool_invocation", subject, tool, outcome: "allow", timestamp: new Date().toISOString() };
+}
+
+function countingFileOperations() {
+  const counts = { ensureDirectory: 0, open: 0, write: 0, close: 0 };
+  const api: AuditFileOperations = {
+    ensureDirectory: (path) => { counts.ensureDirectory += 1; mkdirSync(path, { recursive: true }); },
+    open: (path) => { counts.open += 1; return openSync(path, "a", 0o600); },
+    write: (fd, buffer, offset, length) => {
+      counts.write += 1;
+      const partialLength = Math.max(1, Math.floor(length / 2));
+      return writeSync(fd, buffer, offset, partialLength);
+    },
+    close: (fd) => { counts.close += 1; closeSync(fd); },
+  };
+  return { counts, api };
+}
 
 function actor(): AuthContext {
   return { subject: "henric@example.com", scopes: ["gateway.request"], mode: "bearer" };

@@ -12,6 +12,7 @@ import { RequestBodyError } from "./httpBody.js";
 import { startMaintenance } from "./maintenance.js";
 import { handleBrandAssetRequest, isBrandAssetRequest } from "./brandAssets.js";
 import { GatewayError, type ConfigDiagnostic } from "./errors.js";
+import { closeAuditSink, initializeAuditSink } from "./audit.js";
 
 type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
@@ -27,6 +28,7 @@ export function createGatewayServer(config: GatewayConfig) {
       suggestion: "Store only the credential value and describe static request syntax with usage prefix or suffix.",
     });
   }
+  initializeAuditSink(config);
   initializeBuiltinOAuthState(config);
   const stopMaintenance = startMaintenance(config);
   const server = createServer(async (request, response) => {
@@ -148,7 +150,10 @@ export function createGatewayServer(config: GatewayConfig) {
       },
     });
   });
-  server.once("close", stopMaintenance);
+  server.once("close", () => {
+    stopMaintenance();
+    closeAuditSink(config);
+  });
   return server;
 }
 

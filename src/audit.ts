@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { createLogger } from "./logger.js";
 import type { GatewayConfig } from "./types.js";
@@ -63,45 +63,137 @@ export interface ToolInvocationAuditEvent {
 
 export type AuditEvent = ReferenceIssuedAuditEvent | ServiceRequestAuditEvent | ToolInvocationAuditEvent | InvalidOpaqueResponseReferencesAuditEvent;
 
-const auditEventStores = new WeakMap<GatewayConfig, AuditEvent[]>();
+export interface AuditFileOperations {
+  ensureDirectory(path: string): void;
+  open(path: string): number;
+  write(fd: number, buffer: Uint8Array, offset: number, length: number): number;
+  close(fd: number): void;
+}
+
+const defaultFileOperations: AuditFileOperations = {
+  ensureDirectory: (path) => mkdirSync(path, { recursive: true }),
+  open: (path) => openSync(path, "a", 0o600),
+  write: (fd, buffer, offset, length) => writeSync(fd, buffer, offset, length),
+  close: (fd) => closeSync(fd),
+};
+
+export class AuditSink {
+  readonly #events: AuditEvent[] = [];
+  readonly #logger;
+  #fd: number | undefined;
+  #degraded = false;
+  #closed = false;
+
+  constructor(
+    readonly config: GatewayConfig,
+    private readonly fileOperations: AuditFileOperations = defaultFileOperations,
+  ) {
+    this.#logger = createLogger(config.logging);
+    this.initializeFile();
+  }
+
+  get events(): readonly AuditEvent[] {
+    return this.#events;
+  }
+
+  get degraded(): boolean {
+    return this.#degraded;
+  }
+
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  record(event: AuditEvent): AuditEvent {
+    const sanitizedEvent = sanitizeAuditEvent(event, this.config);
+    this.#events.push(sanitizedEvent);
+    const capacity = this.config.audit.memoryEvents;
+    if (this.#events.length > capacity) this.#events.splice(0, this.#events.length - capacity);
+    if (this.#fd === undefined || this.#closed || this.#degraded) return sanitizedEvent;
+    this.writeRecord(Buffer.from(`${JSON.stringify(sanitizedEvent)}\n`, "utf8"));
+    return sanitizedEvent;
+  }
+
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    const fd = this.#fd;
+    this.#fd = undefined;
+    if (fd === undefined) return;
+    try {
+      this.fileOperations.close(fd);
+    } catch {
+      this.markDegraded("close");
+    }
+  }
+
+  private initializeFile(): void {
+    const path = this.config.audit.file;
+    if (path === undefined) return;
+    try {
+      this.fileOperations.ensureDirectory(dirname(path));
+      this.#fd = this.fileOperations.open(path);
+    } catch {
+      this.markDegraded("open");
+    }
+  }
+
+  private writeRecord(record: Uint8Array): void {
+    const fd = this.#fd;
+    if (fd === undefined) return;
+    try {
+      let offset = 0;
+      while (offset < record.length) {
+        const written = this.fileOperations.write(fd, record, offset, record.length - offset);
+        if (!Number.isInteger(written) || written <= 0) throw new Error("Audit write made no progress.");
+        offset += written;
+      }
+    } catch {
+      this.markDegraded("write");
+    }
+  }
+
+  private markDegraded(operation: "open" | "write" | "close"): void {
+    this.#degraded = true;
+    this.#logger.error("audit.write_failed", { operation });
+  }
+}
+
+const auditSinks = new WeakMap<GatewayConfig, AuditSink>();
 const fallbackAuditEvents: AuditEvent[] = [];
 
+export function initializeAuditSink(config: GatewayConfig): AuditSink {
+  let sink = auditSinks.get(config);
+  if (sink === undefined) {
+    sink = new AuditSink(config);
+    auditSinks.set(config, sink);
+  }
+  return sink;
+}
+
+export function closeAuditSink(config: GatewayConfig): void {
+  auditSinks.get(config)?.close();
+}
+
 export function getAuditEvents(config?: GatewayConfig): readonly AuditEvent[] {
-  return config === undefined ? fallbackAuditEvents : auditEventStores.get(config) ?? [];
+  return config === undefined ? fallbackAuditEvents : auditSinks.get(config)?.events ?? [];
 }
 
 export function clearAuditEvents(config?: GatewayConfig): void {
-  if (config === undefined) fallbackAuditEvents.length = 0;
-  else auditEventStores.delete(config);
+  if (config === undefined) {
+    fallbackAuditEvents.length = 0;
+    return;
+  }
+  closeAuditSink(config);
+  auditSinks.delete(config);
 }
 
 export function audit(event: AuditEvent, config?: GatewayConfig): AuditEvent {
-  const sanitizedEvent = sanitizeAuditEvent(event, config);
-  const events = auditStore(config);
-  events.push(sanitizedEvent);
-  const capacity = config?.audit.memoryEvents ?? 1000;
-  if (events.length > capacity) events.splice(0, events.length - capacity);
-  if (config?.audit.file === undefined) return sanitizedEvent;
-  try {
-    mkdirSync(dirname(config.audit.file), { recursive: true });
-    appendFileSync(config.audit.file, `${JSON.stringify(sanitizedEvent)}\n`, { encoding: "utf8" });
-  } catch (error) {
-    createLogger(config.logging).error("audit.write_failed", {
-      audit_file: config.audit.file,
-      error,
-    });
-  }
+  if (config !== undefined) return initializeAuditSink(config).record(event);
+  const sanitizedEvent = sanitizeAuditEvent(event);
+  fallbackAuditEvents.push(sanitizedEvent);
+  if (fallbackAuditEvents.length > 1000) fallbackAuditEvents.splice(0, fallbackAuditEvents.length - 1000);
   return sanitizedEvent;
-}
-
-function auditStore(config?: GatewayConfig): AuditEvent[] {
-  if (config === undefined) return fallbackAuditEvents;
-  let events = auditEventStores.get(config);
-  if (events === undefined) {
-    events = [];
-    auditEventStores.set(config, events);
-  }
-  return events;
 }
 
 export function referenceIssuedAuditEvent(input: ReferenceIssuedAuditEvent, config?: GatewayConfig): ReferenceIssuedAuditEvent {

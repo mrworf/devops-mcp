@@ -108,7 +108,7 @@ audit:
   file: /var/lib/secretsauce/audit/audit.jsonl
 ```
 
-`audit.memory_events` defaults to 1000 and bounds only the in-memory view; file-backed JSONL retains every successfully written event. Mount the audit directory on persistent writable storage in Docker. Audit events are sanitized and do not include raw credentials, opaque reference values, Authorization headers, cookies, request bodies, or downstream response bodies. Opaque downstream access references are still in-memory only and expire on restart.
+`audit.memory_events` defaults to 1000 and bounds only the in-memory view; file-backed JSONL retains every successfully written event. The application creates the configured directory once, opens one append-only descriptor at startup, creates a new audit file with mode `0600`, and closes the descriptor with the server. An open or write failure leaves requests fail-open but marks the sink degraded for readiness reporting. Mount the audit directory on persistent writable storage in Docker. Audit events are sanitized and do not include raw credentials, opaque reference values, Authorization headers, cookies, request bodies, or downstream response bodies. Opaque downstream access references are still in-memory only and expire on restart.
 
 Expired configured-access and response-secret reference records are removed before issuance and by the periodic state maintenance loop; all reference hashes, indexes, and in-memory values are removed together.
 `limits.max_token_records` defaults to 10000 and `limits.max_token_records_per_subject` to 1000. Both configured-access and response-secret capabilities count toward these limits. Live references are never silently evicted; issuance fails atomically with `capacity_exceeded`.
