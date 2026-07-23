@@ -5,13 +5,17 @@ import { validateConfig } from "../src/config.js";
 import { MCP_INSTRUCTIONS } from "../src/mcp/instructions.js";
 import { callTool as callToolWithDependencies, toolDescriptors } from "../src/mcp/tools.js";
 import { createGatewayServer } from "../src/server.js";
-import { getAuditEvents } from "../src/audit.js";
+import { getAuditEvents as getAuditEventsFromSink } from "../src/audit.js";
 import { publicRequestIdPattern } from "../src/requestId.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
-import { capabilitiesFor } from "./capabilityHelpers.js";
+import { capabilitiesFor, requestDependenciesFor } from "./capabilityHelpers.js";
 
 function callTool(name: string, args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext) {
-  return callToolWithDependencies(name, args, config, auth, capabilitiesFor(config));
+  return callToolWithDependencies(name, args, config, auth, requestDependenciesFor(config));
+}
+
+function getAuditEvents(config: GatewayConfig) {
+  return getAuditEventsFromSink(requestDependenciesFor(config).auditSink);
 }
 
 describe("MCP surface", () => {

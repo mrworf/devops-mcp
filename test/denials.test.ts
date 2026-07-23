@@ -5,12 +5,16 @@ import { executeServiceRequest as executeServiceRequestWithDependencies, type Se
 import { TokenBroker } from "../src/tokens.js";
 import { auth, registryConfig } from "./helpers.js";
 import { createRequestId, publicRequestIdPattern } from "../src/requestId.js";
-import { getAuditEvents } from "../src/audit.js";
+import { getAuditEvents as getAuditEventsFromSink } from "../src/audit.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
-import { capabilitiesFor, installTokenBroker } from "./capabilityHelpers.js";
+import { capabilitiesFor, installTokenBroker, requestDependenciesFor } from "./capabilityHelpers.js";
 
 function executeServiceRequest(config: GatewayConfig, actor: AuthContext, input: ServiceRequestInput) {
-  return executeServiceRequestWithDependencies(config, actor, input, capabilitiesFor(config));
+  return executeServiceRequestWithDependencies(config, actor, input, requestDependenciesFor(config));
+}
+
+function getAuditEvents(config: GatewayConfig) {
+  return getAuditEventsFromSink(requestDependenciesFor(config).auditSink);
 }
 
 function explainDenial(config: GatewayConfig, actor: { subject: string }, requestId: string) {
@@ -20,7 +24,7 @@ function explainDenial(config: GatewayConfig, actor: { subject: string }, reques
 describe("denial explanations", () => {
   it("returns safe denial context for the same subject", async () => {
     const config = registryConfig();
-    installTokenBroker(config, new TokenBroker(config));
+    installTokenBroker(config, (auditSink) => new TokenBroker(config, undefined, auditSink));
     let requestId = "";
 
     try {
@@ -51,7 +55,7 @@ describe("denial explanations", () => {
 
   it("keeps denial context subject-bound across stateless requests", async () => {
     const config = registryConfig();
-    installTokenBroker(config, new TokenBroker(config));
+    installTokenBroker(config, (auditSink) => new TokenBroker(config, undefined, auditSink));
     const sameSubject = auth("henric@example.com");
     let requestId = "";
 

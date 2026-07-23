@@ -7,7 +7,6 @@ import { getService, resolveDestination } from "./registry.js";
 import { audit } from "./audit.js";
 import { bodySummary, createLogger, headerNames } from "./logger.js";
 import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
-import { getResponseTokenizer, getResponseTokenizerRuleIds, getSecretScannerPoolStats } from "./secretRuntime.js";
 import { substituteRequestBodyTokens, substituteTokens } from "./substitution.js";
 import type { TokenRecord } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
@@ -23,7 +22,7 @@ import { decodeDeclaredBase64Bytes, encodeBase64Bytes } from "./base64Body.js";
 import { enforceCredentialHeaderUsage } from "./headerEnforcement.js";
 import { acquireServiceRequest } from "./serviceRequestLimiter.js";
 import { createRequestId } from "./requestId.js";
-import { createCapabilityDependencies, type CapabilityDependencies } from "./capabilities.js";
+import { createRequestDependencies, type RequestDependencies } from "./requestDependencies.js";
 
 export interface ServiceRequestInput {
   service: string;
@@ -68,7 +67,7 @@ export async function executeServiceRequest(
   config: GatewayConfig,
   auth: AuthContext,
   input: ServiceRequestInput,
-  dependencies: CapabilityDependencies = createCapabilityDependencies(config),
+  dependencies: RequestDependencies = createRequestDependencies(config),
 ): Promise<ServiceResponse> {
   const logger = createLogger(config.logging);
   validateRequestInput(input);
@@ -81,7 +80,7 @@ export async function executeServiceRequest(
   const requestId = createRequestId();
   const policy = evaluatePolicy(service, target, input.method);
   if (!policy.allowed) {
-    const denial = dependencies.denialStore.record({
+    const denial = dependencies.capabilities.denialStore.record({
       subject: auth.subject,
       reason: policy.reason,
       ...(policy.matchedRule === undefined ? {} : { matched_rule: policy.matchedRule }),
@@ -107,7 +106,7 @@ export async function executeServiceRequest(
       secret_tokenization_count: 0,
       error_code: "policy_denied",
       error_message: policy.reason,
-    }, config);
+    }, dependencies.auditSink);
     logger.debug("service_request.denied", {
       request_id: denial.request_id,
       subject: auth.subject,
@@ -126,7 +125,7 @@ export async function executeServiceRequest(
 
   let releaseCapacity: () => void;
   try {
-    releaseCapacity = acquireServiceRequest(dependencies.serviceRequestLimiter, auth.subject, service.id);
+    releaseCapacity = acquireServiceRequest(dependencies.capabilities.serviceRequestLimiter, auth.subject, service.id);
   } catch (error) {
     if (!(error instanceof GatewayError) || error.code !== "capacity_exceeded") throw error;
     audit({
@@ -148,7 +147,7 @@ export async function executeServiceRequest(
       secret_tokenization_count: 0,
       error_code: error.code,
       error_message: error.message,
-    }, config);
+    }, dependencies.auditSink);
     logger.debug("service_request.capacity_rejected", {
       request_id: requestId,
       subject: auth.subject,
@@ -163,7 +162,7 @@ export async function executeServiceRequest(
     throw new GatewayError(error.code, error.message, requestId);
   }
   try {
-  const broker = dependencies.tokenBroker;
+  const broker = dependencies.capabilities.tokenBroker;
   const tokenTarget = { service: service.id, destination: target.destination.id };
   let serviceReferenceRecord: TokenRecord | undefined;
   if (service.credentials.length === 0) {
@@ -237,10 +236,10 @@ export async function executeServiceRequest(
   const disabledSecretlintRules = matchedPolicyRule?.secretlint === undefined
     ? new Set<string>()
     : "enabled" in matchedPolicyRule.secretlint
-      ? new Set<string>(getResponseTokenizerRuleIds(config, broker))
+      ? new Set<string>(dependencies.secretRuntime.rules.map((rule) => rule.id))
       : new Set(matchedPolicyRule.secretlint.disabledRuleIds);
   const binaryPolicy = matchedPolicyRule?.binaryResponse ?? { scan: true, maxBytes: DEFAULT_BINARY_RESPONSE_MAX_BYTES };
-  const tokenizer = getResponseTokenizer(config, broker);
+  const tokenizer = dependencies.secretRuntime.tokenizer;
   let binaryScanBypassed = false;
   let tokenized: Awaited<ReturnType<typeof tokenizer.tokenizeBytes>>;
   if (classification.kind === "binary") {
@@ -318,7 +317,7 @@ export async function executeServiceRequest(
     secret_rule_ids: tokenized.ruleIds,
     response_internal_reference_ids: tokenized.internalRecordIds,
     ...(binaryScanBypassed ? { binary_scan_bypassed: true } : {}),
-  }, config);
+  }, dependencies.auditSink);
   if (tokenized.warnings.length > 0) {
     audit({
       type: "invalid_opaque_response_references",
@@ -328,7 +327,7 @@ export async function executeServiceRequest(
       destination: target.destination.id,
       warnings: tokenized.warnings,
       timestamp: new Date().toISOString(),
-    }, config);
+    }, dependencies.auditSink);
   }
   logger.debug("service_request.completed", {
     request_id: requestId,
@@ -344,7 +343,7 @@ export async function executeServiceRequest(
     secret_tokenized: tokenized.secretTokenized,
     secret_tokenization_count: tokenized.secretTokenizationCount,
     secret_rule_ids: tokenized.ruleIds,
-    secret_scan_pool: getSecretScannerPoolStats(config, broker),
+    secret_scan_pool: dependencies.secretRuntime.pool.stats(),
     response_kind: classification.kind,
     response_bytes: returnedBody.byteLength,
     truncated: rawBody.truncated,

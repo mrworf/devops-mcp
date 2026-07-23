@@ -3,15 +3,19 @@ import { createServer as createHttpsServer } from "node:https";
 import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { validateConfig } from "../src/config.js";
-import { getAuditEvents } from "../src/audit.js";
+import { getAuditEvents as getAuditEventsFromSink, type AuditSink } from "../src/audit.js";
 import { GatewayError } from "../src/errors.js";
 import { executeServiceRequest as executeServiceRequestWithDependencies, type ServiceRequestInput } from "../src/gateway.js";
 import { TokenBroker } from "../src/tokens.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
-import { capabilitiesFor, installTokenBroker } from "./capabilityHelpers.js";
+import { installTokenBroker, requestDependenciesFor } from "./capabilityHelpers.js";
 
 function executeServiceRequest(config: GatewayConfig, auth: AuthContext, input: ServiceRequestInput) {
-  return executeServiceRequestWithDependencies(config, auth, input, capabilitiesFor(config));
+  return executeServiceRequestWithDependencies(config, auth, input, requestDependenciesFor(config));
+}
+
+function getAuditEvents(config: GatewayConfig) {
+  return getAuditEventsFromSink(requestDependenciesFor(config).auditSink);
 }
 
 describe("HTTP gateway", () => {
@@ -46,8 +50,7 @@ describe("HTTP gateway", () => {
     try {
       let now = 1_000;
       const config = gatewayConfig(downstream.baseUrl, { noAuth: true, includeSecondary: true });
-      const broker = new TokenBroker(config, () => now);
-      installTokenBroker(config, broker);
+      const broker = installTokenBroker(config, (auditSink: AuditSink) => new TokenBroker(config, () => now, auditSink));
       const token = broker.issueTokens(actor(), {
         service: "demo-service", destination: "primary", access_ids: ["gateway_access"], reason: "Inspect cameras.",
       }).tokens[0]?.token ?? "";
@@ -988,9 +991,7 @@ function gatewayConfig(baseUrl: string, options: {
 }
 
 function installBroker(config: GatewayConfig): TokenBroker {
-  const broker = new TokenBroker(config);
-  installTokenBroker(config, broker);
-  return broker;
+  return installTokenBroker(config, (auditSink) => new TokenBroker(config, undefined, auditSink));
 }
 
 function actor(): AuthContext {

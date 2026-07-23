@@ -11,11 +11,11 @@ import { callTool, toolDescriptors } from "./tools.js";
 import type { AuthContext, GatewayConfig } from "../types.js";
 import { readBoundedBody } from "../httpBody.js";
 import { BRAND_ICON_PATH, publicBrandAssetUrl } from "../brandAssets.js";
-import type { CapabilityDependencies } from "../capabilities.js";
+import type { RequestDependencies } from "../requestDependencies.js";
 
 type NodeRequestWithBody = IncomingMessage & { body?: unknown };
 
-export function createMcpServer(config: GatewayConfig, iconUrl: string, dependencies: CapabilityDependencies): Server {
+export function createMcpServer(config: GatewayConfig, iconUrl: string, dependencies: RequestDependencies): Server {
   const server = new Server(
     {
       name: "secretsauce-mcp",
@@ -61,7 +61,7 @@ export async function handleMcpRequest(
   request: IncomingMessage,
   response: ServerResponse,
   parsedBody: unknown,
-  dependencies: CapabilityDependencies,
+  dependencies: RequestDependencies,
 ): Promise<void> {
   const auth = (request as IncomingMessage & { auth?: AuthContext }).auth;
   if (auth === undefined) {

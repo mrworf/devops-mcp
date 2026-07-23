@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { GatewayError } from "./errors.js";
 import { GATEWAY_ACCESS_ID, GATEWAY_ACCESS_USAGE_HINT, getCredential, getService } from "./registry.js";
-import type { ReferenceIssuedAuditEvent } from "./audit.js";
+import type { AuditSink, ReferenceIssuedAuditEvent } from "./audit.js";
 import { referenceIssuedAuditEvent } from "./audit.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
 import { credentialUsageHint } from "./credentialUsage.js";
@@ -81,6 +81,7 @@ export class TokenBroker {
   constructor(
     private readonly config: GatewayConfig,
     private readonly now: () => number = () => Date.now(),
+    private readonly auditSink?: AuditSink,
   ) {}
 
   issueTokens(auth: AuthContext, input: TokenRequestInput): TokenIssueResult {
@@ -150,7 +151,7 @@ export class TokenBroker {
       internal_reference_ids: internalReferenceIds,
       reason: input.reason,
       timestamp: new Date(now).toISOString(),
-    }, this.config);
+    }, this.auditSink);
     return { tokens: issued, audit };
   }
 

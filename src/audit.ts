@@ -104,6 +104,10 @@ export class AuditSink {
     return this.#closed;
   }
 
+  clear(): void {
+    this.#events.length = 0;
+  }
+
   record(event: AuditEvent): AuditEvent {
     const sanitizedEvent = sanitizeAuditEvent(event, this.config);
     this.#events.push(sanitizedEvent);
@@ -159,43 +163,25 @@ export class AuditSink {
   }
 }
 
-const auditSinks = new WeakMap<GatewayConfig, AuditSink>();
 const fallbackAuditEvents: AuditEvent[] = [];
 
-export function initializeAuditSink(config: GatewayConfig): AuditSink {
-  let sink = auditSinks.get(config);
-  if (sink === undefined) {
-    sink = new AuditSink(config);
-    auditSinks.set(config, sink);
-  }
-  return sink;
+export function getAuditEvents(sink?: AuditSink): readonly AuditEvent[] {
+  return sink?.events ?? fallbackAuditEvents;
 }
 
-export function closeAuditSink(config: GatewayConfig): void {
-  auditSinks.get(config)?.close();
+export function clearAuditEvents(sink?: AuditSink): void {
+  if (sink !== undefined) sink.clear();
+  else fallbackAuditEvents.length = 0;
 }
 
-export function getAuditEvents(config?: GatewayConfig): readonly AuditEvent[] {
-  return config === undefined ? fallbackAuditEvents : auditSinks.get(config)?.events ?? [];
-}
-
-export function clearAuditEvents(config?: GatewayConfig): void {
-  if (config === undefined) {
-    fallbackAuditEvents.length = 0;
-    return;
-  }
-  closeAuditSink(config);
-  auditSinks.delete(config);
-}
-
-export function audit(event: AuditEvent, config?: GatewayConfig): AuditEvent {
-  if (config !== undefined) return initializeAuditSink(config).record(event);
+export function audit(event: AuditEvent, sink?: AuditSink): AuditEvent {
+  if (sink !== undefined) return sink.record(event);
   const sanitizedEvent = sanitizeAuditEvent(event);
   fallbackAuditEvents.push(sanitizedEvent);
   if (fallbackAuditEvents.length > 1000) fallbackAuditEvents.splice(0, fallbackAuditEvents.length - 1000);
   return sanitizedEvent;
 }
 
-export function referenceIssuedAuditEvent(input: ReferenceIssuedAuditEvent, config?: GatewayConfig): ReferenceIssuedAuditEvent {
-  return audit(input, config) as ReferenceIssuedAuditEvent;
+export function referenceIssuedAuditEvent(input: ReferenceIssuedAuditEvent, sink?: AuditSink): ReferenceIssuedAuditEvent {
+  return audit(input, sink) as ReferenceIssuedAuditEvent;
 }

@@ -12,11 +12,7 @@ export interface SecretRuntime {
   rules: ReturnType<typeof resolveSecretlintRules>;
 }
 
-const runtimes = new WeakMap<GatewayConfig, SecretRuntime>();
-
-export function initializeSecretRuntime(config: GatewayConfig, tokenBroker: TokenBroker): SecretRuntime {
-  const existing = runtimes.get(config);
-  if (existing) return existing;
+export function createSecretRuntime(config: GatewayConfig, tokenBroker: TokenBroker): SecretRuntime {
   const bundledPath = fileURLToPath(new URL("../config/secretlint.yaml", import.meta.url));
   const bundled = loadSecretlintConfig(bundledPath);
   const configured = process.env.SECRETLINT_CONFIG_PATH ? loadSecretlintConfig(process.env.SECRETLINT_CONFIG_PATH) : bundled;
@@ -28,25 +24,11 @@ export function initializeSecretRuntime(config: GatewayConfig, tokenBroker: Toke
   const sensitiveNames = new SensitiveNameMatcher(resolveSensitiveNameConfig(configuredSensitive, bundledSensitive));
   const rules = resolveSecretlintRules(configured, bundled.rules);
   const pool = new SecretScannerPool();
-  const runtime = {
+  return {
     pool,
     rules,
     tokenizer: new ResponseTokenizer(
       tokenBroker, pool, rules, configured.limits.maxUniqueSecrets, configured.limits.timeoutMs, sensitiveNames,
     ),
   };
-  runtimes.set(config, runtime);
-  return runtime;
-}
-
-export function getResponseTokenizer(config: GatewayConfig, tokenBroker: TokenBroker): ResponseTokenizer {
-  return initializeSecretRuntime(config, tokenBroker).tokenizer;
-}
-
-export function getResponseTokenizerRuleIds(config: GatewayConfig, tokenBroker: TokenBroker): string[] {
-  return initializeSecretRuntime(config, tokenBroker).rules.map((rule) => rule.id);
-}
-
-export function getSecretScannerPoolStats(config: GatewayConfig, tokenBroker: TokenBroker) {
-  return initializeSecretRuntime(config, tokenBroker).pool.stats();
 }

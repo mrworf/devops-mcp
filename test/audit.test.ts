@@ -4,20 +4,43 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
-import { AuditSink, audit, clearAuditEvents, closeAuditSink, getAuditEvents, type AuditEvent, type AuditFileOperations } from "../src/audit.js";
+import {
+  AuditSink,
+  audit as auditToSink,
+  clearAuditEvents as clearSinkEvents,
+  getAuditEvents as getSinkEvents,
+  type AuditEvent,
+  type AuditFileOperations,
+} from "../src/audit.js";
 import { validateConfig } from "../src/config.js";
 import { executeServiceRequest as executeServiceRequestWithDependencies, type ServiceRequestInput } from "../src/gateway.js";
 import { callTool as callToolWithDependencies } from "../src/mcp/tools.js";
 import { TokenBroker } from "../src/tokens.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
-import { capabilitiesFor, installTokenBroker } from "./capabilityHelpers.js";
+import { installTokenBroker, requestDependenciesFor } from "./capabilityHelpers.js";
 
 function executeServiceRequest(config: GatewayConfig, auth: AuthContext, input: ServiceRequestInput) {
-  return executeServiceRequestWithDependencies(config, auth, input, capabilitiesFor(config));
+  return executeServiceRequestWithDependencies(config, auth, input, requestDependenciesFor(config));
 }
 
 function callTool(name: string, args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext) {
-  return callToolWithDependencies(name, args, config, auth, capabilitiesFor(config));
+  return callToolWithDependencies(name, args, config, auth, requestDependenciesFor(config));
+}
+
+function clearAuditEvents(config: GatewayConfig): void {
+  clearSinkEvents(requestDependenciesFor(config).auditSink);
+}
+
+function getAuditEvents(config: GatewayConfig): readonly AuditEvent[] {
+  return getSinkEvents(requestDependenciesFor(config).auditSink);
+}
+
+function audit(event: AuditEvent, config: GatewayConfig): AuditEvent {
+  return auditToSink(event, requestDependenciesFor(config).auditSink);
+}
+
+function closeAuditSink(config: GatewayConfig): void {
+  requestDependenciesFor(config).auditSink.close();
 }
 
 describe("audit logging", () => {
@@ -44,8 +67,7 @@ describe("audit logging", () => {
       DEMO_API_KEY: "raw-secret",
     });
     clearAuditEvents(config);
-    const broker = new TokenBroker(config);
-    installTokenBroker(config, broker);
+    const broker = installTokenBroker(config, (auditSink) => new TokenBroker(config, undefined, auditSink));
     const auth = actor();
     const issued = broker.issueTokens(auth, {
       service: "demo-service",
@@ -84,8 +106,7 @@ describe("audit logging", () => {
       const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-audit-")), "audit.jsonl");
       const config = auditConfig(auditFile, downstream.baseUrl);
       clearAuditEvents(config);
-      const broker = new TokenBroker(config);
-      installTokenBroker(config, broker);
+      const broker = installTokenBroker(config, (auditSink) => new TokenBroker(config, undefined, auditSink));
       const auth = actor();
       const issued = broker.issueTokens(auth, {
         service: "demo-service",
@@ -169,8 +190,7 @@ describe("audit logging", () => {
     const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-audit-sanitize-")), "audit.jsonl");
     const config = auditConfig(auditFile, "http://127.0.0.1:1");
     clearAuditEvents(config);
-    const broker = new TokenBroker(config);
-    installTokenBroker(config, broker);
+    const broker = installTokenBroker(config, (auditSink) => new TokenBroker(config, undefined, auditSink));
     const first = broker.issueTokens(actor(), {
       service: "demo-service", destination: "primary", access_ids: ["api_key"],
       reason: "Basic authentication is enabled for this benign request.",
@@ -203,8 +223,7 @@ describe("audit logging", () => {
     const auditDirectory = mkdtempSync(join(tmpdir(), "gateway-audit-dir-"));
     const config = auditConfig(auditDirectory, "http://127.0.0.1:1");
     clearAuditEvents(config);
-    const broker = new TokenBroker(config);
-    installTokenBroker(config, broker);
+    const broker = installTokenBroker(config, (auditSink) => new TokenBroker(config, undefined, auditSink));
 
     expect(() => broker.issueTokens(actor(), {
       service: "demo-service",

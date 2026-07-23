@@ -1,6 +1,6 @@
-import { AuditSink, initializeAuditSink } from "./audit.js";
+import { AuditSink } from "./audit.js";
 import { startMaintenance } from "./maintenance.js";
-import { initializeSecretRuntime, type SecretRuntime } from "./secretRuntime.js";
+import { createSecretRuntime, type SecretRuntime } from "./secretRuntime.js";
 import type { GatewayConfig } from "./types.js";
 import { createCapabilityDependencies, type CapabilityDependencies } from "./capabilities.js";
 import { registerMaintenanceTask } from "./maintenance.js";
@@ -20,11 +20,11 @@ export class GatewayRuntime {
   #closePromise: Promise<void> | undefined;
 
   constructor(readonly config: GatewayConfig, options: GatewayRuntimeOptions = {}) {
-    const auditSink = options.auditSink ?? initializeAuditSink(config);
+    const auditSink = options.auditSink ?? new AuditSink(config);
     let secretRuntime: SecretRuntime | undefined;
     try {
-      const capabilities = options.capabilities ?? createCapabilityDependencies(config);
-      secretRuntime = options.secretRuntime ?? initializeSecretRuntime(config, capabilities.tokenBroker);
+      const capabilities = options.capabilities ?? createCapabilityDependencies(config, auditSink);
+      secretRuntime = options.secretRuntime ?? createSecretRuntime(config, capabilities.tokenBroker);
       registerMaintenanceTask(config, (now) => capabilities.tokenBroker.sweepExpired(now));
       registerMaintenanceTask(config, (now) => capabilities.denialStore.sweep(now));
       const stopMaintenance = (options.startMaintenance ?? startMaintenance)(config);

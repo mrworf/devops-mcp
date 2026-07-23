@@ -7,7 +7,7 @@ import type { TokenRequestInput } from "../tokens.js";
 import { GatewayError } from "../errors.js";
 import { executeServiceRequest, type ServiceRequestInput } from "../gateway.js";
 import { explainDenial } from "../denials.js";
-import { createCapabilityDependencies, type CapabilityDependencies } from "../capabilities.js";
+import { createRequestDependencies, type RequestDependencies } from "../requestDependencies.js";
 import {
   emptyInputSchema,
   describeServicePolicyInputSchema,
@@ -154,7 +154,7 @@ export async function callTool(
   args: Record<string, unknown> | undefined,
   config: GatewayConfig,
   auth: AuthContext,
-  dependencies: CapabilityDependencies = createCapabilityDependencies(config),
+  dependencies: RequestDependencies = createRequestDependencies(config),
 ): Promise<ToolResult> {
   const descriptor = toolDescriptors.find((tool) => tool.name === name);
   if (!descriptor) {
@@ -163,13 +163,13 @@ export async function callTool(
   try {
     if (name === "list_services") {
       const services = listVisibleServices(config, auth);
-      auditTool(config, auth, name, "allow");
+      auditTool(auth, name, "allow", {}, dependencies.auditSink);
       return toolSuccess({ services }, `Found ${services.length} configured service(s).`);
     }
     if (name === "get_gateway_service_references") {
       const input = parseServiceReferenceRequest(args);
-      const result = dependencies.tokenBroker.issueTokens(auth, input);
-      auditTool(config, auth, name, "allow", { service: input.service });
+      const result = dependencies.capabilities.tokenBroker.issueTokens(auth, input);
+      auditTool(auth, name, "allow", { service: input.service }, dependencies.auditSink);
       const references = result.tokens.map((item) => ({
         access_id: item.credential_id,
         reference: item.token,
@@ -184,13 +184,13 @@ export async function callTool(
     if (name === "describe_service_policy") {
       const service = readString(args ?? {}, "service");
       const description = describeServicePolicy(config, auth, service);
-      auditTool(config, auth, name, "allow", { service });
+      auditTool(auth, name, "allow", { service }, dependencies.auditSink);
       return toolSuccess(description as unknown as Record<string, unknown>, `Policy for ${service} described.`);
     }
     if (name === "service_request") {
       const input = parseServiceRequest(args);
       const result = await executeServiceRequest(config, auth, input, dependencies);
-      auditTool(config, auth, name, "allow", { service: input.service, request_id: result.request_id });
+      auditTool(auth, name, "allow", { service: input.service, request_id: result.request_id }, dependencies.auditSink);
       const { binaryBody, binaryMimeType, ...structured } = result;
       const binaryContent = binaryBody === undefined || binaryMimeType === undefined
         ? []
@@ -211,20 +211,20 @@ export async function callTool(
     }
     if (name === "explain_denial") {
       const requestId = readString(args ?? {}, "request_id");
-      const explanation = explainDenial(dependencies.denialStore, auth, requestId);
+      const explanation = explainDenial(dependencies.capabilities.denialStore, auth, requestId);
       if (explanation === undefined) {
-        auditTool(config, auth, name, "deny", { request_id: requestId, error_code: "unknown_service" });
+        auditTool(auth, name, "deny", { request_id: requestId, error_code: "unknown_service" }, dependencies.auditSink);
         return toolError("unknown_service", "No denial context found for this request.");
       }
-      auditTool(config, auth, name, "allow", { request_id: requestId });
+      auditTool(auth, name, "allow", { request_id: requestId }, dependencies.auditSink);
       return toolSuccess(explanation as unknown as Record<string, unknown>, `Denial ${requestId} explained.`);
     }
   } catch (error) {
     if (error instanceof GatewayError) {
-      auditTool(config, auth, descriptor.name, "error", {
+      auditTool(auth, descriptor.name, "error", {
         ...(error.requestId === undefined ? {} : { request_id: error.requestId }),
         error_code: error.code,
-      });
+      }, dependencies.auditSink);
       return toolError(error.code, error.message, error.requestId);
     }
     throw error;
@@ -233,11 +233,11 @@ export async function callTool(
 }
 
 function auditTool(
-  config: GatewayConfig,
   auth: AuthContext,
   tool: ToolDescriptor["name"],
   outcome: "allow" | "deny" | "error",
   fields: { service?: string; request_id?: string; error_code?: string } = {},
+  auditSink?: import("../audit.js").AuditSink,
 ): void {
   if (tool !== "list_services" && tool !== "describe_service_policy" && tool !== "get_gateway_service_references" && tool !== "service_request" && tool !== "explain_denial") return;
   audit({
@@ -247,7 +247,7 @@ function auditTool(
     outcome,
     ...fields,
     timestamp: new Date().toISOString(),
-  }, config);
+  }, auditSink);
 }
 
 function parseServiceReferenceRequest(args: Record<string, unknown> | undefined): TokenRequestInput {

@@ -6,9 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 import { validateConfig } from "../src/config.js";
 import { createGatewayServer } from "../src/server.js";
 import { BRAND_ICON_PATH, BRAND_LOCKUP_PATH } from "../src/brandAssets.js";
-import { AuditSink, initializeAuditSink } from "../src/audit.js";
+import { AuditSink } from "../src/audit.js";
 import { GatewayRuntime } from "../src/runtime.js";
-import { initializeSecretRuntime } from "../src/secretRuntime.js";
+import { createSecretRuntime } from "../src/secretRuntime.js";
 import { SecretScanBusyError } from "../src/secretScannerPool.js";
 import { TokenBroker } from "../src/tokens.js";
 import { explainDenial } from "../src/denials.js";
@@ -130,8 +130,9 @@ describe("health server", () => {
     const config = serverConfig();
     const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-server-audit-")), "nested", "audit.jsonl");
     config.audit.file = auditFile;
-    const server = createGatewayServer(config);
-    const sink = initializeAuditSink(config);
+    const runtime = new GatewayRuntime(config);
+    const server = createGatewayServer(config, { runtime });
+    const sink = runtime.auditSink;
 
     expect(existsSync(auditFile)).toBe(true);
     expect(sink.closed).toBe(false);
@@ -222,7 +223,7 @@ describe("health server", () => {
   it("cleans resources created before partial runtime initialization failure", async () => {
     const config = serverConfig();
     const auditSink = new AuditSink(config);
-    const secretRuntime = initializeSecretRuntime(config, new TokenBroker(config));
+    const secretRuntime = createSecretRuntime(config, new TokenBroker(config));
 
     expect(() => new GatewayRuntime(config, {
       auditSink,
@@ -277,6 +278,36 @@ describe("health server", () => {
       expect(secondRelease).toBeTypeOf("function");
       for (const release of firstReleases) release?.();
       secondRelease?.();
+    } finally {
+      await Promise.all([first.close(), second.close()]);
+    }
+  });
+
+  it("isolates audit degradation, history, and scanner closure between runtimes", async () => {
+    const firstConfig = serverConfig();
+    const secondConfig = serverConfig();
+    firstConfig.audit.file = "/not-used/audit.jsonl";
+    const firstAudit = new AuditSink(firstConfig, {
+      ensureDirectory: () => undefined,
+      open: () => 42,
+      write: () => { throw new Error("runtime-specific write failure"); },
+      close: () => undefined,
+    });
+    const first = new GatewayRuntime(firstConfig, { auditSink: firstAudit });
+    const second = new GatewayRuntime(secondConfig);
+    try {
+      first.auditSink.record({
+        type: "tool_invocation", subject: "actor", tool: "list_services", outcome: "allow", timestamp: new Date().toISOString(),
+      });
+      expect(first.auditSink.degraded).toBe(true);
+      expect(first.auditSink.events).toHaveLength(1);
+      expect(second.auditSink.degraded).toBe(false);
+      expect(second.auditSink.events).toEqual([]);
+
+      await first.close();
+      await expect(first.secretRuntime.pool.scan("actor", "benign", [], 100))
+        .rejects.toBeInstanceOf(SecretScanBusyError);
+      await expect(second.secretRuntime.pool.scan("actor", "benign", [], 1_000)).resolves.toEqual([]);
     } finally {
       await Promise.all([first.close(), second.close()]);
     }
