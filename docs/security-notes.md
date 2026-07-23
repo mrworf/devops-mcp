@@ -21,4 +21,5 @@
 - MCP POST authentication occurs before bounded body parsing; declared and streamed inbound sizes are both enforced.
 - Avoid allowing endpoints that return backups, complete config dumps, token lists, private keys, or other bulk secret material.
 - Audit events are sanitized centrally before memory retention or JSONL writing. Caller-controlled text is checked for exact configured credentials, opaque reference candidates, canonical HTTP Basic credentials, and a bounded catalog of common credential patterns. Audit events do not include raw credentials, opaque reference values, Authorization headers, cookies, request bodies, or response bodies. Pattern scanning remains defense in depth rather than a universal secret classifier.
+- Durable audit open or write failure is fail-open for privileged operations but makes readiness fail with a path-free, sticky audit-degraded check until restart. Operators must monitor `/health` and audit storage capacity.
 - Debug logging is opt-in through `logging.level: debug` and records only sanitized structural details and tokenization counts.

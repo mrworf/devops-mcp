@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { validateConfig } from "../src/config.js";
 import { createGatewayServer } from "../src/server.js";
 import { BRAND_ICON_PATH, BRAND_LOCKUP_PATH } from "../src/brandAssets.js";
-import { initializeAuditSink } from "../src/audit.js";
+import { AuditSink, initializeAuditSink } from "../src/audit.js";
 
 describe("health server", () => {
   it("returns ready health status", async () => {
@@ -131,11 +131,77 @@ describe("health server", () => {
     expect(sink.closed).toBe(false);
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
+    const health = await fetchHealth(server);
+    expect(health.response.status).toBe(200);
+    expect(health.body).toEqual({ status: "ready", service_count: 1 });
     server.close();
     await once(server, "close");
     expect(sink.closed).toBe(true);
   });
+
+  it("reports a sanitized not-ready response after audit initialization failure", async () => {
+    const config = serverConfig();
+    config.audit.file = "/private/raw-secret/audit.jsonl";
+    const sink = new AuditSink(config, {
+      ensureDirectory: () => undefined,
+      open: () => { throw new Error("raw-secret /private/raw-secret/audit.jsonl"); },
+      write: () => { throw new Error("unexpected write"); },
+      close: () => undefined,
+    });
+    const server = createGatewayServer(config, { auditSink: sink });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const health = await fetchHealth(server);
+      expect(health.response.status).toBe(503);
+      expect(health.body).toEqual({ status: "not_ready", service_count: 1, checks: { audit: "degraded" } });
+      expect(JSON.stringify(health.body)).not.toContain("raw-secret");
+      expect(JSON.stringify(health.body)).not.toContain("/private");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("keeps audit write degradation sticky while requests remain fail-open", async () => {
+    const config = serverConfig();
+    config.audit.file = "/not-used/audit.jsonl";
+    let failWrite = true;
+    const sink = new AuditSink(config, {
+      ensureDirectory: () => undefined,
+      open: () => 42,
+      write: (_fd, _buffer, _offset, length) => {
+        if (failWrite) throw new Error("raw-secret /private/audit.jsonl");
+        return length;
+      },
+      close: () => undefined,
+    });
+    const server = createGatewayServer(config, { auditSink: sink });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      expect((await fetchHealth(server)).response.status).toBe(200);
+      expect(() => sink.record({
+        type: "tool_invocation", subject: "raw-secret", tool: "list_services", outcome: "allow", timestamp: new Date().toISOString(),
+      })).not.toThrow();
+      failWrite = false;
+      const degraded = await fetchHealth(server);
+      expect(degraded.response.status).toBe(503);
+      expect(degraded.body).toEqual({ status: "not_ready", service_count: 1, checks: { audit: "degraded" } });
+      expect((await fetchHealth(server)).response.status).toBe(503);
+      expect(JSON.stringify(sink.events)).not.toContain("raw-secret");
+    } finally {
+      server.close();
+    }
+  });
 });
+
+async function fetchHealth(server: ReturnType<typeof createGatewayServer>) {
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected TCP address");
+  const response = await fetch(`http://127.0.0.1:${address.port}/health`);
+  const body = await response.json() as Record<string, unknown>;
+  return { response, body };
+}
 
 function serverConfig() {
   return validateConfig({

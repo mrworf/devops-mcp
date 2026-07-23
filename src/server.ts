@@ -12,11 +12,11 @@ import { RequestBodyError } from "./httpBody.js";
 import { startMaintenance } from "./maintenance.js";
 import { handleBrandAssetRequest, isBrandAssetRequest } from "./brandAssets.js";
 import { GatewayError, type ConfigDiagnostic } from "./errors.js";
-import { closeAuditSink, initializeAuditSink } from "./audit.js";
+import { closeAuditSink, initializeAuditSink, type AuditSink } from "./audit.js";
 
 type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
-export function createGatewayServer(config: GatewayConfig) {
+export function createGatewayServer(config: GatewayConfig, options: { auditSink?: AuditSink } = {}) {
   const logger = createLogger(config.logging);
   for (const message of config.warnings) {
     logger.warn("config.warning", { message });
@@ -28,15 +28,16 @@ export function createGatewayServer(config: GatewayConfig) {
       suggestion: "Store only the credential value and describe static request syntax with usage prefix or suffix.",
     });
   }
-  initializeAuditSink(config);
+  const auditSink = options.auditSink ?? initializeAuditSink(config);
   initializeBuiltinOAuthState(config);
   const stopMaintenance = startMaintenance(config);
   const server = createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       logger.debug("http.health", { method: request.method, path: "/health", service_count: Object.keys(config.services).length });
-      writeJson(response, 200, {
-        status: "ready",
+      writeJson(response, auditSink.degraded ? 503 : 200, {
+        status: auditSink.degraded ? "not_ready" : "ready",
         service_count: Object.keys(config.services).length,
+        ...(auditSink.degraded ? { checks: { audit: "degraded" } } : {}),
       });
       return;
     }
@@ -152,7 +153,8 @@ export function createGatewayServer(config: GatewayConfig) {
   });
   server.once("close", () => {
     stopMaintenance();
-    closeAuditSink(config);
+    if (options.auditSink === undefined) closeAuditSink(config);
+    else auditSink.close();
   });
   return server;
 }
