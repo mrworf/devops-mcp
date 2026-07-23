@@ -9,6 +9,7 @@ import { getAuditEvents as getAuditEventsFromSink } from "../src/audit.js";
 import { publicRequestIdPattern } from "../src/requestId.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
 import { capabilitiesFor, requestDependenciesFor } from "./capabilityHelpers.js";
+import { serviceRequestInputValidator } from "../src/mcp/schemas.js";
 
 function callTool(name: string, args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext) {
   return callToolWithDependencies(name, args, config, auth, requestDependenciesFor(config));
@@ -58,6 +59,7 @@ describe("MCP surface", () => {
       expect(descriptor.annotations).toHaveProperty("readOnlyHint");
       expect(descriptor.annotations).toHaveProperty("destructiveHint");
       expect(descriptor.annotations).toHaveProperty("openWorldHint");
+      expect(descriptor.inputSchema.additionalProperties).toBe(false);
     }
 
     expect(toolDescriptors.find((tool) => tool.name === "list_services")?.annotations.readOnlyHint).toBe(true);
@@ -91,6 +93,43 @@ describe("MCP surface", () => {
     expect(serviceRequestDescription).toContain("never forwarded downstream");
     expect(serviceRequestDescription).toContain("Before the response reaches the agent");
     expect(serviceRequestDescription).toContain("replaces detected secrets with subject- and service-bound sec_ references");
+  });
+
+  it("rejects unknown top-level arguments for every tool before handler side effects", async () => {
+    const config = fixtureConfig();
+    const auth = { subject: "bearer-dev", scopes: ["gateway.read", "gateway.references", "gateway.request"], mode: "bearer" as const };
+    const before = capabilitiesFor(config).tokenBroker.stats();
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["list_services", { unexpected: true }],
+      ["get_gateway_service_references", {
+        service: "demo-service", access_ids: ["api_key"], reason: "strict input", unexpected: true,
+      }],
+      ["describe_service_policy", { service: "demo-service", unexpected: true }],
+      ["service_request", {
+        service: "demo-service", method: "GET", path: "/api/echo", reason: "strict input", unexpected: true,
+      }],
+      ["explain_denial", { request_id: "req_unknown", unexpected: true }],
+    ];
+
+    for (const [name, args] of cases) {
+      const result = await callTool(name, args, config, auth);
+      expect(result.isError, name).toBe(true);
+    }
+    expect(capabilitiesFor(config).tokenBroker.stats()).toEqual(before);
+    expect(getAuditEvents(config)).not.toContainEqual(expect.objectContaining({ type: "service_request" }));
+  });
+
+  it("keeps arbitrary query and body values while enforcing typed header maps", () => {
+    expect(serviceRequestInputValidator.safeParse({
+      service: "demo-service", method: "POST", reason: "extensible values",
+      headers: { "x-mode": "safe" }, query: { nested: { any: [1, true, null] } }, body: ["arbitrary", { value: 1 }],
+    }).success).toBe(true);
+    expect(serviceRequestInputValidator.safeParse({
+      service: "demo-service", method: "GET", reason: "bad headers", headers: { "x-mode": 7 },
+    }).success).toBe(false);
+    expect(serviceRequestInputValidator.safeParse({
+      service: "demo-service", method: "GET", reason: "bad query", query: [],
+    }).success).toBe(false);
   });
 
   it("initializes and lists tools through the configured MCP endpoint", async () => {

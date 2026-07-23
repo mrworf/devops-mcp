@@ -20,6 +20,11 @@ import {
   gatewayServiceReferencesOutputSchema,
   serviceRequestInputSchema,
   serviceRequestOutputSchema,
+  emptyInputValidator,
+  gatewayServiceReferencesInputValidator,
+  describeServicePolicyInputValidator,
+  serviceRequestInputValidator,
+  explainDenialInputValidator,
 } from "./schemas.js";
 
 export interface SecurityScheme {
@@ -162,6 +167,7 @@ export async function callTool(
   }
   try {
     if (name === "list_services") {
+      parseEmptyInput(args);
       const services = listVisibleServices(config, auth);
       auditTool(auth, name, "allow", {}, dependencies.auditSink);
       return toolSuccess({ services }, `Found ${services.length} configured service(s).`);
@@ -182,7 +188,7 @@ export async function callTool(
       return toolSuccess({ references }, `Prepared ${references.length} gateway service reference(s).`);
     }
     if (name === "describe_service_policy") {
-      const service = readString(args ?? {}, "service");
+      const service = parseSingleStringInput(args, "service");
       const description = describeServicePolicy(config, auth, service);
       auditTool(auth, name, "allow", { service }, dependencies.auditSink);
       return toolSuccess(description as unknown as Record<string, unknown>, `Policy for ${service} described.`);
@@ -210,7 +216,7 @@ export async function callTool(
       );
     }
     if (name === "explain_denial") {
-      const requestId = readString(args ?? {}, "request_id");
+      const requestId = parseSingleStringInput(args, "request_id");
       const explanation = explainDenial(dependencies.capabilities.denialStore, auth, requestId);
       if (explanation === undefined) {
         auditTool(auth, name, "deny", { request_id: requestId, error_code: "unknown_service" }, dependencies.auditSink);
@@ -252,77 +258,59 @@ function auditTool(
 
 function parseServiceReferenceRequest(args: Record<string, unknown> | undefined): TokenRequestInput {
   if (args === undefined) throw new GatewayError("reference_invalid", "get_gateway_service_references arguments are required.");
-  const service = readString(args, "service");
-  const destination = readOptionalString(args, "destination");
-  const reason = readString(args, "reason");
-  const accessIds = args["access_ids"];
-  if (!Array.isArray(accessIds) || !accessIds.every((value) => typeof value === "string")) {
-    throw new GatewayError("unknown_access", "access_ids must be an array of strings.");
+  const parsed = gatewayServiceReferencesInputValidator.safeParse(args);
+  if (!parsed.success) {
+    const accessIdsInvalid = parsed.error.issues.some((issue) => issue.path[0] === "access_ids");
+    throw new GatewayError(
+      accessIdsInvalid ? "unknown_access" : "reference_invalid",
+      accessIdsInvalid ? "access_ids must be an array of strings." : "Invalid get_gateway_service_references arguments.",
+    );
   }
   return {
-    service,
-    ...(destination === undefined ? {} : { destination }),
-    access_ids: accessIds,
-    reason,
+    service: parsed.data.service,
+    ...(parsed.data.destination === undefined ? {} : { destination: parsed.data.destination }),
+    access_ids: parsed.data.access_ids,
+    reason: parsed.data.reason,
   };
-}
-
-function readString(args: Record<string, unknown>, name: string): string {
-  const value = args[name];
-  if (typeof value !== "string") throw new GatewayError("reference_invalid", `${name} must be a string.`);
-  return value;
-}
-
-function readOptionalString(args: Record<string, unknown>, name: string): string | undefined {
-  const value = args[name];
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new GatewayError("reference_invalid", `${name} must be a string.`);
-  return value;
 }
 
 function parseServiceRequest(args: Record<string, unknown> | undefined): ServiceRequestInput {
   if (args === undefined) throw new GatewayError("destination_not_allowed", "service_request arguments are required.");
-  const service = readString(args, "service");
-  const destination = readOptionalString(args, "destination");
-  const method = readString(args, "method");
-  const path = readOptionalString(args, "path");
-  const url = readOptionalString(args, "url");
-  const serviceReference = readOptionalString(args, "service_reference");
-  const reason = readString(args, "reason");
-  const headers = readOptionalStringMap(args, "headers");
-  const query = readOptionalRecord(args, "query");
-  return {
-    service,
-    ...(destination === undefined ? {} : { destination }),
-    method,
-    ...(path === undefined ? {} : { path }),
-    ...(url === undefined ? {} : { url }),
-    ...(serviceReference === undefined ? {} : { service_reference: serviceReference }),
-    ...(headers === undefined ? {} : { headers }),
-    ...(query === undefined ? {} : { query }),
-    ...(args["body"] === undefined ? {} : { body: args["body"] }),
-    reason,
-  };
+  const parsed = serviceRequestInputValidator.safeParse(args);
+  if (parsed.success) {
+    const value = parsed.data;
+    return {
+      service: value.service,
+      ...(value.destination === undefined ? {} : { destination: value.destination }),
+      method: value.method,
+      ...(value.path === undefined ? {} : { path: value.path }),
+      ...(value.url === undefined ? {} : { url: value.url }),
+      ...(value.service_reference === undefined ? {} : { service_reference: value.service_reference }),
+      ...(value.headers === undefined ? {} : { headers: value.headers }),
+      ...(value.query === undefined ? {} : { query: value.query }),
+      ...(value.body === undefined ? {} : { body: value.body }),
+      reason: value.reason,
+    };
+  }
+  const destinationShapeInvalid = parsed.error.issues.some((issue) => issue.path[0] === "headers" || issue.path[0] === "query");
+  throw new GatewayError(
+    destinationShapeInvalid ? "destination_not_allowed" : "reference_invalid",
+    destinationShapeInvalid ? "headers and query must use their advertised object shapes." : "Invalid service_request arguments.",
+  );
 }
 
-function readOptionalStringMap(args: Record<string, unknown>, name: string): Record<string, string> | undefined {
-  const value = args[name];
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new GatewayError("destination_not_allowed", `${name} must be an object.`);
+function parseEmptyInput(args: Record<string, unknown> | undefined): void {
+  if (!emptyInputValidator.safeParse(args ?? {}).success) {
+    throw new GatewayError("reference_invalid", "list_services does not accept arguments.");
   }
-  const entries = Object.entries(value);
-  if (!entries.every(([, item]) => typeof item === "string")) {
-    throw new GatewayError("destination_not_allowed", `${name} values must be strings.`);
-  }
-  return Object.fromEntries(entries) as Record<string, string>;
 }
 
-function readOptionalRecord(args: Record<string, unknown>, name: string): Record<string, unknown> | undefined {
-  const value = args[name];
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new GatewayError("destination_not_allowed", `${name} must be an object.`);
-  }
-  return value as Record<string, unknown>;
+function parseSingleStringInput(
+  args: Record<string, unknown> | undefined,
+  field: "service" | "request_id",
+): string {
+  const schema = field === "service" ? describeServicePolicyInputValidator : explainDenialInputValidator;
+  const parsed = schema.safeParse(args ?? {});
+  if (!parsed.success) throw new GatewayError("reference_invalid", `${field} must be a string.`);
+  return field === "service" ? (parsed.data as { service: string }).service : (parsed.data as { request_id: string }).request_id;
 }

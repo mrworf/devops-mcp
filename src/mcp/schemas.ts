@@ -1,8 +1,32 @@
-export const emptyInputSchema = {
-  type: "object",
-  properties: {},
-  additionalProperties: false,
-} as const;
+import { z } from "zod";
+
+export const emptyInputValidator = z.strictObject({});
+export const gatewayServiceReferencesInputValidator = z.strictObject({
+  service: z.string(),
+  destination: z.string().optional(),
+  access_ids: z.array(z.string()),
+  reason: z.string(),
+});
+export const describeServicePolicyInputValidator = z.strictObject({ service: z.string() });
+export const serviceRequestInputValidator = z.strictObject({
+  service: z.string(),
+  destination: z.string().optional(),
+  method: z.string(),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  service_reference: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  query: z.record(z.string(), z.unknown()).optional(),
+  body: z.unknown().optional(),
+  reason: z.string(),
+});
+export const explainDenialInputValidator = z.strictObject({ request_id: z.string() });
+
+function advertisedInputSchema(schema: z.ZodType): Record<string, unknown> {
+  return z.toJSONSchema(schema, { target: "draft-7", unrepresentable: "any" }) as Record<string, unknown>;
+}
+
+export const emptyInputSchema = advertisedInputSchema(emptyInputValidator);
 
 export const errorOutputSchema = {
   type: "object",
@@ -51,29 +75,9 @@ export const listServicesOutputSchema = {
   additionalProperties: false,
 } as const;
 
-export const gatewayServiceReferencesInputSchema = {
-  type: "object",
-  properties: {
-    service: { type: "string" },
-    destination: { type: "string" },
-    access_ids: {
-      type: "array",
-      items: { type: "string" },
-    },
-    reason: { type: "string" },
-  },
-  required: ["service", "access_ids", "reason"],
-  additionalProperties: false,
-} as const;
+export const gatewayServiceReferencesInputSchema = advertisedInputSchema(gatewayServiceReferencesInputValidator);
 
-export const describeServicePolicyInputSchema = {
-  type: "object",
-  properties: {
-    service: { type: "string" },
-  },
-  required: ["service"],
-  additionalProperties: false,
-} as const;
+export const describeServicePolicyInputSchema = advertisedInputSchema(describeServicePolicyInputValidator);
 
 export const describeServicePolicyOutputSchema = {
   type: "object",
@@ -129,23 +133,7 @@ export const gatewayServiceReferencesOutputSchema = {
   additionalProperties: false,
 } as const;
 
-export const serviceRequestInputSchema = {
-  type: "object",
-  properties: {
-    service: { type: "string" },
-    destination: { type: "string" },
-    method: { type: "string" },
-    path: { type: "string" },
-    url: { type: "string" },
-    service_reference: { type: "string" },
-    headers: { type: "object", additionalProperties: { type: "string" } },
-    query: { type: "object" },
-    body: {},
-    reason: { type: "string" },
-  },
-  required: ["service", "method", "reason"],
-  additionalProperties: false,
-} as const;
+export const serviceRequestInputSchema = advertisedInputSchema(serviceRequestInputValidator);
 
 export const serviceRequestOutputSchema = {
   type: "object",
@@ -169,14 +157,7 @@ export const serviceRequestOutputSchema = {
   additionalProperties: false,
 } as const;
 
-export const explainDenialInputSchema = {
-  type: "object",
-  properties: {
-    request_id: { type: "string" },
-  },
-  required: ["request_id"],
-  additionalProperties: false,
-} as const;
+export const explainDenialInputSchema = advertisedInputSchema(explainDenialInputValidator);
 
 export const explainDenialOutputSchema = {
   type: "object",
