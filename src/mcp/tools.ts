@@ -52,13 +52,30 @@ export interface ToolDescriptor {
   };
 }
 
-const readSecurity = [{ type: "oauth2" as const, scopes: ["gateway.read"] }];
-const referenceSecurity = [{ type: "oauth2" as const, scopes: ["gateway.references"] }];
-const requestSecurity = [{ type: "oauth2" as const, scopes: ["gateway.request"] }];
+type ToolHandler = (
+  args: Record<string, unknown> | undefined,
+  config: GatewayConfig,
+  auth: AuthContext,
+  dependencies: RequestDependencies,
+) => Promise<ToolResult>;
 
-export const toolDescriptors: ToolDescriptor[] = [
+export interface ToolContract extends ToolDescriptor {
+  requiredScope: "gateway.read" | "gateway.references" | "gateway.request";
+  handler: ToolHandler;
+}
+
+const READ_SCOPE = "gateway.read" as const;
+const REFERENCE_SCOPE = "gateway.references" as const;
+const REQUEST_SCOPE = "gateway.request" as const;
+const readSecurity = [{ type: "oauth2" as const, scopes: [READ_SCOPE] }];
+const referenceSecurity = [{ type: "oauth2" as const, scopes: [REFERENCE_SCOPE] }];
+const requestSecurity = [{ type: "oauth2" as const, scopes: [REQUEST_SCOPE] }];
+
+export const toolContracts: ToolContract[] = [
   {
     name: "list_services",
+    requiredScope: READ_SCOPE,
+    handler: handleListServices,
     title: "List configured services",
     description: "List the HTTP services and access methods available to this authenticated user through the gateway. Never returns protected backend values.",
     inputSchema: emptyInputSchema,
@@ -78,6 +95,8 @@ export const toolDescriptors: ToolDescriptor[] = [
   },
   {
     name: "get_gateway_service_references",
+    requiredScope: REFERENCE_SCOPE,
+    handler: handleGatewayServiceReferences,
     title: "Get gateway service references",
     description: "Get short-lived gref_ references for configured service access. Protected values remain on the gateway: references cannot reveal or export them, have no meaning outside this gateway, and creating a reference does not contact or modify the downstream service.",
     inputSchema: gatewayServiceReferencesInputSchema,
@@ -97,6 +116,8 @@ export const toolDescriptors: ToolDescriptor[] = [
   },
   {
     name: "describe_service_policy",
+    requiredScope: READ_SCOPE,
+    handler: handleDescribeServicePolicy,
     title: "Describe service policy",
     description: "Describe configured destinations, service access methods, and ordered allow/deny policy rules for a service this authenticated user can access. Never returns protected backend values.",
     inputSchema: describeServicePolicyInputSchema,
@@ -116,6 +137,8 @@ export const toolDescriptors: ToolDescriptor[] = [
   },
   {
     name: "service_request",
+    requiredScope: REQUEST_SCOPE,
+    handler: handleServiceRequest,
     title: "Send service HTTP request",
     description: "Send an HTTP request through the gateway. The backend resolves gateway references only after authorization, destination, reference-binding, and policy checks. Pass a gateway_access reference in service_reference; that gateway-only field is never forwarded downstream. Before the response reaches the agent, the backend scans it and replaces detected secrets with subject- and service-bound sec_ references. Cookie headers are not supported.",
     inputSchema: serviceRequestInputSchema,
@@ -135,6 +158,8 @@ export const toolDescriptors: ToolDescriptor[] = [
   },
   {
     name: "explain_denial",
+    requiredScope: READ_SCOPE,
+    handler: handleExplainDenial,
     title: "Explain denied request",
     description: "Explain why a gateway request was denied, including matched policy rule and suggested next step if available.",
     inputSchema: explainDenialInputSchema,
@@ -154,6 +179,12 @@ export const toolDescriptors: ToolDescriptor[] = [
   },
 ];
 
+export const toolDescriptors: ToolDescriptor[] = toolContracts.map(({ requiredScope: _requiredScope, handler: _handler, ...descriptor }) => descriptor);
+
+export function requiredScopeForTool(name: unknown): ToolContract["requiredScope"] | undefined {
+  return typeof name === "string" ? toolContracts.find((tool) => tool.name === name)?.requiredScope : undefined;
+}
+
 export async function callTool(
   name: string,
   args: Record<string, unknown> | undefined,
@@ -161,73 +192,15 @@ export async function callTool(
   auth: AuthContext,
   dependencies: RequestDependencies = createRequestDependencies(config),
 ): Promise<ToolResult> {
-  const descriptor = toolDescriptors.find((tool) => tool.name === name);
-  if (!descriptor) {
+  const contract = toolContracts.find((tool) => tool.name === name);
+  if (!contract) {
     return toolError("not_implemented", `Tool ${name} is not available.`);
   }
   try {
-    if (name === "list_services") {
-      parseEmptyInput(args);
-      const services = listVisibleServices(config, auth);
-      auditTool(auth, name, "allow", {}, dependencies.auditSink);
-      return toolSuccess({ services }, `Found ${services.length} configured service(s).`);
-    }
-    if (name === "get_gateway_service_references") {
-      const input = parseServiceReferenceRequest(args);
-      const result = dependencies.capabilities.tokenBroker.issueTokens(auth, input);
-      auditTool(auth, name, "allow", { service: input.service }, dependencies.auditSink);
-      const references = result.tokens.map((item) => ({
-        access_id: item.credential_id,
-        reference: item.token,
-        usage_hint: item.usage_hint,
-        expires_at: item.expires_at,
-        exportable: false,
-        usable_outside_gateway: false,
-        reveals_protected_value: false,
-      }));
-      return toolSuccess({ references }, `Prepared ${references.length} gateway service reference(s).`);
-    }
-    if (name === "describe_service_policy") {
-      const service = parseSingleStringInput(args, "service");
-      const description = describeServicePolicy(config, auth, service);
-      auditTool(auth, name, "allow", { service }, dependencies.auditSink);
-      return toolSuccess(description as unknown as Record<string, unknown>, `Policy for ${service} described.`);
-    }
-    if (name === "service_request") {
-      const input = parseServiceRequest(args);
-      const result = await executeServiceRequest(config, auth, input, dependencies);
-      auditTool(auth, name, "allow", { service: input.service, request_id: result.request_id }, dependencies.auditSink);
-      const { binaryBody, binaryMimeType, ...structured } = result;
-      const binaryContent = binaryBody === undefined || binaryMimeType === undefined
-        ? []
-        : [{
-          type: "resource" as const,
-          resource: {
-            uri: `secretsauce://response/${result.request_id}`,
-            mimeType: binaryMimeType,
-            blob: binaryBody.toString("base64"),
-          },
-        }];
-      return toolSuccess(
-        structured as unknown as Record<string, unknown>,
-        `Request ${result.request_id} completed with HTTP ${result.status_code}.`,
-        undefined,
-        binaryContent,
-      );
-    }
-    if (name === "explain_denial") {
-      const requestId = parseSingleStringInput(args, "request_id");
-      const explanation = explainDenial(dependencies.capabilities.denialStore, auth, requestId);
-      if (explanation === undefined) {
-        auditTool(auth, name, "deny", { request_id: requestId, error_code: "unknown_service" }, dependencies.auditSink);
-        return toolError("unknown_service", "No denial context found for this request.");
-      }
-      auditTool(auth, name, "allow", { request_id: requestId }, dependencies.auditSink);
-      return toolSuccess(explanation as unknown as Record<string, unknown>, `Denial ${requestId} explained.`);
-    }
+    return await contract.handler(args, config, auth, dependencies);
   } catch (error) {
     if (error instanceof GatewayError) {
-      auditTool(auth, descriptor.name, "error", {
+      auditTool(auth, contract.name, "error", {
         ...(error.requestId === undefined ? {} : { request_id: error.requestId }),
         error_code: error.code,
       }, dependencies.auditSink);
@@ -235,7 +208,80 @@ export async function callTool(
     }
     throw error;
   }
-  return toolError("not_implemented", `${descriptor.name} is registered but not implemented in this milestone.`);
+}
+
+async function handleListServices(
+  args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext, dependencies: RequestDependencies,
+): Promise<ToolResult> {
+  parseEmptyInput(args);
+  const services = listVisibleServices(config, auth);
+  auditTool(auth, "list_services", "allow", {}, dependencies.auditSink);
+  return toolSuccess({ services }, `Found ${services.length} configured service(s).`);
+}
+
+async function handleGatewayServiceReferences(
+  args: Record<string, unknown> | undefined, _config: GatewayConfig, auth: AuthContext, dependencies: RequestDependencies,
+): Promise<ToolResult> {
+  const input = parseServiceReferenceRequest(args);
+  const result = dependencies.capabilities.tokenBroker.issueTokens(auth, input);
+  auditTool(auth, "get_gateway_service_references", "allow", { service: input.service }, dependencies.auditSink);
+  const references = result.tokens.map((item) => ({
+    access_id: item.credential_id,
+    reference: item.token,
+    usage_hint: item.usage_hint,
+    expires_at: item.expires_at,
+    exportable: false,
+    usable_outside_gateway: false,
+    reveals_protected_value: false,
+  }));
+  return toolSuccess({ references }, `Prepared ${references.length} gateway service reference(s).`);
+}
+
+async function handleDescribeServicePolicy(
+  args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext, dependencies: RequestDependencies,
+): Promise<ToolResult> {
+  const service = parseSingleStringInput(args, "service");
+  const description = describeServicePolicy(config, auth, service);
+  auditTool(auth, "describe_service_policy", "allow", { service }, dependencies.auditSink);
+  return toolSuccess(description as unknown as Record<string, unknown>, `Policy for ${service} described.`);
+}
+
+async function handleServiceRequest(
+  args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext, dependencies: RequestDependencies,
+): Promise<ToolResult> {
+  const input = parseServiceRequest(args);
+  const result = await executeServiceRequest(config, auth, input, dependencies);
+  auditTool(auth, "service_request", "allow", { service: input.service, request_id: result.request_id }, dependencies.auditSink);
+  const { binaryBody, binaryMimeType, ...structured } = result;
+  const binaryContent = binaryBody === undefined || binaryMimeType === undefined
+    ? []
+    : [{
+      type: "resource" as const,
+      resource: {
+        uri: `secretsauce://response/${result.request_id}`,
+        mimeType: binaryMimeType,
+        blob: binaryBody.toString("base64"),
+      },
+    }];
+  return toolSuccess(
+    structured as unknown as Record<string, unknown>,
+    `Request ${result.request_id} completed with HTTP ${result.status_code}.`,
+    undefined,
+    binaryContent,
+  );
+}
+
+async function handleExplainDenial(
+  args: Record<string, unknown> | undefined, _config: GatewayConfig, auth: AuthContext, dependencies: RequestDependencies,
+): Promise<ToolResult> {
+  const requestId = parseSingleStringInput(args, "request_id");
+  const explanation = explainDenial(dependencies.capabilities.denialStore, auth, requestId);
+  if (explanation === undefined) {
+    auditTool(auth, "explain_denial", "deny", { request_id: requestId, error_code: "unknown_service" }, dependencies.auditSink);
+    return toolError("unknown_service", "No denial context found for this request.");
+  }
+  auditTool(auth, "explain_denial", "allow", { request_id: requestId }, dependencies.auditSink);
+  return toolSuccess(explanation as unknown as Record<string, unknown>, `Denial ${requestId} explained.`);
 }
 
 function auditTool(

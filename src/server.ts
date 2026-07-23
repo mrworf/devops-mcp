@@ -12,6 +12,7 @@ import { handleBrandAssetRequest, isBrandAssetRequest } from "./brandAssets.js";
 import { GatewayError, type ConfigDiagnostic } from "./errors.js";
 import type { AuditSink } from "./audit.js";
 import { GatewayRuntime } from "./runtime.js";
+import { requiredScopeForTool } from "./mcp/tools.js";
 
 type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
@@ -185,10 +186,8 @@ function requiredScopesForMcpBody(body: unknown): string[] {
   const message = body as { method?: unknown; params?: { name?: unknown } };
   if (message.method === "tools/list") return ["gateway.read"];
   if (message.method !== "tools/call") return [];
-  if (message.params?.name === "get_gateway_service_references") return ["gateway.references"];
-  if (message.params?.name === "service_request") return ["gateway.request"];
-  if (message.params?.name === "list_services" || message.params?.name === "describe_service_policy" || message.params?.name === "explain_denial") return ["gateway.read"];
-  return [];
+  const scope = requiredScopeForTool(message.params?.name);
+  return scope === undefined ? [] : [scope];
 }
 
 function configuredMcpScopes(config: GatewayConfig): string[] {

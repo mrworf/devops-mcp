@@ -3,7 +3,12 @@ import { createServer, type IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config.js";
 import { MCP_INSTRUCTIONS } from "../src/mcp/instructions.js";
-import { callTool as callToolWithDependencies, toolDescriptors } from "../src/mcp/tools.js";
+import {
+  callTool as callToolWithDependencies,
+  requiredScopeForTool,
+  toolContracts,
+  toolDescriptors,
+} from "../src/mcp/tools.js";
 import { createGatewayServer } from "../src/server.js";
 import { getAuditEvents as getAuditEventsFromSink } from "../src/audit.js";
 import { publicRequestIdPattern } from "../src/requestId.js";
@@ -93,6 +98,23 @@ describe("MCP surface", () => {
     expect(serviceRequestDescription).toContain("never forwarded downstream");
     expect(serviceRequestDescription).toContain("Before the response reaches the agent");
     expect(serviceRequestDescription).toContain("replaces detected secrets with subject- and service-bound sec_ references");
+  });
+
+  it("derives listing, dispatch, and scope metadata from one tool registry", async () => {
+    expect(toolContracts.map((contract) => contract.name)).toEqual(toolDescriptors.map((descriptor) => descriptor.name));
+    for (const contract of toolContracts) {
+      expect(contract.handler).toBeTypeOf("function");
+      expect(requiredScopeForTool(contract.name)).toBe(contract.requiredScope);
+      expect(contract.securitySchemes).toEqual([{ type: "oauth2", scopes: [contract.requiredScope] }]);
+      expect(contract._meta.securitySchemes).toEqual(contract.securitySchemes);
+    }
+    expect(requiredScopeForTool("unknown_tool")).toBeUndefined();
+
+    const config = fixtureConfig();
+    const auth = { subject: "bearer-dev", scopes: ["gateway.read"], mode: "bearer" as const };
+    const unknown = await callTool("unknown_tool", {}, config, auth);
+    expect(unknown).toMatchObject({ isError: true, structuredContent: { error: { code: "not_implemented" } } });
+    expect(getAuditEvents(config)).toEqual([]);
   });
 
   it("rejects unknown top-level arguments for every tool before handler side effects", async () => {
