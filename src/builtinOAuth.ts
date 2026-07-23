@@ -9,7 +9,6 @@ import type { BuiltinOAuthAuthConfig, GatewayConfig } from "./types.js";
 import { readBoundedBody, RequestBodyError } from "./httpBody.js";
 import { InflightLimiter } from "./inflightLimiter.js";
 import { LoginAttemptLimiter } from "./loginAttemptLimiter.js";
-import { registerMaintenanceTask } from "./maintenance.js";
 import { BRAND_ICON_PATH, BRAND_LOCKUP_PATH } from "./brandAssets.js";
 import { OAuthClientMetadataFetcher } from "./oauthClientMetadata.js";
 
@@ -68,7 +67,7 @@ interface RefreshTokenRecord {
   status: "active" | "rotating" | "used";
 }
 
-interface BuiltinOAuthState {
+export interface BuiltinOAuthState {
   authorizationCodes: Map<string, AuthorizationCode>;
   refreshGrants: Map<string, RefreshGrant>;
   refreshTokens: Map<string, RefreshTokenRecord>;
@@ -79,15 +78,48 @@ interface PersistedRefreshState {
   refreshGrants: RefreshGrant[];
   refreshTokens: Array<RefreshTokenRecord & { hash: string }>;
 }
-const oauthStates = new WeakMap<GatewayConfig, BuiltinOAuthState>();
 const privateKeyCache = new Map<string, ReturnType<typeof importPKCS8>>();
 const publicKeyCache = new Map<string, ReturnType<typeof importSPKI>>();
-const bodyLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
-const passwordLimiters = new WeakMap<GatewayConfig, InflightLimiter>();
-const loginAttemptLimiters = new WeakMap<GatewayConfig, LoginAttemptLimiter>();
-const clientMetadataFetchers = new WeakMap<GatewayConfig, OAuthClientMetadataFetcher>();
 const pbkdf2Async = promisify(pbkdf2);
 const PERMISSION_SCOPE_ORDER = ["gateway.read", "gateway.request", "gateway.references"] as const;
+
+export class BuiltinOAuthRuntime {
+  readonly state: BuiltinOAuthState;
+  readonly bodyLimiter: InflightLimiter;
+  readonly passwordLimiter: InflightLimiter;
+  readonly loginAttemptLimiter: LoginAttemptLimiter;
+  readonly clientMetadataFetcher: OAuthClientMetadataFetcher;
+
+  constructor(readonly config: GatewayConfig) {
+    this.state = config.auth.mode === "builtin_oauth" && config.auth.builtinOAuth.refreshTokenStoreFile !== undefined
+      ? loadRefreshState(config)
+      : emptyOAuthState();
+    if (config.auth.mode === "builtin_oauth" && config.auth.builtinOAuth.refreshTokenStoreFile === undefined) {
+      createLogger(config.logging).warn("oauth.refresh_state_ephemeral", { restart_continuity: false });
+    }
+    this.bodyLimiter = new InflightLimiter(
+      config.limits.maxUnauthenticatedInflight,
+      config.limits.maxUnauthenticatedInflightPerSource,
+    );
+    this.passwordLimiter = new InflightLimiter(
+      config.limits.maxPasswordVerifications,
+      config.limits.maxPasswordVerificationsPerSource,
+    );
+    this.loginAttemptLimiter = new LoginAttemptLimiter(config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth.loginRateLimit : {
+      windowMs: 15 * 60_000, perSource: 10, perAccount: 10, global: 100,
+      initialLockoutMs: 15 * 60_000, maxLockoutMs: 60 * 60_000, maxEntries: 1000,
+    });
+    this.clientMetadataFetcher = new OAuthClientMetadataFetcher(
+      config.limits.maxOAuthClientMetadataInflight,
+      config.limits.maxOAuthClientMetadataInflightPerOrigin,
+    );
+  }
+
+  sweep(now = Date.now()): void {
+    sweepAuthorizationCodes(this.state, now);
+    if (sweepRefreshGrants(this.state, now)) persistRefreshStateSafely(this.config, this.state);
+  }
+}
 
 export function isBuiltinOAuthRequest(config: GatewayConfig, request: IncomingMessage): boolean {
   if (config.auth.mode !== "builtin_oauth") return false;
@@ -103,6 +135,7 @@ export async function handleBuiltinOAuthRequest(
   config: GatewayConfig,
   request: IncomingMessage,
   response: ServerResponse,
+  runtime: BuiltinOAuthRuntime,
 ): Promise<void> {
   if (config.auth.mode !== "builtin_oauth") {
     writeJson(response, 404, { error: "not_found" });
@@ -119,16 +152,16 @@ export async function handleBuiltinOAuthRequest(
     return;
   }
   if (request.method === "GET" && path === AUTHORIZE_PATH) {
-    await renderLoginForm(config, request, response);
+    await renderLoginForm(config, request, response, runtime);
     return;
   }
   if (request.method === "POST" && path === AUTHORIZE_PATH) {
-    await handleAuthorizePost(config, request, response);
+    await handleAuthorizePost(config, request, response, runtime);
     return;
   }
   if (request.method === "POST" && path === TOKEN_PATH) {
     for (const [name, value] of Object.entries(OAUTH_SENSITIVE_RESPONSE_HEADERS)) response.setHeader(name, value);
-    await handleTokenPost(config, request, response);
+    await handleTokenPost(config, request, response, runtime);
     return;
   }
 
@@ -170,9 +203,9 @@ async function jwks(auth: BuiltinOAuthAuthConfig["builtinOAuth"]): Promise<Recor
   };
 }
 
-async function renderLoginForm(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function renderLoginForm(config: GatewayConfig, request: IncomingMessage, response: ServerResponse, runtime: BuiltinOAuthRuntime): Promise<void> {
   const params = new URL(request.url ?? AUTHORIZE_PATH, config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth.issuer : "http://localhost").searchParams;
-  const validation = await validateAuthorizationRequest(config, params);
+  const validation = await validateAuthorizationRequest(config, params, runtime);
   if (!validation.ok) {
     renderInvalidAuthorizationPage(response);
     return;
@@ -524,14 +557,14 @@ function permissionDescription(scope: string): string {
   return scope;
 }
 
-async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse, runtime: BuiltinOAuthRuntime): Promise<void> {
   const auth = config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth : undefined;
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
   const logger = createLogger(config.logging);
 
   let body: URLSearchParams;
   try {
-    const limitedBody = await readLimitedFormBody(config, request, response);
+    const limitedBody = await readLimitedFormBody(config, request, response, runtime);
     if (limitedBody === undefined) return;
     body = limitedBody;
   } catch (error) {
@@ -542,7 +575,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
     }
     throw error;
   }
-  const validation = await validateAuthorizationRequest(config, body);
+  const validation = await validateAuthorizationRequest(config, body, runtime);
   if (!validation.ok) {
     logger.debug("oauth.authorize.completed", {
       endpoint: AUTHORIZE_PATH,
@@ -559,7 +592,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
 
   const source = request.socket.remoteAddress ?? "unknown";
   const account = (body.get("username") ?? "").trim().toLowerCase();
-  const attemptLimiter = getLoginAttemptLimiter(config);
+  const attemptLimiter = runtime.loginAttemptLimiter;
   const admission = attemptLimiter.check(source, account);
   if (!admission.allowed) {
     response.setHeader("retry-after", String(Math.max(1, Math.ceil(admission.retryAfterMs / 1000))));
@@ -569,7 +602,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
 
   let passwordValid = false;
   if (body.get("username") === auth.adminUsername) {
-    const release = acquirePasswordVerification(config, request);
+    const release = runtime.passwordLimiter.acquire(request.socket.remoteAddress ?? "unknown");
     if (release === undefined) {
       response.setHeader("retry-after", "1");
       writeOAuthError(response, 429, "temporarily_unavailable");
@@ -598,7 +631,7 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
 
   attemptLimiter.recordSuccess(source, account);
 
-  const oauthState = getOAuthState(config);
+  const oauthState = runtime.state;
   sweepAuthorizationCodes(oauthState, Date.now());
   if (oauthState.authorizationCodes.size >= config.limits.maxAuthorizationCodes) {
     response.setHeader("retry-after", "1");
@@ -633,38 +666,14 @@ async function handleAuthorizePost(config: GatewayConfig, request: IncomingMessa
   response.end();
 }
 
-function acquirePasswordVerification(config: GatewayConfig, request: IncomingMessage): (() => void) | undefined {
-  let limiter = passwordLimiters.get(config);
-  if (limiter === undefined) {
-    limiter = new InflightLimiter(
-      config.limits.maxPasswordVerifications,
-      config.limits.maxPasswordVerificationsPerSource,
-    );
-    passwordLimiters.set(config, limiter);
-  }
-  return limiter.acquire(request.socket.remoteAddress ?? "unknown");
-}
-
-function getLoginAttemptLimiter(config: GatewayConfig): LoginAttemptLimiter {
-  let limiter = loginAttemptLimiters.get(config);
-  if (limiter === undefined) {
-    limiter = new LoginAttemptLimiter(config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth.loginRateLimit : {
-      windowMs: 15 * 60_000, perSource: 10, perAccount: 10, global: 100,
-      initialLockoutMs: 15 * 60_000, maxLockoutMs: 60 * 60_000, maxEntries: 1000,
-    });
-    loginAttemptLimiters.set(config, limiter);
-  }
-  return limiter;
-}
-
-async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, response: ServerResponse, runtime: BuiltinOAuthRuntime): Promise<void> {
   const auth = config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth : undefined;
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
   const logger = createLogger(config.logging);
 
   let body: URLSearchParams;
   try {
-    const limitedBody = await readLimitedFormBody(config, request, response);
+    const limitedBody = await readLimitedFormBody(config, request, response, runtime);
     if (limitedBody === undefined) return;
     body = limitedBody;
   } catch (error) {
@@ -677,11 +686,11 @@ async function handleTokenPost(config: GatewayConfig, request: IncomingMessage, 
   }
   const grantType = body.get("grant_type");
   if (grantType === "authorization_code") {
-    await exchangeAuthorizationCode(config, body, response, logger);
+    await exchangeAuthorizationCode(config, body, response, logger, runtime);
     return;
   }
   if (grantType === "refresh_token") {
-    await exchangeRefreshToken(config, body, response, logger);
+    await exchangeRefreshToken(config, body, response, logger, runtime);
     return;
   }
   logTokenOutcome(logger, "error", 400, "unsupported_grant_type", "unavailable", "unavailable");
@@ -693,11 +702,12 @@ async function exchangeAuthorizationCode(
   body: URLSearchParams,
   response: ServerResponse,
   logger: ReturnType<typeof createLogger>,
+  runtime: BuiltinOAuthRuntime,
 ): Promise<void> {
   const auth = config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth : undefined;
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
   const code = body.get("code") ?? "";
-  const oauthState = getOAuthState(config);
+  const oauthState = runtime.state;
   const authorizationCodes = oauthState.authorizationCodes;
   const record = authorizationCodes.get(code);
   if (record === undefined || record.expiresAt <= Date.now()) {
@@ -757,10 +767,11 @@ async function exchangeRefreshToken(
   body: URLSearchParams,
   response: ServerResponse,
   logger: ReturnType<typeof createLogger>,
+  runtime: BuiltinOAuthRuntime,
 ): Promise<void> {
   const auth = config.auth.mode === "builtin_oauth" ? config.auth.builtinOAuth : undefined;
   if (auth === undefined) throw new Error("Expected built-in OAuth config");
-  const oauthState = getOAuthState(config);
+  const oauthState = runtime.state;
   const now = Date.now();
   if (sweepRefreshGrants(oauthState, now)) persistRefreshStateSafely(config, oauthState);
 
@@ -838,28 +849,6 @@ async function exchangeRefreshToken(
     token_type: "Bearer",
     expires_in: Math.floor(auth.accessTokenTtlMs / 1000),
     scope: scopes.join(" "),
-  });
-}
-
-function getOAuthState(config: GatewayConfig): BuiltinOAuthState {
-  initializeBuiltinOAuthState(config);
-  const state = oauthStates.get(config);
-  if (state === undefined) throw new Error("Expected initialized built-in OAuth state");
-  return state;
-}
-
-export function initializeBuiltinOAuthState(config: GatewayConfig): void {
-  if (config.auth.mode !== "builtin_oauth" || oauthStates.has(config)) return;
-  const state = config.auth.builtinOAuth.refreshTokenStoreFile === undefined
-    ? emptyOAuthState()
-    : loadRefreshState(config);
-  oauthStates.set(config, state);
-  if (config.auth.builtinOAuth.refreshTokenStoreFile === undefined) {
-    createLogger(config.logging).warn("oauth.refresh_state_ephemeral", { restart_continuity: false });
-  }
-  registerMaintenanceTask(config, (now) => {
-    sweepAuthorizationCodes(state, now);
-    if (sweepRefreshGrants(state, now)) persistRefreshStateSafely(config, state);
   });
 }
 
@@ -1062,6 +1051,7 @@ async function signAccessToken(
 async function validateAuthorizationRequest(
   config: GatewayConfig,
   body: URLSearchParams,
+  runtime: BuiltinOAuthRuntime,
 ): Promise<
   | { ok: true; clientId: string; clientName: string | null; redirectUri: string; resource: string; scopes: string[]; codeChallenge: string }
   | { ok: false; error: string }
@@ -1088,7 +1078,7 @@ async function validateAuthorizationRequest(
 
   const redirectUri = body.get("redirect_uri");
   if (!redirectUri) return { ok: false, error: "invalid_request" };
-  const clientMetadata = await fetchVerifiedClientMetadata(config, clientId);
+  const clientMetadata = await runtime.clientMetadataFetcher.fetch(clientId);
   if (clientMetadata === undefined || !clientMetadata.redirectUris.includes(redirectUri)) {
     return { ok: false, error: "invalid_request" };
   }
@@ -1100,18 +1090,6 @@ async function validateAuthorizationRequest(
   if (scopes.some((scope) => !auth.requiredScopes.includes(scope))) return { ok: false, error: "invalid_scope" };
 
   return { ok: true, clientId, clientName: clientMetadata.clientName, redirectUri, resource, scopes, codeChallenge };
-}
-
-async function fetchVerifiedClientMetadata(config: GatewayConfig, clientId: string) {
-  let fetcher = clientMetadataFetchers.get(config);
-  if (fetcher === undefined) {
-    fetcher = new OAuthClientMetadataFetcher(
-      config.limits.maxOAuthClientMetadataInflight,
-      config.limits.maxOAuthClientMetadataInflightPerOrigin,
-    );
-    clientMetadataFetchers.set(config, fetcher);
-  }
-  return fetcher.fetch(clientId);
 }
 
 function isAllowedClient(allowedClients: string[], clientId: string): boolean {
@@ -1214,17 +1192,10 @@ async function readLimitedFormBody(
   config: GatewayConfig,
   request: IncomingMessage,
   response: ServerResponse,
+  runtime: BuiltinOAuthRuntime,
 ): Promise<URLSearchParams | undefined> {
-  let limiter = bodyLimiters.get(config);
-  if (limiter === undefined) {
-    limiter = new InflightLimiter(
-      config.limits.maxUnauthenticatedInflight,
-      config.limits.maxUnauthenticatedInflightPerSource,
-    );
-    bodyLimiters.set(config, limiter);
-  }
   const source = request.socket.remoteAddress ?? "unknown";
-  const release = limiter.acquire(source);
+  const release = runtime.bodyLimiter.acquire(source);
   if (release === undefined) {
     response.setHeader("retry-after", "1");
     closeAfterResponse(request, response);

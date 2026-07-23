@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { authenticateRequest, buildAuthenticateChallenge, requireScopes } from "./auth.js";
-import { handleBuiltinOAuthRequest, initializeBuiltinOAuthState, isBuiltinOAuthRequest } from "./builtinOAuth.js";
+import { handleBuiltinOAuthRequest, isBuiltinOAuthRequest } from "./builtinOAuth.js";
 import { loadConfig } from "./config.js";
 import { handleMcpRequest, isMcpDelete, isMcpGet, isMcpPost, readJsonBody } from "./mcp/server.js";
 import { handleOAuthMetadataRequest, isOAuthMetadataRequest } from "./oauthMetadata.js";
@@ -29,12 +29,6 @@ export function createGatewayServer(config: GatewayConfig, options: { auditSink?
   }
   const runtime = options.runtime ?? new GatewayRuntime(config, { ...(options.auditSink === undefined ? {} : { auditSink: options.auditSink }) });
   const auditSink = runtime.auditSink;
-  try {
-    initializeBuiltinOAuthState(config);
-  } catch (error) {
-    void runtime.close();
-    throw error;
-  }
   const server = createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       logger.debug("http.health", { method: request.method, path: "/health", service_count: Object.keys(config.services).length });
@@ -59,7 +53,7 @@ export function createGatewayServer(config: GatewayConfig, options: { auditSink?
 
     if (isBuiltinOAuthRequest(config, request)) {
       logger.debug("oauth.builtin_request", { method: request.method, path: request.url?.split("?")[0] });
-      await handleBuiltinOAuthRequest(config, request, response);
+      await handleBuiltinOAuthRequest(config, request, response, runtime.builtinOAuth);
       return;
     }
 

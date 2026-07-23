@@ -1,34 +1,29 @@
-import type { GatewayConfig } from "./types.js";
+export type MaintenanceTask = (now: number) => void;
 
-type MaintenanceTask = (now: number) => void;
-interface MaintenanceState { tasks: Set<MaintenanceTask>; timer: NodeJS.Timeout | undefined }
-const states = new WeakMap<GatewayConfig, MaintenanceState>();
+export class MaintenanceRegistry {
+  readonly #tasks = new Set<MaintenanceTask>();
+  #timer: NodeJS.Timeout | undefined;
 
-export function registerMaintenanceTask(config: GatewayConfig, task: MaintenanceTask): void {
-  stateFor(config).tasks.add(task);
-}
+  constructor(private readonly intervalMs: number) {}
 
-export function runMaintenance(config: GatewayConfig, now = Date.now()): void {
-  for (const task of stateFor(config).tasks) task(now);
-}
-
-export function startMaintenance(config: GatewayConfig): () => void {
-  const state = stateFor(config);
-  if (state.timer === undefined) {
-    state.timer = setInterval(() => runMaintenance(config), config.limits.stateSweepIntervalMs);
-    state.timer.unref();
+  register(task: MaintenanceTask): void {
+    this.#tasks.add(task);
   }
-  return () => {
-    if (state.timer !== undefined) clearInterval(state.timer);
-    state.timer = undefined;
-  };
-}
 
-function stateFor(config: GatewayConfig): MaintenanceState {
-  let state = states.get(config);
-  if (state === undefined) {
-    state = { tasks: new Set(), timer: undefined };
-    states.set(config, state);
+  run(now = Date.now()): void {
+    for (const task of this.#tasks) task(now);
   }
-  return state;
+
+  start(): () => void {
+    if (this.#timer === undefined) {
+      this.#timer = setInterval(() => this.run(), this.intervalMs);
+      this.#timer.unref();
+    }
+    return () => this.stop();
+  }
+
+  stop(): void {
+    if (this.#timer !== undefined) clearInterval(this.#timer);
+    this.#timer = undefined;
+  }
 }

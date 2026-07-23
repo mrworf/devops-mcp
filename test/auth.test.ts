@@ -14,6 +14,7 @@ import { createGatewayServer } from "../src/server.js";
 import { TokenBroker } from "../src/tokens.js";
 import type { GatewayConfig } from "../src/types.js";
 import { setOAuthClientMetadataTestFetch } from "../src/oauthClientMetadata.js";
+import { GatewayRuntime } from "../src/runtime.js";
 
 describe("auth", () => {
   const originalStubGlobal = vi.stubGlobal.bind(vi);
@@ -34,6 +35,55 @@ describe("auth", () => {
 
     expect(context).toMatchObject({ subject: "bearer-dev", mode: "bearer", scopes: ["gateway.read"] });
     await expect(authenticateRequest(requestWithBearer("wrong-token"), config)).rejects.toThrow("Invalid bearer token");
+  });
+
+  it("isolates built-in OAuth state, limiters, and metadata caches between runtimes", async () => {
+    const config = await builtinOAuthConfig({
+      maxUnauthenticatedInflight: 1,
+      maxUnauthenticatedInflightPerSource: 1,
+      maxPasswordVerifications: 1,
+      maxPasswordVerificationsPerSource: 1,
+    });
+    let metadataFetches = 0;
+    setOAuthClientMetadataTestFetch(async (input) => {
+      metadataFetches += 1;
+      const clientId = String(input);
+      return new Response(JSON.stringify({ client_id: clientId, redirect_uris: ["https://client.example.org/callback"] }), {
+        status: 200,
+        headers: { "content-type": "application/json", "cache-control": "max-age=60" },
+      });
+    });
+    const first = new GatewayRuntime(config);
+    const second = new GatewayRuntime(config);
+    try {
+      first.builtinOAuth.state.authorizationCodes.set("runtime-a-code", {
+        clientId: "https://client.example.org/metadata", redirectUri: "https://client.example.org/callback",
+        resource: "https://mcp.example.org", scopes: ["gateway.read"], codeChallenge: "challenge",
+        subject: "admin@example.com", expiresAt: Date.now() + 60_000,
+      });
+      expect(second.builtinOAuth.state.authorizationCodes.has("runtime-a-code")).toBe(false);
+
+      const firstBodyRelease = first.builtinOAuth.bodyLimiter.acquire("source-a");
+      const firstPasswordRelease = first.builtinOAuth.passwordLimiter.acquire("source-a");
+      expect(first.builtinOAuth.bodyLimiter.acquire("source-a")).toBeUndefined();
+      expect(first.builtinOAuth.passwordLimiter.acquire("source-a")).toBeUndefined();
+      const secondBodyRelease = second.builtinOAuth.bodyLimiter.acquire("source-a");
+      const secondPasswordRelease = second.builtinOAuth.passwordLimiter.acquire("source-a");
+      expect(secondBodyRelease).toBeTypeOf("function");
+      expect(secondPasswordRelease).toBeTypeOf("function");
+      firstBodyRelease?.();
+      firstPasswordRelease?.();
+      secondBodyRelease?.();
+      secondPasswordRelease?.();
+
+      const clientId = "https://client.example.org/metadata";
+      await first.builtinOAuth.clientMetadataFetcher.fetch(clientId);
+      await first.builtinOAuth.clientMetadataFetcher.fetch(clientId);
+      await second.builtinOAuth.clientMetadataFetcher.fetch(clientId);
+      expect(metadataFetches).toBe(2);
+    } finally {
+      await Promise.all([first.close(), second.close()]);
+    }
   });
 
   it("publishes protected resource metadata without authentication", async () => {
