@@ -3,10 +3,11 @@ import { toolError, toolSuccess } from "./results.js";
 import { audit } from "../audit.js";
 import { describeServicePolicy, listVisibleServices } from "../registry.js";
 import type { AuthContext, GatewayConfig } from "../types.js";
-import { getTokenBroker, type TokenRequestInput } from "../tokens.js";
+import type { TokenRequestInput } from "../tokens.js";
 import { GatewayError } from "../errors.js";
 import { executeServiceRequest, type ServiceRequestInput } from "../gateway.js";
 import { explainDenial } from "../denials.js";
+import { createCapabilityDependencies, type CapabilityDependencies } from "../capabilities.js";
 import {
   emptyInputSchema,
   describeServicePolicyInputSchema,
@@ -153,6 +154,7 @@ export async function callTool(
   args: Record<string, unknown> | undefined,
   config: GatewayConfig,
   auth: AuthContext,
+  dependencies: CapabilityDependencies = createCapabilityDependencies(config),
 ): Promise<ToolResult> {
   const descriptor = toolDescriptors.find((tool) => tool.name === name);
   if (!descriptor) {
@@ -166,7 +168,7 @@ export async function callTool(
     }
     if (name === "get_gateway_service_references") {
       const input = parseServiceReferenceRequest(args);
-      const result = getTokenBroker(config).issueTokens(auth, input);
+      const result = dependencies.tokenBroker.issueTokens(auth, input);
       auditTool(config, auth, name, "allow", { service: input.service });
       const references = result.tokens.map((item) => ({
         access_id: item.credential_id,
@@ -187,7 +189,7 @@ export async function callTool(
     }
     if (name === "service_request") {
       const input = parseServiceRequest(args);
-      const result = await executeServiceRequest(config, auth, input);
+      const result = await executeServiceRequest(config, auth, input, dependencies);
       auditTool(config, auth, name, "allow", { service: input.service, request_id: result.request_id });
       const { binaryBody, binaryMimeType, ...structured } = result;
       const binaryContent = binaryBody === undefined || binaryMimeType === undefined
@@ -209,7 +211,7 @@ export async function callTool(
     }
     if (name === "explain_denial") {
       const requestId = readString(args ?? {}, "request_id");
-      const explanation = explainDenial(config, auth, requestId);
+      const explanation = explainDenial(dependencies.denialStore, auth, requestId);
       if (explanation === undefined) {
         auditTool(config, auth, name, "deny", { request_id: requestId, error_code: "unknown_service" });
         return toolError("unknown_service", "No denial context found for this request.");

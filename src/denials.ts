@@ -1,6 +1,4 @@
-import { registerMaintenanceTask } from "./maintenance.js";
 import { createRequestId } from "./requestId.js";
-import type { GatewayConfig } from "./types.js";
 
 export interface DenialRecord {
   request_id: string;
@@ -57,18 +55,6 @@ export class DenialStore {
   }
 }
 
-const denialStores = new WeakMap<GatewayConfig, DenialStore>();
-
-export function getDenialStore(config: GatewayConfig): DenialStore {
-  let store = denialStores.get(config);
-  if (store === undefined) {
-    store = new DenialStore(config.limits.maxDenialRecords, config.limits.denialTtlMs);
-    denialStores.set(config, store);
-    registerMaintenanceTask(config, (now) => store?.sweep(now));
-  }
-  return store;
-}
-
 export interface DenialExplanation {
   request_id: string;
   reason: string;
@@ -77,8 +63,8 @@ export interface DenialExplanation {
   suggestion?: string;
 }
 
-export function explainDenial(config: GatewayConfig, auth: { subject: string }, requestId: string): DenialExplanation | undefined {
-  const record = getDenialStore(config).get(requestId);
+export function explainDenial(store: DenialStore, auth: { subject: string }, requestId: string): DenialExplanation | undefined {
+  const record = store.get(requestId);
   if (!record) return undefined;
   if (record.subject !== auth.subject) return undefined;
   return {

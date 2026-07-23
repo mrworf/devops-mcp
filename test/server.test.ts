@@ -10,6 +10,9 @@ import { AuditSink, initializeAuditSink } from "../src/audit.js";
 import { GatewayRuntime } from "../src/runtime.js";
 import { initializeSecretRuntime } from "../src/secretRuntime.js";
 import { SecretScanBusyError } from "../src/secretScannerPool.js";
+import { TokenBroker } from "../src/tokens.js";
+import { explainDenial } from "../src/denials.js";
+import { GatewayError } from "../src/errors.js";
 
 describe("health server", () => {
   it("returns ready health status", async () => {
@@ -219,7 +222,7 @@ describe("health server", () => {
   it("cleans resources created before partial runtime initialization failure", async () => {
     const config = serverConfig();
     const auditSink = new AuditSink(config);
-    const secretRuntime = initializeSecretRuntime(config);
+    const secretRuntime = initializeSecretRuntime(config, new TokenBroker(config));
 
     expect(() => new GatewayRuntime(config, {
       auditSink,
@@ -242,6 +245,40 @@ describe("health server", () => {
       await expect(second.secretRuntime.pool.scan("actor", "benign", [], 1_000)).resolves.toEqual([]);
     } finally {
       await second.close();
+    }
+  });
+
+  it("isolates capability, denial, and admission state between runtimes", async () => {
+    const actor = { subject: "bearer-dev", scopes: ["gateway.request"], mode: "bearer" as const };
+    const firstConfig = serverConfig();
+    const secondConfig = serverConfig();
+    firstConfig.services["demo-service"]!.access.users = [actor.subject];
+    secondConfig.services["demo-service"]!.access.users = [actor.subject];
+    const first = new GatewayRuntime(firstConfig);
+    const second = new GatewayRuntime(secondConfig);
+    try {
+      const reference = first.capabilities.tokenBroker.issueTokens(actor, {
+        service: "demo-service", destination: "primary", access_ids: ["api_key"], reason: "Test runtime isolation.",
+      }).tokens[0]?.token ?? "";
+      expect(() => second.capabilities.tokenBroker.validateTokenUse(actor, {
+        service: "demo-service", destination: "primary",
+      }, reference)).toThrowError(GatewayError);
+
+      const denial = first.capabilities.denialStore.record({
+        subject: actor.subject, reason: "first runtime only", policy_mode: "deny",
+      });
+      expect(explainDenial(second.capabilities.denialStore, actor, denial.request_id)).toBeUndefined();
+      expect(explainDenial(first.capabilities.denialStore, actor, denial.request_id)?.reason).toBe("first runtime only");
+
+      const firstReleases = Array.from({ length: first.config.limits.maxServiceRequestsInflightPerSubject }, () =>
+        first.capabilities.serviceRequestLimiter.acquire(actor.subject, "demo-service"));
+      expect(first.capabilities.serviceRequestLimiter.acquire(actor.subject, "demo-service")).toBeUndefined();
+      const secondRelease = second.capabilities.serviceRequestLimiter.acquire(actor.subject, "demo-service");
+      expect(secondRelease).toBeTypeOf("function");
+      for (const release of firstReleases) release?.();
+      secondRelease?.();
+    } finally {
+      await Promise.all([first.close(), second.close()]);
     }
   });
 });

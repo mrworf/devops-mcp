@@ -11,10 +11,11 @@ import { callTool, toolDescriptors } from "./tools.js";
 import type { AuthContext, GatewayConfig } from "../types.js";
 import { readBoundedBody } from "../httpBody.js";
 import { BRAND_ICON_PATH, publicBrandAssetUrl } from "../brandAssets.js";
+import type { CapabilityDependencies } from "../capabilities.js";
 
 type NodeRequestWithBody = IncomingMessage & { body?: unknown };
 
-export function createMcpServer(config: GatewayConfig, iconUrl: string): Server {
+export function createMcpServer(config: GatewayConfig, iconUrl: string, dependencies: CapabilityDependencies): Server {
   const server = new Server(
     {
       name: "secretsauce-mcp",
@@ -49,7 +50,7 @@ export function createMcpServer(config: GatewayConfig, iconUrl: string): Server 
         isError: true,
       };
     }
-    return callTool(request.params.name, request.params.arguments, config, auth);
+    return callTool(request.params.name, request.params.arguments, config, auth, dependencies);
   });
 
   return server;
@@ -60,6 +61,7 @@ export async function handleMcpRequest(
   request: IncomingMessage,
   response: ServerResponse,
   parsedBody: unknown,
+  dependencies: CapabilityDependencies,
 ): Promise<void> {
   const auth = (request as IncomingMessage & { auth?: AuthContext }).auth;
   if (auth === undefined) {
@@ -70,7 +72,7 @@ export async function handleMcpRequest(
   const transport = new StreamableHTTPServerTransport({
     enableJsonResponse: true,
   });
-  const server = createMcpServer(config, publicBrandAssetUrl(config, request, BRAND_ICON_PATH));
+  const server = createMcpServer(config, publicBrandAssetUrl(config, request, BRAND_ICON_PATH), dependencies);
   try {
     // SDK transport typings are not exactOptionalPropertyTypes-clean in this version.
     await server.connect(transport as Parameters<Server["connect"]>[0]);

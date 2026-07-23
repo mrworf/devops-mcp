@@ -5,9 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 import { validateConfig } from "../src/config.js";
 import { getAuditEvents } from "../src/audit.js";
 import { GatewayError } from "../src/errors.js";
-import { executeServiceRequest } from "../src/gateway.js";
-import { TokenBroker, defaultTokenBrokers } from "../src/tokens.js";
+import { executeServiceRequest as executeServiceRequestWithDependencies, type ServiceRequestInput } from "../src/gateway.js";
+import { TokenBroker } from "../src/tokens.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
+import { capabilitiesFor, installTokenBroker } from "./capabilityHelpers.js";
+
+function executeServiceRequest(config: GatewayConfig, auth: AuthContext, input: ServiceRequestInput) {
+  return executeServiceRequestWithDependencies(config, auth, input, capabilitiesFor(config));
+}
 
 describe("HTTP gateway", () => {
   it("requires and consumes a bound gateway access reference for credential-free services", async () => {
@@ -42,7 +47,7 @@ describe("HTTP gateway", () => {
       let now = 1_000;
       const config = gatewayConfig(downstream.baseUrl, { noAuth: true, includeSecondary: true });
       const broker = new TokenBroker(config, () => now);
-      defaultTokenBrokers.set(config, broker);
+      installTokenBroker(config, broker);
       const token = broker.issueTokens(actor(), {
         service: "demo-service", destination: "primary", access_ids: ["gateway_access"], reason: "Inspect cameras.",
       }).tokens[0]?.token ?? "";
@@ -984,7 +989,7 @@ function gatewayConfig(baseUrl: string, options: {
 
 function installBroker(config: GatewayConfig): TokenBroker {
   const broker = new TokenBroker(config);
-  defaultTokenBrokers.set(config, broker);
+  installTokenBroker(config, broker);
   return broker;
 }
 

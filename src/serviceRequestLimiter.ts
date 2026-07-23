@@ -1,6 +1,5 @@
 import { GatewayError } from "./errors.js";
 import { InflightLimiter } from "./inflightLimiter.js";
-import type { GatewayConfig } from "./types.js";
 
 export class ServiceRequestLimiter {
   private readonly overall: InflightLimiter;
@@ -28,23 +27,8 @@ export class ServiceRequestLimiter {
   }
 }
 
-const limiters = new WeakMap<GatewayConfig, ServiceRequestLimiter>();
-
-export function getServiceRequestLimiter(config: GatewayConfig): ServiceRequestLimiter {
-  let limiter = limiters.get(config);
-  if (limiter === undefined) {
-    limiter = new ServiceRequestLimiter(
-      config.limits.maxServiceRequestsInflight,
-      config.limits.maxServiceRequestsInflightPerSubject,
-      config.limits.maxServiceRequestsInflightPerService,
-    );
-    limiters.set(config, limiter);
-  }
-  return limiter;
-}
-
-export function acquireServiceRequest(config: GatewayConfig, subject: string, service: string): () => void {
-  const release = getServiceRequestLimiter(config).acquire(subject, service);
+export function acquireServiceRequest(limiter: ServiceRequestLimiter, subject: string, service: string): () => void {
+  const release = limiter.acquire(subject, service);
   if (release === undefined) {
     throw new GatewayError("capacity_exceeded", "Authenticated service request capacity is exhausted.");
   }

@@ -4,7 +4,6 @@ import { GATEWAY_ACCESS_ID, GATEWAY_ACCESS_USAGE_HINT, getCredential, getService
 import type { ReferenceIssuedAuditEvent } from "./audit.js";
 import { referenceIssuedAuditEvent } from "./audit.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
-import { registerMaintenanceTask } from "./maintenance.js";
 import { credentialUsageHint } from "./credentialUsage.js";
 
 export interface TokenRequestInput {
@@ -356,17 +355,6 @@ export class TokenBroker {
       throw new GatewayError("capacity_exceeded", "Opaque reference capacity is exhausted.");
     }
   }
-}
-
-export const defaultTokenBrokers = new WeakMap<GatewayConfig, TokenBroker>();
-
-export function getTokenBroker(config: GatewayConfig): TokenBroker {
-  const existing = defaultTokenBrokers.get(config);
-  if (existing !== undefined) return existing;
-  const broker = new TokenBroker(config);
-  defaultTokenBrokers.set(config, broker);
-  registerMaintenanceTask(config, (now) => broker.sweepExpired(now));
-  return broker;
 }
 
 function resolveTokenDestination(destinationIds: string[], requested: string | undefined): string {

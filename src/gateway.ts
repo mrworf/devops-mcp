@@ -5,12 +5,11 @@ import { GatewayError } from "./errors.js";
 import { evaluatePolicy } from "./policy.js";
 import { getService, resolveDestination } from "./registry.js";
 import { audit } from "./audit.js";
-import { getDenialStore } from "./denials.js";
 import { bodySummary, createLogger, headerNames } from "./logger.js";
 import { prohibitedCookieHeaderNames, stripCookieHeaders } from "./cookies.js";
 import { getResponseTokenizer, getResponseTokenizerRuleIds, getSecretScannerPoolStats } from "./secretRuntime.js";
 import { substituteRequestBodyTokens, substituteTokens } from "./substitution.js";
-import { getTokenBroker, type TokenRecord } from "./tokens.js";
+import type { TokenRecord } from "./tokens.js";
 import type { AuthContext, GatewayConfig } from "./types.js";
 import {
   assertSafeBinaryBody,
@@ -24,6 +23,7 @@ import { decodeDeclaredBase64Bytes, encodeBase64Bytes } from "./base64Body.js";
 import { enforceCredentialHeaderUsage } from "./headerEnforcement.js";
 import { acquireServiceRequest } from "./serviceRequestLimiter.js";
 import { createRequestId } from "./requestId.js";
+import { createCapabilityDependencies, type CapabilityDependencies } from "./capabilities.js";
 
 export interface ServiceRequestInput {
   service: string;
@@ -68,6 +68,7 @@ export async function executeServiceRequest(
   config: GatewayConfig,
   auth: AuthContext,
   input: ServiceRequestInput,
+  dependencies: CapabilityDependencies = createCapabilityDependencies(config),
 ): Promise<ServiceResponse> {
   const logger = createLogger(config.logging);
   validateRequestInput(input);
@@ -80,7 +81,7 @@ export async function executeServiceRequest(
   const requestId = createRequestId();
   const policy = evaluatePolicy(service, target, input.method);
   if (!policy.allowed) {
-    const denial = getDenialStore(config).record({
+    const denial = dependencies.denialStore.record({
       subject: auth.subject,
       reason: policy.reason,
       ...(policy.matchedRule === undefined ? {} : { matched_rule: policy.matchedRule }),
@@ -125,7 +126,7 @@ export async function executeServiceRequest(
 
   let releaseCapacity: () => void;
   try {
-    releaseCapacity = acquireServiceRequest(config, auth.subject, service.id);
+    releaseCapacity = acquireServiceRequest(dependencies.serviceRequestLimiter, auth.subject, service.id);
   } catch (error) {
     if (!(error instanceof GatewayError) || error.code !== "capacity_exceeded") throw error;
     audit({
@@ -162,7 +163,7 @@ export async function executeServiceRequest(
     throw new GatewayError(error.code, error.message, requestId);
   }
   try {
-  const broker = getTokenBroker(config);
+  const broker = dependencies.tokenBroker;
   const tokenTarget = { service: service.id, destination: target.destination.id };
   let serviceReferenceRecord: TokenRecord | undefined;
   if (service.credentials.length === 0) {
@@ -236,10 +237,10 @@ export async function executeServiceRequest(
   const disabledSecretlintRules = matchedPolicyRule?.secretlint === undefined
     ? new Set<string>()
     : "enabled" in matchedPolicyRule.secretlint
-      ? new Set<string>(getResponseTokenizerRuleIds(config))
+      ? new Set<string>(getResponseTokenizerRuleIds(config, broker))
       : new Set(matchedPolicyRule.secretlint.disabledRuleIds);
   const binaryPolicy = matchedPolicyRule?.binaryResponse ?? { scan: true, maxBytes: DEFAULT_BINARY_RESPONSE_MAX_BYTES };
-  const tokenizer = getResponseTokenizer(config);
+  const tokenizer = getResponseTokenizer(config, broker);
   let binaryScanBypassed = false;
   let tokenized: Awaited<ReturnType<typeof tokenizer.tokenizeBytes>>;
   if (classification.kind === "binary") {
@@ -343,7 +344,7 @@ export async function executeServiceRequest(
     secret_tokenized: tokenized.secretTokenized,
     secret_tokenization_count: tokenized.secretTokenizationCount,
     secret_rule_ids: tokenized.ruleIds,
-    secret_scan_pool: getSecretScannerPoolStats(config),
+    secret_scan_pool: getSecretScannerPoolStats(config, broker),
     response_kind: classification.kind,
     response_bytes: returnedBody.byteLength,
     truncated: rawBody.truncated,

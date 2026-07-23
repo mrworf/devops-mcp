@@ -6,10 +6,19 @@ import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { AuditSink, audit, clearAuditEvents, closeAuditSink, getAuditEvents, type AuditEvent, type AuditFileOperations } from "../src/audit.js";
 import { validateConfig } from "../src/config.js";
-import { executeServiceRequest } from "../src/gateway.js";
-import { callTool } from "../src/mcp/tools.js";
-import { TokenBroker, defaultTokenBrokers } from "../src/tokens.js";
+import { executeServiceRequest as executeServiceRequestWithDependencies, type ServiceRequestInput } from "../src/gateway.js";
+import { callTool as callToolWithDependencies } from "../src/mcp/tools.js";
+import { TokenBroker } from "../src/tokens.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
+import { capabilitiesFor, installTokenBroker } from "./capabilityHelpers.js";
+
+function executeServiceRequest(config: GatewayConfig, auth: AuthContext, input: ServiceRequestInput) {
+  return executeServiceRequestWithDependencies(config, auth, input, capabilitiesFor(config));
+}
+
+function callTool(name: string, args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext) {
+  return callToolWithDependencies(name, args, config, auth, capabilitiesFor(config));
+}
 
 describe("audit logging", () => {
   it("omits protected values, opaque references, auth headers, cookies, and bodies from reference and service request events", async () => {
@@ -36,7 +45,7 @@ describe("audit logging", () => {
     });
     clearAuditEvents(config);
     const broker = new TokenBroker(config);
-    defaultTokenBrokers.set(config, broker);
+    installTokenBroker(config, broker);
     const auth = actor();
     const issued = broker.issueTokens(auth, {
       service: "demo-service",
@@ -76,7 +85,7 @@ describe("audit logging", () => {
       const config = auditConfig(auditFile, downstream.baseUrl);
       clearAuditEvents(config);
       const broker = new TokenBroker(config);
-      defaultTokenBrokers.set(config, broker);
+      installTokenBroker(config, broker);
       const auth = actor();
       const issued = broker.issueTokens(auth, {
         service: "demo-service",
@@ -161,7 +170,7 @@ describe("audit logging", () => {
     const config = auditConfig(auditFile, "http://127.0.0.1:1");
     clearAuditEvents(config);
     const broker = new TokenBroker(config);
-    defaultTokenBrokers.set(config, broker);
+    installTokenBroker(config, broker);
     const first = broker.issueTokens(actor(), {
       service: "demo-service", destination: "primary", access_ids: ["api_key"],
       reason: "Basic authentication is enabled for this benign request.",
@@ -195,7 +204,7 @@ describe("audit logging", () => {
     const config = auditConfig(auditDirectory, "http://127.0.0.1:1");
     clearAuditEvents(config);
     const broker = new TokenBroker(config);
-    defaultTokenBrokers.set(config, broker);
+    installTokenBroker(config, broker);
 
     expect(() => broker.issueTokens(actor(), {
       service: "demo-service",

@@ -2,16 +2,20 @@ import { AuditSink, initializeAuditSink } from "./audit.js";
 import { startMaintenance } from "./maintenance.js";
 import { initializeSecretRuntime, type SecretRuntime } from "./secretRuntime.js";
 import type { GatewayConfig } from "./types.js";
+import { createCapabilityDependencies, type CapabilityDependencies } from "./capabilities.js";
+import { registerMaintenanceTask } from "./maintenance.js";
 
 export interface GatewayRuntimeOptions {
   auditSink?: AuditSink;
   secretRuntime?: SecretRuntime;
+  capabilities?: CapabilityDependencies;
   startMaintenance?: typeof startMaintenance;
 }
 
 export class GatewayRuntime {
   readonly auditSink: AuditSink;
   readonly secretRuntime: SecretRuntime;
+  readonly capabilities: CapabilityDependencies;
   readonly #stopMaintenance: () => void;
   #closePromise: Promise<void> | undefined;
 
@@ -19,10 +23,14 @@ export class GatewayRuntime {
     const auditSink = options.auditSink ?? initializeAuditSink(config);
     let secretRuntime: SecretRuntime | undefined;
     try {
-      secretRuntime = options.secretRuntime ?? initializeSecretRuntime(config);
+      const capabilities = options.capabilities ?? createCapabilityDependencies(config);
+      secretRuntime = options.secretRuntime ?? initializeSecretRuntime(config, capabilities.tokenBroker);
+      registerMaintenanceTask(config, (now) => capabilities.tokenBroker.sweepExpired(now));
+      registerMaintenanceTask(config, (now) => capabilities.denialStore.sweep(now));
       const stopMaintenance = (options.startMaintenance ?? startMaintenance)(config);
       this.auditSink = auditSink;
       this.secretRuntime = secretRuntime;
+      this.capabilities = capabilities;
       this.#stopMaintenance = stopMaintenance;
     } catch (error) {
       auditSink.close();

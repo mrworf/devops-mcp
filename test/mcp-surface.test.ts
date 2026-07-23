@@ -3,11 +3,16 @@ import { createServer, type IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config.js";
 import { MCP_INSTRUCTIONS } from "../src/mcp/instructions.js";
-import { callTool, toolDescriptors } from "../src/mcp/tools.js";
+import { callTool as callToolWithDependencies, toolDescriptors } from "../src/mcp/tools.js";
 import { createGatewayServer } from "../src/server.js";
-import { getServiceRequestLimiter } from "../src/serviceRequestLimiter.js";
 import { getAuditEvents } from "../src/audit.js";
 import { publicRequestIdPattern } from "../src/requestId.js";
+import type { AuthContext, GatewayConfig } from "../src/types.js";
+import { capabilitiesFor } from "./capabilityHelpers.js";
+
+function callTool(name: string, args: Record<string, unknown> | undefined, config: GatewayConfig, auth: AuthContext) {
+  return callToolWithDependencies(name, args, config, auth, capabilitiesFor(config));
+}
 
 describe("MCP surface", () => {
   it("keeps the required safety opening in the first 512 instruction characters", () => {
@@ -262,7 +267,7 @@ describe("MCP surface", () => {
   it("returns a structured capacity error for saturated authenticated service work", async () => {
     const config = fixtureConfig({ maxServiceRequestsInflight: 1, maxServiceRequestsInflightPerSubject: 1 });
     const auth = { subject: "bearer-dev", scopes: ["gateway.request"], mode: "bearer" as const };
-    const release = getServiceRequestLimiter(config).acquire(auth.subject, "demo-service");
+    const release = capabilitiesFor(config).serviceRequestLimiter.acquire(auth.subject, "demo-service");
     if (release === undefined) throw new Error("Expected admission slot");
 
     try {

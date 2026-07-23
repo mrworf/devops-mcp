@@ -1,16 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { DenialStore, explainDenial } from "../src/denials.js";
+import { DenialStore, explainDenial as explainDenialWithStore } from "../src/denials.js";
 import { GatewayError } from "../src/errors.js";
-import { executeServiceRequest } from "../src/gateway.js";
-import { TokenBroker, defaultTokenBrokers } from "../src/tokens.js";
+import { executeServiceRequest as executeServiceRequestWithDependencies, type ServiceRequestInput } from "../src/gateway.js";
+import { TokenBroker } from "../src/tokens.js";
 import { auth, registryConfig } from "./helpers.js";
 import { createRequestId, publicRequestIdPattern } from "../src/requestId.js";
 import { getAuditEvents } from "../src/audit.js";
+import type { AuthContext, GatewayConfig } from "../src/types.js";
+import { capabilitiesFor, installTokenBroker } from "./capabilityHelpers.js";
+
+function executeServiceRequest(config: GatewayConfig, actor: AuthContext, input: ServiceRequestInput) {
+  return executeServiceRequestWithDependencies(config, actor, input, capabilitiesFor(config));
+}
+
+function explainDenial(config: GatewayConfig, actor: { subject: string }, requestId: string) {
+  return explainDenialWithStore(capabilitiesFor(config).denialStore, actor, requestId);
+}
 
 describe("denial explanations", () => {
   it("returns safe denial context for the same subject", async () => {
     const config = registryConfig();
-    defaultTokenBrokers.set(config, new TokenBroker(config));
+    installTokenBroker(config, new TokenBroker(config));
     let requestId = "";
 
     try {
@@ -41,7 +51,7 @@ describe("denial explanations", () => {
 
   it("keeps denial context subject-bound across stateless requests", async () => {
     const config = registryConfig();
-    defaultTokenBrokers.set(config, new TokenBroker(config));
+    installTokenBroker(config, new TokenBroker(config));
     const sameSubject = auth("henric@example.com");
     let requestId = "";
 

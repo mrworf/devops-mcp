@@ -79,7 +79,7 @@ export function createGatewayServer(config: GatewayConfig, options: { auditSink?
           subject: auth.subject,
           auth_mode: auth.mode,
         });
-        await handleMcpRequest(config, request, response, body);
+        await handleMcpRequest(config, request, response, body, runtime.capabilities);
       } catch (error) {
         if (error instanceof RequestBodyError) {
           response.setHeader("connection", "close");
