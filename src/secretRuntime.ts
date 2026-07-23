@@ -6,7 +6,7 @@ import { getTokenBroker } from "./tokens.js";
 import type { GatewayConfig } from "./types.js";
 import { loadSensitiveNameConfig, resolveSensitiveNameConfig, SensitiveNameMatcher } from "./sensitiveNames.js";
 
-interface SecretRuntime {
+export interface SecretRuntime {
   pool: SecretScannerPool;
   tokenizer: ResponseTokenizer;
   rules: ReturnType<typeof resolveSecretlintRules>;

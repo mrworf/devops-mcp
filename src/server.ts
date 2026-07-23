@@ -7,16 +7,15 @@ import { handleOAuthMetadataRequest, isOAuthMetadataRequest } from "./oauthMetad
 import { createLogger } from "./logger.js";
 import type { GatewayConfig } from "./types.js";
 import type { AuthContext } from "./types.js";
-import { initializeSecretRuntime } from "./secretRuntime.js";
 import { RequestBodyError } from "./httpBody.js";
-import { startMaintenance } from "./maintenance.js";
 import { handleBrandAssetRequest, isBrandAssetRequest } from "./brandAssets.js";
 import { GatewayError, type ConfigDiagnostic } from "./errors.js";
-import { closeAuditSink, initializeAuditSink, type AuditSink } from "./audit.js";
+import type { AuditSink } from "./audit.js";
+import { GatewayRuntime } from "./runtime.js";
 
 type AuthenticatedRequest = IncomingMessage & { auth?: AuthContext };
 
-export function createGatewayServer(config: GatewayConfig, options: { auditSink?: AuditSink } = {}) {
+export function createGatewayServer(config: GatewayConfig, options: { auditSink?: AuditSink; runtime?: GatewayRuntime } = {}) {
   const logger = createLogger(config.logging);
   for (const message of config.warnings) {
     logger.warn("config.warning", { message });
@@ -28,9 +27,14 @@ export function createGatewayServer(config: GatewayConfig, options: { auditSink?
       suggestion: "Store only the credential value and describe static request syntax with usage prefix or suffix.",
     });
   }
-  const auditSink = options.auditSink ?? initializeAuditSink(config);
-  initializeBuiltinOAuthState(config);
-  const stopMaintenance = startMaintenance(config);
+  const runtime = options.runtime ?? new GatewayRuntime(config, { ...(options.auditSink === undefined ? {} : { auditSink: options.auditSink }) });
+  const auditSink = runtime.auditSink;
+  try {
+    initializeBuiltinOAuthState(config);
+  } catch (error) {
+    void runtime.close();
+    throw error;
+  }
   const server = createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       logger.debug("http.health", { method: request.method, path: "/health", service_count: Object.keys(config.services).length });
@@ -152,9 +156,7 @@ export function createGatewayServer(config: GatewayConfig, options: { auditSink?
     });
   });
   server.once("close", () => {
-    stopMaintenance();
-    if (options.auditSink === undefined) closeAuditSink(config);
-    else auditSink.close();
+    void runtime.close().catch(() => logger.error("runtime.close_failed"));
   });
   return server;
 }
@@ -200,15 +202,22 @@ function writeJson(response: ServerResponse, statusCode: number, body: unknown):
 }
 
 export async function startServer(config: GatewayConfig): Promise<void> {
-  const server = createGatewayServer(config);
+  const runtime = new GatewayRuntime(config);
+  let server: ReturnType<typeof createGatewayServer>;
   const logger = createLogger(config.logging);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(config.server.port, config.server.host, () => {
-      server.off("error", reject);
-      resolve();
+  try {
+    server = createGatewayServer(config, { runtime });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(config.server.port, config.server.host, () => {
+        server.off("error", reject);
+        resolve();
+      });
     });
-  });
+  } catch (error) {
+    await runtime.close();
+    throw error;
+  }
   logger.info("server.started", {
     listen: config.server.listen,
     mcp_path: config.server.mcpPath,
@@ -265,7 +274,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   try {
     const config = loadConfig(configPath);
-    initializeSecretRuntime(config);
     await startServer(config);
   } catch (error) {
     console.error(JSON.stringify(startupErrorPayload(error)));

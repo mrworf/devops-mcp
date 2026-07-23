@@ -7,6 +7,9 @@ import { validateConfig } from "../src/config.js";
 import { createGatewayServer } from "../src/server.js";
 import { BRAND_ICON_PATH, BRAND_LOCKUP_PATH } from "../src/brandAssets.js";
 import { AuditSink, initializeAuditSink } from "../src/audit.js";
+import { GatewayRuntime } from "../src/runtime.js";
+import { initializeSecretRuntime } from "../src/secretRuntime.js";
+import { SecretScanBusyError } from "../src/secretScannerPool.js";
 
 describe("health server", () => {
   it("returns ready health status", async () => {
@@ -191,6 +194,54 @@ describe("health server", () => {
       expect(JSON.stringify(sink.events)).not.toContain("raw-secret");
     } finally {
       server.close();
+    }
+  });
+
+  it("closes runtime resources once when the server closes and permits repeated close", async () => {
+    const config = serverConfig();
+    const stopMaintenance = vi.fn();
+    const runtime = new GatewayRuntime(config, { startMaintenance: () => stopMaintenance });
+    const server = createGatewayServer(config, { runtime });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    server.close();
+    await once(server, "close");
+    await runtime.close();
+    await runtime.close();
+
+    expect(stopMaintenance).toHaveBeenCalledTimes(1);
+    expect(runtime.auditSink.closed).toBe(true);
+    await expect(runtime.secretRuntime.pool.scan("actor", "benign", [], 100))
+      .rejects.toBeInstanceOf(SecretScanBusyError);
+  });
+
+  it("cleans resources created before partial runtime initialization failure", async () => {
+    const config = serverConfig();
+    const auditSink = new AuditSink(config);
+    const secretRuntime = initializeSecretRuntime(config);
+
+    expect(() => new GatewayRuntime(config, {
+      auditSink,
+      secretRuntime,
+      startMaintenance: () => { throw new Error("maintenance startup failed"); },
+    })).toThrow("maintenance startup failed");
+
+    expect(auditSink.closed).toBe(true);
+    await expect(secretRuntime.pool.scan("actor", "benign", [], 100))
+      .rejects.toBeInstanceOf(SecretScanBusyError);
+  });
+
+  it("keeps separately configured runtime scanner lifecycles independent", async () => {
+    const first = new GatewayRuntime(serverConfig());
+    const second = new GatewayRuntime(serverConfig());
+    try {
+      await first.close();
+      await expect(first.secretRuntime.pool.scan("actor", "benign", [], 100))
+        .rejects.toBeInstanceOf(SecretScanBusyError);
+      await expect(second.secretRuntime.pool.scan("actor", "benign", [], 1_000)).resolves.toEqual([]);
+    } finally {
+      await second.close();
     }
   });
 });
