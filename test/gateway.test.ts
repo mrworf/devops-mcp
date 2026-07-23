@@ -710,19 +710,32 @@ describe("HTTP gateway", () => {
     }
   });
 
-  it("rejects oversized requests and fails closed on oversized responses", async () => {
+  it("accepts the exact request limit, rejects limit plus one before I/O, and fails closed on oversized responses", async () => {
     const downstream = await startDownstream();
     try {
       const smallRequestConfig = gatewayConfig(downstream.baseUrl, { maxRequestBody: "5b" });
       installBroker(smallRequestConfig);
+      const exactRequest = await executeServiceRequest(smallRequestConfig, actor(), {
+        service: "demo-service",
+        destination: "primary",
+        method: "POST",
+        path: "/api/echo",
+        body: "12345",
+        reason: "Accept exact request limit.",
+      });
+      expect(exactRequest.status_code).toBe(200);
+      expect(downstream.requests).toHaveLength(1);
+      expect(downstream.requests[0]).toMatchObject({ body: "12345", headers: { "content-length": "5" } });
+
       await expectGatewayError(() => executeServiceRequest(smallRequestConfig, actor(), {
         service: "demo-service",
         destination: "primary",
         method: "POST",
         path: "/api/echo",
-        body: "too large",
+        body: "123456",
         reason: "Check request size.",
-      }), "response_too_large");
+      }), "request_too_large");
+      expect(downstream.requests).toHaveLength(1);
 
       const smallResponseConfig = gatewayConfig(downstream.baseUrl, { maxResponseBody: "10b" });
       installBroker(smallResponseConfig);

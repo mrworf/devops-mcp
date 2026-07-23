@@ -59,7 +59,7 @@ MVP config is YAML:
 Downstream credentials are pre-configured into the Docker container with environment variables or mounted files. Do not add a vault or secret manager integration in MVP.
 
 ## Error Codes
-Use structured errors with these codes: `unauthenticated`, `unauthorized_service`, `unknown_service`, `unknown_destination`, `unknown_access`, `reference_expired`, `reference_invalid`, `destination_not_allowed`, `host_not_allowed`, `scheme_not_allowed`, `port_not_allowed`, `policy_denied`, `tls_error`, `downstream_timeout`, `downstream_error`, `response_too_large`, `config_error`.
+Use structured errors with these codes: `unauthenticated`, `unauthorized_service`, `unknown_service`, `unknown_destination`, `unknown_access`, `reference_expired`, `reference_invalid`, `destination_not_allowed`, `host_not_allowed`, `scheme_not_allowed`, `port_not_allowed`, `policy_denied`, `tls_error`, `downstream_timeout`, `downstream_error`, `request_too_large`, `response_too_large`, `config_error`.
 
 ## OpenAI/Codex Compatibility
 - Serve Streamable HTTP MCP at `server.mcp_path`, default `/mcp`.

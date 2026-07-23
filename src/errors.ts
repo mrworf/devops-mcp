@@ -14,6 +14,7 @@ export type GatewayErrorCode =
   | "tls_error"
   | "downstream_timeout"
   | "downstream_error"
+  | "request_too_large"
   | "response_too_large"
   | "unsupported_transfer_encoding"
   | "cookie_not_allowed"

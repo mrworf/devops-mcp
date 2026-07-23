@@ -403,7 +403,7 @@ function buildDownstreamRequest(
       if (!hasHeader(requestHeaders, "content-type")) requestHeaders["content-type"] = "application/json";
     }
     if (Buffer.byteLength(requestBody) > config.limits.maxRequestBodyBytes) {
-      throw new GatewayError("response_too_large", "Request body is too large.");
+      throw new GatewayError("request_too_large", "Request body is too large.");
     }
     requestHeaders["content-length"] = String(Buffer.byteLength(requestBody));
   }

@@ -1231,6 +1231,7 @@ policy_denied
 tls_error
 downstream_timeout
 downstream_error
+request_too_large
 response_too_large
 config_error
 ```
