@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createLogger } from "./logger.js";
 import type { GatewayConfig } from "./types.js";
+import { sanitizeAuditEvent } from "./auditSanitizer.js";
 
 export interface ReferenceIssuedAuditEvent {
   type: "reference_issued";
@@ -74,21 +75,23 @@ export function clearAuditEvents(config?: GatewayConfig): void {
   else auditEventStores.delete(config);
 }
 
-export function audit(event: AuditEvent, config?: GatewayConfig): void {
+export function audit(event: AuditEvent, config?: GatewayConfig): AuditEvent {
+  const sanitizedEvent = sanitizeAuditEvent(event, config);
   const events = auditStore(config);
-  events.push(event);
+  events.push(sanitizedEvent);
   const capacity = config?.audit.memoryEvents ?? 1000;
   if (events.length > capacity) events.splice(0, events.length - capacity);
-  if (config?.audit.file === undefined) return;
+  if (config?.audit.file === undefined) return sanitizedEvent;
   try {
     mkdirSync(dirname(config.audit.file), { recursive: true });
-    appendFileSync(config.audit.file, `${JSON.stringify(event)}\n`, { encoding: "utf8" });
+    appendFileSync(config.audit.file, `${JSON.stringify(sanitizedEvent)}\n`, { encoding: "utf8" });
   } catch (error) {
     createLogger(config.logging).error("audit.write_failed", {
       audit_file: config.audit.file,
       error,
     });
   }
+  return sanitizedEvent;
 }
 
 function auditStore(config?: GatewayConfig): AuditEvent[] {
@@ -102,6 +105,5 @@ function auditStore(config?: GatewayConfig): AuditEvent[] {
 }
 
 export function referenceIssuedAuditEvent(input: ReferenceIssuedAuditEvent, config?: GatewayConfig): ReferenceIssuedAuditEvent {
-  audit(input, config);
-  return input;
+  return audit(input, config) as ReferenceIssuedAuditEvent;
 }

@@ -8,9 +8,9 @@ import type { TokenBroker, TokenInspectionReason } from "./tokens.js";
 import { findSensitiveJsonValues, isJsonLikeText } from "./sensitiveJson.js";
 import type { SensitiveNameMatcher } from "./sensitiveNames.js";
 import { decodeUtf8Bytes } from "./binaryResponse.js";
+import { findHttpBasicCredentialRanges } from "./httpBasicCredential.js";
 
 const tokenCandidatePattern = /\b(?:gref|sec)_[^\s"'<>()[\]{},;]+/g;
-const httpBasicCredentialPattern = /\bBasic +(?<encoded>(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)(?![A-Za-z0-9+/=])/gi;
 const HTTP_BASIC_CREDENTIAL_RULE_ID = "gateway:http-basic-credential";
 
 interface Range {
@@ -244,16 +244,10 @@ function applyByteReplacements(original: Buffer, text: string, replacements: Tex
 }
 
 function addHttpBasicCredentialRanges(ranges: Range[], text: string): void {
-  for (const match of text.matchAll(httpBasicCredentialPattern)) {
-    const encoded = match.groups?.encoded;
-    if (!encoded) continue;
-    const decoded = Buffer.from(encoded, "base64");
-    if (decoded.toString("base64") !== encoded) continue;
-    const separator = decoded.indexOf(0x3a);
-    if (separator <= 0 || separator >= decoded.length - 1) continue;
+  for (const range of findHttpBasicCredentialRanges(text)) {
     ranges.push({
-      start: match.index,
-      end: match.index + match[0].length,
+      start: range.start,
+      end: range.end,
       ruleIds: new Set([HTTP_BASIC_CREDENTIAL_RULE_ID]),
     });
   }

@@ -155,6 +155,40 @@ describe("audit logging", () => {
     }
   });
 
+  it("sanitizes caller-controlled audit text centrally in memory and JSONL", () => {
+    const auditFile = join(mkdtempSync(join(tmpdir(), "gateway-audit-sanitize-")), "audit.jsonl");
+    const config = auditConfig(auditFile, "http://127.0.0.1:1");
+    clearAuditEvents(config);
+    const broker = new TokenBroker(config);
+    defaultTokenBrokers.set(config, broker);
+    const first = broker.issueTokens(actor(), {
+      service: "demo-service", destination: "primary", access_ids: ["api_key"],
+      reason: "Basic authentication is enabled for this benign request.",
+    });
+    const opaqueReference = first.tokens[0]?.token ?? "";
+    const basicCredential = `Basic ${Buffer.from("audit-user:audit-password", "utf8").toString("base64")}`;
+    const patternedCredential = `ghp_${"a".repeat(36)}`;
+
+    const second = broker.issueTokens(actor(), {
+      service: "demo-service", destination: "primary", access_ids: ["api_key"],
+      reason: `Use raw-secret ${opaqueReference} sec_forged-reference ${basicCredential} ${patternedCredential}`,
+    });
+
+    const memoryEvents = getAuditEvents(config).filter((event) => event.type === "reference_issued");
+    const fileEvents = readJsonl(auditFile).filter((event) => event.type === "reference_issued");
+    expect(memoryEvents[0]).toMatchObject({ reason: "Basic authentication is enabled for this benign request." });
+    expect(second.audit.reason).toContain("[REDACTED]");
+    expect(memoryEvents).toEqual(fileEvents);
+    for (const serialized of [JSON.stringify(second.audit), JSON.stringify(memoryEvents), JSON.stringify(fileEvents)]) {
+      expect(serialized).not.toContain("raw-secret");
+      expect(serialized).not.toContain(opaqueReference);
+      expect(serialized).not.toContain("sec_forged-reference");
+      expect(serialized).not.toContain(basicCredential);
+      expect(serialized).not.toContain(patternedCredential);
+    }
+    expect(second.audit.internal_reference_ids[0]).toMatch(/^grefrec_/);
+  });
+
   it("does not fail tool execution when the audit file cannot be appended", () => {
     const auditDirectory = mkdtempSync(join(tmpdir(), "gateway-audit-dir-"));
     const config = auditConfig(auditDirectory, "http://127.0.0.1:1");

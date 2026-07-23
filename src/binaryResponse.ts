@@ -1,11 +1,11 @@
 import { GatewayError } from "./errors.js";
 import type { AuthContext, ServiceConfig } from "./types.js";
 import type { TokenBroker, TokenInspectionReason } from "./tokens.js";
+import { findHttpBasicCredentialRanges } from "./httpBasicCredential.js";
 
 export const DEFAULT_BINARY_RESPONSE_MAX_BYTES = 100 * 1024;
 
 const tokenCandidatePattern = /\b(?:gref|sec)_[^\s"'<>()[\]{},;]+/g;
-const httpBasicCredentialPattern = /\bBasic +(?<encoded>(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)(?![A-Za-z0-9+/=])/gi;
 const binarySignatures: Array<{ name: string; bytes: readonly number[] }> = [
   { name: "png", bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
   { name: "jpeg", bytes: [0xff, 0xd8, 0xff] },
@@ -81,10 +81,7 @@ export function inspectBinaryBody(
   }
 
   const projected = body.toString("latin1");
-  for (const match of projected.matchAll(httpBasicCredentialPattern)) {
-    const encoded = match.groups?.encoded;
-    if (encoded && isValidHttpBasic(encoded)) ruleIds.add("gateway:http-basic-credential");
-  }
+  if (findHttpBasicCredentialRanges(projected).length > 0) ruleIds.add("gateway:http-basic-credential");
 
   const warnings = new Map<string, { prefix: "gref" | "sec"; reason: TokenInspectionReason; count: number }>();
   for (const match of projected.matchAll(tokenCandidatePattern)) {
@@ -109,11 +106,4 @@ export function assertSafeBinaryBody(inspection: BinaryInspection, requestId: st
 
 function startsWith(body: Buffer, signature: readonly number[]): boolean {
   return body.length >= signature.length && signature.every((byte, index) => body[index] === byte);
-}
-
-function isValidHttpBasic(encoded: string): boolean {
-  const decoded = Buffer.from(encoded, "base64");
-  if (decoded.toString("base64") !== encoded) return false;
-  const separator = decoded.indexOf(0x3a);
-  return separator > 0 && separator < decoded.length - 1;
 }
