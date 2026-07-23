@@ -4,6 +4,8 @@ import { GatewayError } from "../src/errors.js";
 import { executeServiceRequest } from "../src/gateway.js";
 import { TokenBroker, defaultTokenBrokers } from "../src/tokens.js";
 import { auth, registryConfig } from "./helpers.js";
+import { createRequestId, publicRequestIdPattern } from "../src/requestId.js";
+import { getAuditEvents } from "../src/audit.js";
 
 describe("denial explanations", () => {
   it("returns safe denial context for the same subject", async () => {
@@ -25,11 +27,15 @@ describe("denial explanations", () => {
     }
 
     const explanation = explainDenial(config, auth("henric@example.com"), requestId);
+    expect(requestId).toMatch(publicRequestIdPattern);
     expect(explanation).toMatchObject({
       request_id: requestId,
       reason: "Denied by default policy mode.",
       policy_mode: "deny",
     });
+    expect(getAuditEvents(config)).toContainEqual(expect.objectContaining({
+      type: "service_request", request_id: requestId, policy_decision: "deny", error_code: "policy_denied",
+    }));
     expect(explanation?.suggestion).not.toContain("bypass");
   });
 
@@ -67,5 +73,17 @@ describe("denial explanations", () => {
     now = 11;
     store.sweep(now);
     expect(store.get(first.request_id)).toBeUndefined();
+  });
+
+  it("generates unique public request IDs even when the clock is fixed", () => {
+    const now = Date.now;
+    Date.now = () => 1234;
+    try {
+      const ids = Array.from({ length: 1000 }, () => createRequestId());
+      expect(new Set(ids)).toHaveLength(ids.length);
+      expect(ids.every((id) => publicRequestIdPattern.test(id))).toBe(true);
+    } finally {
+      Date.now = now;
+    }
   });
 });

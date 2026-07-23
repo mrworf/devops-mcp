@@ -85,7 +85,7 @@ describe("audit logging", () => {
         reason: "Need token.",
       });
 
-      await executeServiceRequest(config, auth, {
+      const allowed = await executeServiceRequest(config, auth, {
         service: "demo-service",
         destination: "primary",
         method: "GET",
@@ -131,6 +131,7 @@ describe("audit logging", () => {
       });
       const allowedRequest = events.find((event) => event.type === "service_request" && event.policy_decision === "allow");
       expect(allowedRequest).toMatchObject({
+        request_id: allowed.request_id,
         access_ids: ["api_key"],
         internal_reference_ids: [expect.stringMatching(/^grefrec_/)],
       });

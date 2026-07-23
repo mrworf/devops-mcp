@@ -23,6 +23,7 @@ import {
 import { decodeDeclaredBase64Bytes, encodeBase64Bytes } from "./base64Body.js";
 import { enforceCredentialHeaderUsage } from "./headerEnforcement.js";
 import { acquireServiceRequest } from "./serviceRequestLimiter.js";
+import { createRequestId } from "./requestId.js";
 
 export interface ServiceRequestInput {
   service: string;
@@ -75,6 +76,8 @@ export async function executeServiceRequest(
     ...(input.path === undefined ? {} : { path: input.path }),
     ...(input.url === undefined ? {} : { url: input.url }),
   });
+  const requestStarted = Date.now();
+  const requestId = createRequestId();
   const policy = evaluatePolicy(service, target, input.method);
   if (!policy.allowed) {
     const denial = getDenialStore(config).record({
@@ -83,7 +86,7 @@ export async function executeServiceRequest(
       ...(policy.matchedRule === undefined ? {} : { matched_rule: policy.matchedRule }),
       policy_mode: policy.policyMode,
       ...(policy.suggestion === undefined ? {} : { suggestion: policy.suggestion }),
-    });
+    }, requestId);
     audit({
       type: "service_request",
       request_id: denial.request_id,
@@ -120,7 +123,44 @@ export async function executeServiceRequest(
     throw new GatewayError("policy_denied", policy.reason, denial.request_id);
   }
 
-  const releaseCapacity = acquireServiceRequest(config, auth.subject, service.id);
+  let releaseCapacity: () => void;
+  try {
+    releaseCapacity = acquireServiceRequest(config, auth.subject, service.id);
+  } catch (error) {
+    if (!(error instanceof GatewayError) || error.code !== "capacity_exceeded") throw error;
+    audit({
+      type: "service_request",
+      request_id: requestId,
+      subject: auth.subject,
+      service: service.id,
+      destination: target.destination.id,
+      access_ids: [],
+      internal_reference_ids: [],
+      method: input.method.toUpperCase(),
+      target_host: target.url.hostname,
+      target_path: target.methodPath,
+      policy_decision: "allow",
+      ...(policy.matchedRule === undefined ? {} : { matched_policy_rule: policy.matchedRule }),
+      request_timestamp: new Date(requestStarted).toISOString(),
+      request_duration_ms: Date.now() - requestStarted,
+      tls_verify: target.tls.verify,
+      secret_tokenization_count: 0,
+      error_code: error.code,
+      error_message: error.message,
+    }, config);
+    logger.debug("service_request.capacity_rejected", {
+      request_id: requestId,
+      subject: auth.subject,
+      service: service.id,
+      destination: target.destination.id,
+      method: input.method.toUpperCase(),
+      target_host: target.url.hostname,
+      target_path: target.methodPath,
+      matched_policy_rule: policy.matchedRule,
+      error_code: error.code,
+    });
+    throw new GatewayError(error.code, error.message, requestId);
+  }
   try {
   const broker = getTokenBroker(config);
   const tokenTarget = { service: service.id, destination: target.destination.id };
@@ -180,7 +220,6 @@ export async function executeServiceRequest(
     },
   });
   const started = Date.now();
-  const requestId = `req_${started}`;
   const response = await fetchWithTimeout(downstream, config.limits.timeoutMs, config.limits.maxResponseBodyBytes);
   const cookieFiltered = stripCookieHeaders(Object.fromEntries(response.headers.entries()));
   if (cookieFiltered.removed.length > 0) {

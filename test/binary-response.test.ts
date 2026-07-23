@@ -8,6 +8,7 @@ import { validateConfig } from "../src/config.js";
 import { GatewayError } from "../src/errors.js";
 import { executeServiceRequest } from "../src/gateway.js";
 import { callTool } from "../src/mcp/tools.js";
+import { publicRequestIdPattern } from "../src/requestId.js";
 import { TokenBroker, defaultTokenBrokers } from "../src/tokens.js";
 import type { AuthContext, GatewayConfig } from "../src/types.js";
 
@@ -80,9 +81,11 @@ describe("binary gateway responses", () => {
     const resource = result.content.find((item) => item.type === "resource");
 
     expect(result.structuredContent).toMatchObject({ body: null, body_encoding: "mcp_blob", body_size_bytes: cleanBinary().length });
+    expect(result.structuredContent.request_id).toMatch(publicRequestIdPattern);
     expect(result.structuredContent).not.toHaveProperty("binaryBody");
     expect(resource).toMatchObject({ type: "resource", resource: { mimeType: "application/octet-stream" } });
     if (resource?.type !== "resource") throw new Error("Expected embedded binary resource");
+    expect(resource.resource.uri).toBe(`secretsauce://response/${result.structuredContent.request_id as string}`);
     expect(Buffer.from(resource.resource.blob, "base64")).toEqual(cleanBinary());
   });
 

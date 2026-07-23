@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { registerMaintenanceTask } from "./maintenance.js";
+import { createRequestId } from "./requestId.js";
 import type { GatewayConfig } from "./types.js";
 
 export interface DenialRecord {
@@ -20,8 +20,7 @@ export class DenialStore {
     private readonly now: () => number = () => Date.now(),
   ) {}
 
-  record(input: Omit<DenialRecord, "request_id">): DenialRecord {
-    const requestId = `req_${randomUUID()}`;
+  record(input: Omit<DenialRecord, "request_id">, requestId = createRequestId()): DenialRecord {
     this.sweep(this.now());
     if (this.records.size >= this.capacity) {
       const oldest = this.records.keys().next().value as string | undefined;

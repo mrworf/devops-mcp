@@ -6,6 +6,8 @@ import { MCP_INSTRUCTIONS } from "../src/mcp/instructions.js";
 import { callTool, toolDescriptors } from "../src/mcp/tools.js";
 import { createGatewayServer } from "../src/server.js";
 import { getServiceRequestLimiter } from "../src/serviceRequestLimiter.js";
+import { getAuditEvents } from "../src/audit.js";
+import { publicRequestIdPattern } from "../src/requestId.js";
 
 describe("MCP surface", () => {
   it("keeps the required safety opening in the first 512 instruction characters", () => {
@@ -271,8 +273,13 @@ describe("MCP surface", () => {
 
       expect(result).toMatchObject({
         isError: true,
-        structuredContent: { error: { code: "capacity_exceeded" } },
+        structuredContent: { error: { code: "capacity_exceeded", request_id: expect.stringMatching(publicRequestIdPattern) } },
       });
+      const requestId = (result.structuredContent.error as { request_id: string }).request_id;
+      expect(getAuditEvents(config)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "service_request", request_id: requestId, error_code: "capacity_exceeded" }),
+        expect.objectContaining({ type: "tool_invocation", request_id: requestId, error_code: "capacity_exceeded" }),
+      ]));
     } finally {
       release();
     }
